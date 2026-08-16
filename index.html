@@ -1,0 +1,1274 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D 智慧导览</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            overflow: hidden;
+            font-family: 'Inter', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+            background: #0a0e17;
+            color: #fff;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        :root {
+            --accent-main:  #4da6ff;
+            --accent-east:  #00d4aa;
+            --accent-west:  #ffb347;
+            --accent-vip:   #c79fff;
+            --bg-panel:   rgba(12, 18, 30, 0.88);
+            --border-subtle: rgba(255,255,255,0.08);
+            --border-active: rgba(255,255,255,0.18);
+            --shadow-panel: 0 8px 32px rgba(0,0,0,0.45);
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 22px;
+            --radius-full: 9999px;
+        }
+
+        /* Map + Canvas containers */
+        #map-container { position: fixed; inset: 0; z-index: 0; }
+        #app-canvas { display: block; position: fixed; top: 0; left: 0; z-index: 1; pointer-events: none; }
+
+        /* Loading */
+        #loading-screen {
+            position: fixed; inset: 0; z-index: 100; background: #0a0e17;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.6s ease, visibility 0.6s ease;
+        }
+        #loading-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        .loader-brand { font-size: 2rem; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 8px; }
+        .loader-brand span { color: var(--accent-main); }
+        .loader-sub { font-size: 0.875rem; color: rgba(255,255,255,0.58); margin-bottom: 40px; letter-spacing: 0.06em; }
+        .loader-track { width: 240px; height: 3px; background: rgba(255,255,255,0.08); border-radius: var(--radius-full); overflow: hidden; }
+        .loader-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-main), var(--accent-vip)); border-radius: var(--radius-full); transition: width 0.3s ease; }
+        .loader-pct { margin-top: 12px; font-size: 0.75rem; color: rgba(255,255,255,0.32); }
+
+        #setup-hint {
+            display: none; position: fixed; inset: 0; z-index: 101; background: #0a0e17;
+            flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px;
+        }
+        #setup-hint.show { display: flex; }
+        #setup-hint h2 { font-size: 1.5rem; margin-bottom: 12px; color: #f0f6fc; }
+        #setup-hint p { color: rgba(255,255,255,0.58); max-width: 520px; line-height: 1.7; margin-bottom: 8px; }
+        #setup-hint code { background: #1c2128; padding: 2px 8px; border-radius: 4px; font-size: 0.9rem; color: var(--accent-main); }
+        #setup-hint a { color: var(--accent-main); }
+
+        /* ====== Left Sidebar ====== */
+        #sidebar {
+            position: fixed; top: 16px; left: 16px; z-index: 20;
+            width: 240px; max-height: calc(100vh - 32px); overflow-y: auto;
+            background: rgba(12,18,30,0.92); backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 16px;
+            padding: 0; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            display: flex; flex-direction: column;
+        }
+        .sb-brand { padding: 18px 20px 14px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .sb-logo { font-size: 2rem; margin-bottom: 4px; }
+        .sb-title { font-size: 1.1rem; font-weight: 700; color: #f0f6fc; letter-spacing: 0.02em; }
+        .sb-sub { font-size: 0.65rem; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
+        .sb-section { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .sb-label { font-size: 0.6rem; color: rgba(255,255,255,0.3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+        .sb-tools { display: flex; gap: 4px; }
+        .sb-tools button {
+            width: 42px; height: 36px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);
+            background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.5);
+            font-size: 1rem; cursor: pointer; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .sb-tools button:hover { color: #fff; background: rgba(255,255,255,0.08); }
+        .sb-tools button.active { color: #fff; background: var(--accent-main); border-color: var(--accent-main); box-shadow: 0 0 16px rgba(77,166,255,0.3); }
+        .sb-tools button:disabled { opacity: 0.25; cursor: default; }
+        .sb-search { position: relative; }
+        .sb-search input {
+            width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.04); color: #f0f6fc; font-size: 0.8rem;
+            font-family: inherit; outline: none;
+        }
+        .sb-search input:focus { border-color: var(--accent-main); }
+        .sb-search input::placeholder { color: rgba(255,255,255,0.25); }
+        #search-results {
+            display: none; position: absolute; top: 100%; left: 0; right: 0;
+            background: rgba(12,18,30,0.98); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; margin-top: 4px; max-height: 200px; overflow-y: auto; z-index: 30;
+        }
+        .search-item { padding: 8px 12px; font-size: 0.8rem; cursor: pointer; color: rgba(255,255,255,0.7); border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .search-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+        .sb-layers { display: flex; flex-direction: column; gap: 4px; }
+        .sb-layer-item {
+            display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+            border-radius: 6px; font-size: 0.78rem; color: rgba(255,255,255,0.55);
+        }
+        .layer-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .sb-actions { display: flex; flex-direction: column; gap: 6px; }
+        .sb-btn {
+            width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.7);
+            font-size: 0.8rem; font-family: inherit; cursor: pointer; text-align: center;
+        }
+        .sb-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+        .sb-btn.primary { background: var(--accent-main); border-color: var(--accent-main); color: #fff; font-weight: 600; }
+        .sb-status { font-size: 0.7rem; color: rgba(255,255,255,0.35); text-align: center; }
+
+        /* ====== Top-Right & Bottom-Right ====== */
+        #btn-auto-rotate {
+            position: fixed; top: 20px; right: 20px; z-index: 20;
+            width: 40px; height: 40px; border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.08); background: rgba(12,18,30,0.9);
+            backdrop-filter: blur(16px); color: rgba(255,255,255,0.5); font-size: 1.1rem;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
+        #btn-auto-rotate:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
+        #bottom-controls {
+            position: fixed; bottom: 24px; right: 24px; z-index: 20; display: flex; gap: 8px;
+        }
+        .ctrl-group {
+            display: flex; gap: 2px; padding: 3px; border-radius: 24px;
+            background: rgba(12,18,30,0.9); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
+        .ctrl-group button {
+            padding: 5px 12px; border-radius: 20px; border: none; background: transparent;
+            color: rgba(255,255,255,0.4); font-size: 0.7rem; font-weight: 600;
+            font-family: inherit; cursor: pointer; transition: all 0.2s;
+        }
+        .ctrl-group button:hover { color: rgba(255,255,255,0.7); }
+        .ctrl-group button.active { background: rgba(255,255,255,0.1); color: #fff; }
+
+        
+        @keyframes bannerIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
+
+        /* Login modal */
+        .modal-overlay {
+            position: fixed; inset: 0; z-index: 500;
+            background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center;
+        }
+        .modal-box {
+            background: rgba(22,27,34,0.98); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px; padding: 28px 32px; min-width: 360px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.5); animation: modalIn 0.2s ease;
+        }
+        @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } }
+        .modal-box h2 { font-size: 1.1rem; color: #f0f6fc; margin-bottom: 4px; }
+        .modal-box input {
+            width: 100%; padding: 10px 14px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.3);
+            color: #f0f6fc; font-size: 0.9rem; font-family: inherit; outline: none;
+        }
+        .modal-box input:focus { border-color: var(--accent-main); }
+        .modal-actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+
+
+        /* Info card */
+        #info-card-backdrop {
+            position: fixed; inset: 0; z-index: 25;
+            background: rgba(0,0,0,0.35);
+            opacity: 0; visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        #info-card-backdrop.show { opacity: 1; visibility: visible; }
+        #info-card {
+            position: fixed; z-index: 30;
+            bottom: 40px; left: 50%; transform: translateX(-50%) translateY(20px);
+            width: 420px; max-width: calc(100vw - 32px);
+            background: var(--bg-panel); backdrop-filter: blur(24px);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 28px 28px 24px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+            opacity: 0; visibility: hidden;
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #info-card.show { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+        .info-close {
+            position: absolute; top: 12px; right: 14px;
+            width: 32px; height: 32px; border-radius: var(--radius-full);
+            border: none; background: rgba(255,255,255,0.06);
+            color: rgba(255,255,255,0.58); font-size: 1rem;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s ease;
+        }
+        .info-close:hover { background: rgba(255,255,255,0.14); color: #fff; }
+        .info-icon { font-size: 2.5rem; margin-bottom: 8px; }
+        .info-title {
+            font-size: 1.25rem; font-weight: 700; margin-bottom: 4px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .info-title .badge {
+            display: inline-block; font-size: 0.625rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            padding: 4px 10px; border-radius: var(--radius-full);
+        }
+        .badge.main { background: rgba(77,166,255,0.2); color: var(--accent-main); }
+        .badge.east { background: rgba(0,212,170,0.2); color: var(--accent-east); }
+        .badge.west { background: rgba(255,179,71,0.2); color: var(--accent-west); }
+        .badge.vip  { background: rgba(199,159,255,0.2); color: var(--accent-vip); }
+        .info-desc { font-size: 0.875rem; color: rgba(255,255,255,0.58); margin: 10px 0 16px; line-height: 1.5; }
+        .info-features { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+        .info-feature {
+            font-size: 0.75rem; padding: 6px 12px;
+            border-radius: var(--radius-full);
+            background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle);
+            color: rgba(255,255,255,0.58);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .info-action { display: flex; gap: 10px; }
+        .info-btn {
+            flex: 1; padding: 10px 0; border-radius: var(--radius-sm);
+            font-family: inherit; font-size: 0.8125rem; font-weight: 600;
+            cursor: pointer; border: none;
+            transition: all 0.2s ease; letter-spacing: 0.02em;
+        }
+        .info-btn.primary { background: var(--accent-main); color: #000; }
+        .info-btn.primary:hover { filter: brightness(1.15); }
+        .info-btn.ghost {
+            background: transparent; color: rgba(255,255,255,0.58); border: 1px solid var(--border-subtle);
+        }
+        .info-btn.ghost:hover { border-color: var(--border-active); color: #fff; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            #sidebar { width: 200px; top: 8px; left: 8px; max-height: calc(100vh - 16px); }
+            #info-card { bottom: 100px; width: calc(100vw - 24px); }
+            #bottom-controls { bottom: 12px; right: 12px; flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading-screen">
+    <div class="loader-brand">城东<span>体育馆</span></div>
+    <div class="loader-sub" id="loader-sub">3D SMART NAVIGATION</div>
+    <div class="loader-track"><div class="loader-bar" id="loader-bar"></div></div>
+    <div class="loader-pct" id="loader-pct">正在加载地图...</div>
+</div>
+
+<!-- Setup hint (shown when no Amap key) -->
+<div id="setup-hint">
+    <h2>🔑 请配置高德地图 API Key</h2>
+    <p>本系统使用高德地图提供真实地理信息（周边道路、建筑、停车场）。</p>
+    <p>1. 前往 <a href="https://console.amap.com/" target="_blank">高德开放平台</a> 注册并创建应用</p>
+    <p>2. 获取 <code>Web端(JS API)</code> 的 Key</p>
+    <p>3. 填入 <code>config.json</code> 的 <code>geo.amapKey</code> 字段</p>
+    <p style="margin-top:16px;font-size:0.85rem;">也可通过 <a href="/admin.html">后台管理</a> → 地理信息 进行配置</p>
+</div>
+
+<!-- Map container (Amap) -->
+<div id="map-container"></div>
+
+<!-- ====== Left Sidebar Panel ====== -->
+<div id="sidebar">
+    <!-- Brand -->
+    <div class="sb-brand">
+        <div class="sb-logo" id="sb-logo">🏟️</div>
+        <div class="sb-title" id="sb-title">城东体育馆</div>
+        <div class="sb-sub" id="sb-sub">3D 智慧导览</div>
+    </div>
+
+    <!-- Search -->
+    <div class="sb-section">
+        <div class="sb-search">
+            <input type="text" id="search-input" placeholder="搜索地点..." autocomplete="off" />
+            <div id="search-results"></div>
+        </div>
+    </div>
+
+    <!-- Layers -->
+    <div class="sb-section">
+        <div class="sb-label">图层信息</div>
+        <div class="sb-layers">
+            <div class="sb-layer-item"><span class="layer-dot" style="background:#3b82f6"></span> 路线 <span id="layer-route-count">0</span></div>
+            <div class="sb-layer-item"><span class="layer-dot" style="background:#10b981"></span> 区域 <span id="layer-area-count">0</span></div>
+        </div>
+    </div>
+
+    <!-- Location & Navigation -->
+    <div class="sb-section">
+        <div class="sb-label">📍 室内定位</div>
+        <button class="sb-btn" id="btn-my-location" style="margin-bottom:6px;">📍 设置我的位置</button>
+        <div id="location-info" style="display:none;font-size:0.72rem;color:rgba(255,255,255,0.5);">
+            <span id="loc-coords"></span>
+            <button class="sb-btn" id="btn-clear-location" style="margin-top:4px;font-size:0.7rem;">清除位置</button>
+        </div>
+        <div style="display:none;margin-top:4px;font-size:0.72rem;color:var(--accent-main);" id="nav-info"></div>
+    </div>
+
+    <!-- Links -->
+    <div class="sb-section sb-actions">
+        <a href="/admin-map.html" class="sb-btn primary" style="text-decoration:none;display:block;">🗺️ 地图绘制</a>
+        <a href="/editor.html" class="sb-btn" style="text-decoration:none;display:block;">✏️ 路线图编辑器</a>
+        <a href="/admin.html" class="sb-btn" style="text-decoration:none;display:block;margin-top:4px;">⚙️ 系统配置</a>
+    </div>
+</div>
+
+<!-- ====== Top Right Controls ====== -->
+<button id="btn-auto-rotate" title="自动旋转">⟳</button>
+
+<!-- ====== Bottom Right Controls ====== -->
+<div id="bottom-controls">
+    <div class="ctrl-group">
+        <button data-mode="3d" class="active">3D</button>
+        <button data-mode="2d">2D</button>
+    </div>
+    <div class="ctrl-group">
+        <button data-layer="dark" class="active">暗黑</button>
+        <button data-layer="normal">标准</button>
+        <button data-layer="satellite">卫星</button>
+    </div>
+</div>
+
+    </div>
+</div>
+
+<!-- Info card -->
+<div id="info-card-backdrop"></div>
+<div id="info-card">
+    <button class="info-close">✕</button>
+    <div class="info-icon" id="info-icon">🚪</div>
+    <div class="info-title">
+        <span id="info-title-text">主入口</span>
+        <span class="badge main" id="info-badge">MAIN</span>
+    </div>
+    <p class="info-desc" id="info-desc"></p>
+    <div class="info-features" id="info-features"></div>
+    <div class="info-action">
+        <button class="info-btn primary" id="info-btn-nav">📍 导航至此</button>
+        <button class="info-btn ghost" id="info-btn-close">关闭</button>
+    </div>
+</div>
+
+<!-- ============================================================
+Three.js Import Map
+============================================================ -->
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// ========================================================
+// SECTION A: CONFIGURATION
+// ========================================================
+let CONFIG = null;
+
+const DEFAULT_CONFIG = {
+    geo: { amapKey: '', amapSecurityCode: '', center: [116.3894, 39.9976], zoom: 17, pitch: 55, rotation: 20, mapStyle: 'amap://styles/dark' },
+    groundSize: 200, fogColor: '#0a0e17', fogNear: 60, fogFar: 220,
+    building: {
+        main: { w: 10, d: 10, h: 10, color: '#1e2d5a', pos: [0, 0, 0] },
+        subs: [],
+        roadWidth: 8,
+    },
+    markers: {},
+    routes: {},
+    parking: [],
+    particles: { count: 0, spread: 90, height: 35 },
+    camera: {
+        fov: 42, near: 0.5, far: 400,
+        initial: { pos: [70, 50, 80], target: [0, 4, 0] },
+        presets: {},
+        tweenMs: 1400, orbitDamping: 0.08, minDist: 12, maxDist: 160, maxPolarFactor: 0.46,
+    },
+};
+
+async function loadConfig() {
+    try {
+        const resp = await fetch('/config.json');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        CONFIG = await resp.json();
+        if (CONFIG.camera.maxPolarFactor) {
+            CONFIG.camera.maxPolar = Math.PI * CONFIG.camera.maxPolarFactor;
+        }
+        console.log('✅ 配置已加载');
+        // 应用品牌配置
+        if (CONFIG.brand) {
+            document.title = CONFIG.brand.name + ' · ' + (CONFIG.brand.subtitle || '');
+            document.getElementById('loader-sub').textContent = CONFIG.brand.subtitle || '';
+            document.getElementById('sb-logo').textContent = CONFIG.brand.logo || '🏟️';
+            document.getElementById('sb-title').textContent = CONFIG.brand.name || '';
+            document.getElementById('sb-sub').textContent = CONFIG.brand.subtitle || '';
+        }
+    } catch (err) {
+        console.warn('⚠️ 使用默认配置:', err.message);
+        CONFIG = DEFAULT_CONFIG;
+        CONFIG.camera.maxPolar = Math.PI * (CONFIG.camera.maxPolarFactor || 0.46);
+    }
+    // 路由颜色转换
+    for (const key of Object.keys(CONFIG.routes || {})) {
+        const c = CONFIG.routes[key].color;
+        if (typeof c === 'string' && c.startsWith('#')) {
+            CONFIG.routes[key].color = parseInt(c.slice(1), 16);
+        }
+    }
+}
+
+// ========================================================
+// SECTION B: UTILITIES
+// ========================================================
+const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+const METERS_PER_DEG_LAT = 111320;
+
+/** 本地坐标 (meters from center) → 经纬度 */
+function localToLngLat(localX, localZ, center) {
+    const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((center[1] * Math.PI) / 180);
+    return [center[0] + localX / metersPerDegLng, center[1] + localZ / METERS_PER_DEG_LAT];
+}
+
+/** 将 config 中的本地坐标转为经纬度 */
+function markerLngLat(key) {
+    const m = CONFIG.markers[key];
+    if (!m) return CONFIG.geo.center;
+    return localToLngLat(m.pos[0], m.pos[2], CONFIG.geo.center);
+}
+
+// ========================================================
+// SECTION C: SIMPLE TWEEN ENGINE
+// ========================================================
+class TweenManager {
+    constructor() { this._map = new Map(); }
+    start(key, from, to, duration, easing = easeInOutCubic) {
+        this._map.set(key, { from: from.clone(), to: to.clone(), start: performance.now(), duration, easing, value: from.clone() });
+    }
+    get(key) { const t = this._map.get(key); return t ? t.value : null; }
+    isActive(key) { return this._map.has(key); }
+    anyActive() { return this._map.size > 0; }
+    update(now) {
+        for (const [key, t] of this._map) {
+            const elapsed = now - t.start;
+            if (elapsed >= t.duration) { t.value.copy(t.to); this._map.delete(key); }
+            else { const p = t.easing(elapsed / t.duration); t.value.lerpVectors(t.from, t.to, p); }
+        }
+    }
+}
+
+// ========================================================
+// SECTION D: THREE.JS SCENE SETUP (GLCustomLayer 共享上下文)
+// 坐标统一: x=east, y=north, z=UP (Amap 原生约定)
+// camera.up = (0,0,1) 由 getCameraParams 提供
+// ========================================================
+function setupThreeScene(map) {
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(
+        CONFIG.camera.fov, window.innerWidth / window.innerHeight, 1, 1 << 30);
+
+    let renderer;
+    const customCoords = map.customCoords;
+    customCoords.setCenter(CONFIG.geo.center);
+
+    // CSS2D Renderer — separate DOM canvas for labels
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    labelRenderer.domElement.style.position = 'fixed';
+    labelRenderer.domElement.style.top = '0';
+    labelRenderer.domElement.style.left = '0';
+    labelRenderer.domElement.style.pointerEvents = 'none';
+    labelRenderer.domElement.style.zIndex = '5';
+    document.body.appendChild(labelRenderer.domElement);
+
+    // Promise: resolves in GLCustomLayer.init with coordinate helpers
+    let initResolve;
+    const waitForInit = () => new Promise(r => { initResolve = r; });
+
+    // GLCustomLayer: Three.js 共享 Amap 的 WebGL 上下文
+    let firstFrame = true;
+    const gllayer = new AMap.GLCustomLayer({
+        zIndex: 10,
+        init: (gl) => {
+            renderer = new THREE.WebGLRenderer({
+                context: gl,
+                premultipliedAlpha: false,
+            });
+            renderer.autoClear = false;
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+            // 计算缩放（init 后 lngLatToCoord 才可靠）
+            let lpm;
+            try {
+                const [cx0, cy0] = customCoords.lngLatToCoord([CONFIG.geo.center[0], CONFIG.geo.center[1]]);
+                const [cx1, cy1] = customCoords.lngLatToCoord([CONFIG.geo.center[0], CONFIG.geo.center[1] + 0.001]);
+                lpm = Math.abs(cy1 - cy0) / (0.001 * METERS_PER_DEG_LAT);
+                if (!lpm || lpm <= 0) lpm = 1;
+                console.log('📐 Amap缩放(init): 1米 =', lpm.toFixed(4), '局部单位, cx0=', cx0, 'cy0=', cy0);
+            } catch (e) {
+                console.warn('⚠️ 缩放计算失败:', e.message);
+                lpm = 1;
+            }
+
+            // 本地米 → Amap 内部 3D 坐标
+            const lta = (localX, localZ, heightM) => {
+                const [lng, lat] = localToLngLat(localX, localZ, CONFIG.geo.center);
+                const coord = customCoords.lngLatToCoord([lng, lat]);
+                return { x: coord[0], y: coord[1], z: heightM * lpm };
+            };
+
+            initResolve({ localToAmap: lta, localPerMeter: lpm });
+            console.log('✅ Three.js GLCustomLayer init (共享上下文)');
+        },
+        render: () => {
+            customCoords.lngLatsToCoords([[CONFIG.geo.center[0], CONFIG.geo.center[1]]]);
+
+            const params = customCoords.getCameraParams();
+            if (!params || !params.position) return;
+
+            if (firstFrame) {
+                firstFrame = false;
+                console.log('📷 Amap相机:', JSON.stringify({
+                    pos: params.position.map(v=>+v.toFixed(1)),
+                    lookAt: params.lookAt.map(v=>+v.toFixed(1)),
+                    up: params.up.map(v=>+v.toFixed(2)),
+                    fov: params.fov, near: params.near, far: params.far
+                }));
+            }
+
+            camera.near = params.near || 1;
+            camera.far = params.far || 1 << 30;
+            camera.fov = params.fov || CONFIG.camera.fov;
+
+            // 直接用矩阵构建相机
+            const p = params.position;
+            const t = params.lookAt;
+            const u = params.up;
+            const fwd = new THREE.Vector3(t[0]-p[0], t[1]-p[1], t[2]-p[2]).normalize();
+            const rgt = new THREE.Vector3().crossVectors(
+                new THREE.Vector3(u[0], u[1], u[2]), fwd).normalize();
+            const up2 = new THREE.Vector3().crossVectors(fwd, rgt);
+
+            const m = camera.matrix.elements;
+            m[0]=rgt.x; m[4]=up2.x; m[8]=-fwd.x; m[12]=p[0];
+            m[1]=rgt.y; m[5]=up2.y; m[9]=-fwd.y; m[13]=p[1];
+            m[2]=rgt.z; m[6]=up2.z; m[10]=-fwd.z; m[14]=p[2];
+            m[3]=0;     m[7]=0;     m[11]=0;      m[15]=1;
+            camera.matrixAutoUpdate = false;
+            camera.matrixWorld.copy(camera.matrix);
+            camera.updateProjectionMatrix();
+
+            // 渲染 Three.js 场景
+            renderer.resetState();
+            renderer.render(scene, camera);
+            renderer.resetState();
+
+            // 渲染 CSS2D 标签
+            labelRenderer.render(scene, camera);
+        },
+    });
+
+    map.add(gllayer);
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0x8899bb, 1.0));
+    const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+    sun.position.set(80, 120, 60);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0x8899cc, 0.5);
+    fill.position.set(-40, 80, -50);
+    scene.add(fill);
+
+    return { scene, camera, renderer, labelRenderer, customCoords, map, waitForInit };
+}
+
+// ========================================================
+// SECTION E: BUILD VENUE 3D OBJECTS
+// ========================================================
+
+/** Create venue buildings */
+function buildVenue(scene, localToAmap) {
+    const S = localToAmap(0, 1, 0).y - localToAmap(0, 0, 0).y; // scale: 1 meter in Amap units
+    const clickables = [];
+
+    const { w, d, h, color, pos } = CONFIG.building.main;
+    const [bw, bd, bh] = [w * S, d * S, h * S]; // scale dimensions
+    const amap = localToAmap(pos[0], pos[2], 0);
+    const col = new THREE.Color(color);
+    const bMat = new THREE.MeshStandardMaterial({
+        color: col, roughness: 0.2, metalness: 0.35,
+        transparent: true, opacity: 0.9,
+        emissive: col, emissiveIntensity: 0.25,
+    });
+    const mainBld = new THREE.Mesh(new THREE.BoxGeometry(bw, bd, bh), bMat);
+    mainBld.position.set(amap.x, amap.y, amap.z + bh / 2);
+    mainBld.castShadow = true; mainBld.receiveShadow = true;
+    scene.add(mainBld);
+
+    // Glowing outline
+    const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(bw + 1, bd + 1, bh + 1));
+    const edgeLine = new THREE.LineSegments(edgeGeo,
+        new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.5 }));
+    edgeLine.position.copy(mainBld.position);
+    scene.add(edgeLine);
+
+    // Sub buildings
+    for (const sb of CONFIG.building.subs) {
+        const mat = new THREE.MeshStandardMaterial({ color: sb.color, roughness: 0.45, metalness: 0.15, transparent: true, opacity: 0.8 });
+        const sa = localToAmap(sb.x, sb.z, 0);
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(sb.w * S, sb.d * S, sb.h * S), mat);
+        mesh.position.set(sa.x, sa.y, sa.z + sb.h * S / 2);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        scene.add(mesh);
+    }
+
+    // Venue ground highlight
+    const rw = CONFIG.building.roadWidth || 8;
+    const glowGeo = new THREE.PlaneGeometry((w + rw * 2 + 10) * S, (d + rw * 2 + 10) * S);
+    const glowMat = new THREE.MeshBasicMaterial({
+        color: col, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
+    });
+    const glowPlane = new THREE.Mesh(glowGeo, glowMat);
+    glowPlane.position.set(amap.x, amap.y, 0.02);
+    scene.add(glowPlane);
+
+    return { clickables };
+}
+
+/** Create entrance markers */
+function createMarkers(scene, localToAmap) {
+    const markerData = [];
+
+    for (const [key, m] of Object.entries(CONFIG.markers)) {
+        const amap = localToAmap(m.pos[0], m.pos[2], 0); // convert (east,north) meters → Amap coords
+        const col = new THREE.Color(m.color);
+
+        // Glowing cone — ConeGeometry points in Y, rotate to Z (up)
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(1.0, 3.2, 16),
+            new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.7, transparent: true, opacity: 0.9 }));
+        cone.rotation.x = -Math.PI / 2;
+        cone.position.set(amap.x, amap.y, amap.z + 1.7);
+        cone.castShadow = true;
+        cone.userData = { markerKey: key, baseEmissive: 0.7, phase: Math.random() * Math.PI * 2 };
+        scene.add(cone);
+
+        // Ground ring (flat on XY, Z is up)
+        const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.0, 32),
+            new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.4, transparent: true, opacity: 0.35, side: THREE.DoubleSide }));
+        ring.position.set(amap.x, amap.y, amap.z + 0.12);
+        ring.userData = { markerKey: key, phase: Math.random() * Math.PI * 2 };
+        scene.add(ring);
+
+        // CSS2D Label
+        const div = document.createElement('div');
+        div.textContent = m.icon + ' ' + m.label;
+        div.style.cssText = `
+            color:#fff; font-size:14px; font-weight:700;
+            text-shadow: 0 0 14px ${m.color}, 0 0 28px ${m.color};
+            background: rgba(10,14,23,0.78); padding: 4px 14px;
+            border-radius: 16px; border: 1.5px solid ${m.color};
+            backdrop-filter: blur(6px); letter-spacing: 1px; white-space: nowrap;
+        `;
+        const label = new CSS2DObject(div);
+        label.position.set(amap.x, amap.y, amap.z + 4.2);
+        scene.add(label);
+
+        const lngLat = localToLngLat(m.pos[0], m.pos[2], CONFIG.geo.center);
+        markerData.push({ key, pos: [amap.x, amap.y, amap.z], lngLat, color: m.color });
+    }
+
+    return markerData;
+}
+
+/** Create dynamic routes */
+function createRoutes(scene, localToAmap) {
+    const routeObjs = [];
+    for (const [key, r] of Object.entries(CONFIG.routes)) {
+        // Config pts: [x_east_m, y_base_m, z_north_m] → Amap coords
+        const pts = r.pts.map(p => {
+            const a = localToAmap(p[0], p[2], p[1]);
+            return new THREE.Vector3(a.x, a.y, a.z);
+        });
+        const curve = new THREE.CatmullRomCurve3(pts, false);
+
+        const tube = new THREE.Mesh(
+            new THREE.TubeGeometry(curve, 64, 0.22, 8, false),
+            new THREE.MeshStandardMaterial({ color: r.color, emissive: r.color, emissiveIntensity: 0.15, transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+        scene.add(tube);
+
+        const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 12),
+            new THREE.MeshStandardMaterial({ color: r.color, emissive: r.color, emissiveIntensity: 1.4 }));
+        sphere.castShadow = true;
+        scene.add(sphere);
+
+        routeObjs.push({ curve, sphere, speed: r.speed, t: Math.random() });
+    }
+    return routeObjs;
+}
+
+/** Create parking lot indicators */
+function createParkingLots(scene, localToAmap) {
+    const parkingData = [];
+    if (!CONFIG.parking) return parkingData;
+
+    for (const p of CONFIG.parking) {
+        const amap = localToAmap(p.offset[0], p.offset[2], 0); // (east,north) → Amap
+        const ratio = p.available / p.capacity;
+        const statusColor = ratio > 0.5 ? '#3fb950' : ratio > 0.2 ? '#ffb347' : '#f85149';
+        const col = new THREE.Color(statusColor);
+
+        // Parking area (flat on XY, Z is up)
+        const plane = new THREE.Mesh(
+            new THREE.PlaneGeometry(14, 10),
+            new THREE.MeshStandardMaterial({
+                color: col, emissive: col, emissiveIntensity: 0.3,
+                transparent: true, opacity: 0.3, side: THREE.DoubleSide,
+            }));
+        plane.position.set(amap.x, amap.y, amap.z + 0.08);
+        plane.userData = { parkingIndex: CONFIG.parking.indexOf(p) };
+        scene.add(plane);
+
+        // Border
+        const edgeGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(14, 10));
+        const border = new THREE.LineSegments(edgeGeo,
+            new THREE.LineBasicMaterial({ color: statusColor, transparent: true, opacity: 0.6 }));
+        border.position.set(amap.x, amap.y, amap.z + 0.1);
+        scene.add(border);
+
+        // Occupancy pillar
+        const pillarH = Math.max(0.8, ratio * 6);
+        const pillar = new THREE.Mesh(
+            new THREE.BoxGeometry(1.2, 1.2, pillarH),
+            new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, transparent: true, opacity: 0.7 }));
+        pillar.position.set(amap.x, amap.y, amap.z + pillarH / 2 + 0.1);
+        scene.add(pillar);
+
+        // Label
+        const div = document.createElement('div');
+        div.innerHTML = `<b>${p.name}</b><br><span style="font-size:11px">${p.available}/${p.capacity}</span>`;
+        div.style.cssText = `
+            color:#fff; font-size:11px; text-align:center;
+            background: rgba(10,14,23,0.8); padding: 4px 10px;
+            border-radius: 10px; border: 1px solid ${statusColor};
+            white-space: nowrap; line-height:1.3;
+        `;
+        const label = new CSS2DObject(div);
+        label.position.set(amap.x, amap.y, amap.z + pillarH + 1.5);
+        scene.add(label);
+
+        parkingData.push({ ...p, statusColor });
+    }
+    return parkingData;
+}
+
+/** Create ambient particles */
+function createParticles(scene, localPerMeter) {
+    const pCount = CONFIG.particles.count;
+    const pGeo = new THREE.BufferGeometry();
+    const positions = new Float32Array(pCount * 3);
+    // Scale spread/height by the coordinate scale factor
+    const spread = CONFIG.particles.spread * localPerMeter;
+    const pHeight = CONFIG.particles.height * localPerMeter;
+    for (let i = 0; i < pCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * spread * 2;     // X: east
+        positions[i * 3 + 1] = (Math.random() - 0.5) * spread * 2; // Y: north
+        positions[i * 3 + 2] = Math.random() * pHeight;            // Z: up
+    }
+    pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const pMat = new THREE.PointsMaterial({
+        color: 0x8899cc, size: 0.12, transparent: true, opacity: 0.55,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const particles = new THREE.Points(pGeo, pMat);
+    particles.name = 'particles';
+    scene.add(particles);
+    return particles;
+}
+
+// ========================================================
+// SECTION F: UI CONTROLLER
+// ========================================================
+class UIController {
+    constructor() {
+        this.loadingEl = document.getElementById('loading-screen');
+        this.loaderBar = document.getElementById('loader-bar');
+        this.loaderPct = document.getElementById('loader-pct');
+        this.infoCard = document.getElementById('info-card');
+        this.infoBackdrop = document.getElementById('info-card-backdrop');
+        this._bindInfoClose();
+    }
+
+    setProgress(msg, pct) {
+        this.loaderBar.style.width = pct + '%';
+        this.loaderPct.textContent = msg || (Math.round(pct) + '%');
+    }
+
+    hideLoading() { this.loadingEl.classList.add('hidden'); }
+
+    showInfo(key) {
+        const m = CONFIG.markers[key];
+        if (!m) return;
+        document.getElementById('info-icon').textContent = m.icon;
+        document.getElementById('info-title-text').textContent = m.label;
+        const badge = document.getElementById('info-badge');
+        badge.textContent = m.badge;
+        badge.className = 'badge ' + key;
+        document.getElementById('info-desc').textContent = m.desc;
+        const featEl = document.getElementById('info-features');
+        featEl.innerHTML = (m.features || []).map(f => `<span class="info-feature">${f}</span>`).join('');
+        document.getElementById('info-btn-nav').onclick = () => {
+            this._onNavigate && this._onNavigate(key);
+            this.hideInfo();
+        };
+        this.infoCard.classList.add('show');
+        this.infoBackdrop.classList.add('show');
+    }
+
+    hideInfo() {
+        this.infoCard.classList.remove('show');
+        this.infoBackdrop.classList.remove('show');
+    }
+
+    setActivePreset(name) {
+        const el = document.querySelector('#camera-presets');
+        if (!el) return;
+        el.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.preset === name));
+    }
+
+    _bindInfoClose() {
+        document.querySelector('.info-close').addEventListener('click', () => this.hideInfo());
+        document.getElementById('info-card-backdrop').addEventListener('click', () => this.hideInfo());
+        document.getElementById('info-btn-close').addEventListener('click', () => this.hideInfo());
+    }
+
+    /** Update parking panel */
+    updateParkingPanel() {
+        const list = document.getElementById('parking-list');
+        if (!list) return;
+        if (!CONFIG.parking || !CONFIG.parking.length) { list.innerHTML = ''; return; }
+        list.innerHTML = CONFIG.parking.map(p => {
+            const ratio = p.available / p.capacity;
+            const barColor = ratio > 0.5 ? '#3fb950' : ratio > 0.2 ? '#ffb347' : '#f85149';
+            return `<div style="margin-bottom:6px">
+                <div class="parking-row">
+                    <span class="parking-dot" style="background:${barColor}"></span>
+                    <span class="parking-name">${p.name}</span>
+                    <span class="parking-count">${p.available}/${p.capacity}</span>
+                </div>
+                <div class="parking-bar"><div class="parking-bar-fill" style="width:${ratio*100}%;background:${barColor}"></div></div>
+            </div>`;
+        }).join('');
+    }
+}
+
+// ========================================================
+// SECTION G: AMAP INIT + APP BOOT
+// ========================================================
+function loadScript(url) {
+    return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = url;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('Failed to load: ' + url));
+        document.head.appendChild(s);
+    });
+}
+
+async function initAmap() {
+    const geo = CONFIG.geo;
+    if (!geo || !geo.amapKey || geo.amapKey === 'YOUR_AMAP_KEY_HERE') {
+        // Show setup hint, fallback to classic
+        document.getElementById('setup-hint').classList.add('show');
+        document.getElementById('loading-screen').classList.add('hidden');
+        console.warn('⚠️ 未配置高德地图 Key，使用经典 3D 模式');
+        // Try loading classic version
+        window.location.href = '/index-classic.html';
+        return null;
+    }
+
+    // Set security code BEFORE loading Amap (required for keys created after 2021-12)
+    if (geo.amapSecurityCode) {
+        window._AMapSecurityConfig = { securityJsCode: geo.amapSecurityCode };
+    }
+
+    // Load Amap JS API
+    const amapUrl = `https://webapi.amap.com/maps?v=2.0&key=${geo.amapKey}`;
+    await loadScript(amapUrl);
+
+    // Also load AMap helper plugins if needed
+    if (!window.AMap) {
+        console.error('❌ 高德地图加载失败');
+        return null;
+    }
+
+    const map = new AMap.Map('map-container', {
+        viewMode: '3D',
+        center: geo.center,
+        zoom: geo.zoom || 17,
+        pitch: geo.pitch || 55,
+        rotation: geo.rotation || 20,
+        mapStyle: geo.mapStyle || 'amap://styles/dark',
+        features: ['bg', 'road', 'building', 'point'],
+        showBuildingBlock: true,
+        showLabel: true,
+        buildingAnimation: true,
+        // 允许 WebGL 内容
+        webglParams: { preserveDrawingBuffer: false },
+    });
+
+    console.log('✅ 高德地图 3D 初始化完成');
+    return map;
+}
+
+// ========================================================
+// 路线和区域展示（纯展示，无编辑功能）
+function displayRoutesAndAreas(map) {
+    let routeCount = 0, areaCount = 0;
+    if (CONFIG.routes) {
+        Object.entries(CONFIG.routes).forEach(([name, r]) => {
+            if (!r.pts || r.pts.length < 2) return;
+            const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
+            map.add(new AMap.Polyline({ path, strokeColor: typeof r.color === 'string' ? r.color : '#3b82f6', strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 }));
+            routeCount++;
+        });
+    }
+    if (CONFIG.areas) {
+        Object.entries(CONFIG.areas).forEach(([name, a]) => {
+            if (!a.pts || a.pts.length < 3) return;
+            const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
+            map.add(new AMap.Polygon({ path, strokeColor: a.color || '#10b981', strokeWeight: a.strokeWidth || 2, fillColor: a.color || '#10b981', fillOpacity: a.opacity || 0.2, zIndex: 5 }));
+            areaCount++;
+        });
+    }
+    document.getElementById('layer-route-count').textContent = routeCount;
+    document.getElementById('layer-area-count').textContent = areaCount;
+}
+
+
+async function boot() {
+    const ui = new UIController();
+    ui.setProgress('加载配置...', 5);
+
+    // Load config
+    await loadConfig();
+
+    // Init Amap
+    ui.setProgress('初始化地图...', 20);
+    const map = await initAmap();
+    if (!map) return; // Fallback handled in initAmap
+
+    // Setup Three.js — wait for GLCustomLayer init, then create objects
+    ui.setProgress('初始化 3D 引擎...', 40);
+    const { scene, camera, renderer, labelRenderer, waitForInit } = setupThreeScene(map);
+
+    // waitForInit returns a promise that resolves after GLCustomLayer.init runs
+    ui.setProgress('等待图层就绪...', 50);
+    const { localToAmap, localPerMeter } = await waitForInit();
+
+    ui.setProgress('构建场馆模型...', 60);
+    buildVenue(scene, localToAmap);
+
+    ui.setProgress('放置入口标记...', 70);
+    const markerData = createMarkers(scene, localToAmap);
+
+    ui.setProgress('生成路线导航...', 80);
+    const routeObjs = createRoutes(scene, localToAmap);
+
+    ui.setProgress('配置停车场...', 85);
+    const parkingData = createParkingLots(scene, localToAmap);
+
+    ui.setProgress('生成环境粒子...', 90);
+    const particleSystem = createParticles(scene, localPerMeter);
+    const pHeightScaled = (CONFIG.particles.height || 35) * localPerMeter;
+    const pSpreadScaled = (CONFIG.particles.spread || 90) * localPerMeter;
+    ui.updateParkingPanel();
+
+    // Init drawing manager
+    displayRoutesAndAreas(map);
+
+    // AMap search autocomplete
+    AMap.plugin('AMap.AutoComplete', () => {
+        const auto = new AMap.AutoComplete({ city: '成都', citylimit: true });
+        const searchInput = document.getElementById('search-input');
+        const searchResults = document.getElementById('search-results');
+        searchInput.addEventListener('input', () => {
+            const val = searchInput.value.trim();
+            if (!val) { searchResults.style.display = 'none'; return; }
+            auto.search(val, (status, result) => {
+                if (status === 'complete' && result.tips) {
+                    searchResults.innerHTML = '';
+                    result.tips.slice(0, 6).forEach(t => {
+                        const div = document.createElement('div');
+                        div.className = 'search-item';
+                        div.dataset.lng = t.location?.lng || '';
+                        div.dataset.lat = t.location?.lat || '';
+                        div.textContent = '📍 ' + (t.name || '');
+                        searchResults.appendChild(div);
+                    });
+                    searchResults.style.display = searchResults.children.length ? 'block' : 'none';
+                }
+            });
+        });
+        searchResults.addEventListener('click', (e) => {
+            const item = e.target.closest('.search-item');
+            if (!item) return;
+            const lng = parseFloat(item.dataset.lng), lat = parseFloat(item.dataset.lat);
+            if (lng && lat) {
+                map.setZoomAndCenter(18, [lng, lat]);
+                searchResults.style.display = 'none';
+                searchInput.value = item.textContent.replace('📍 ', '');
+            }
+        });
+        document.addEventListener('click', (e) => { if (!e.target.closest('.sb-search')) searchResults.style.display = 'none'; });
+    });
+
+    // ====== Indoor Positioning & Navigation ======
+    let myLocation = null;       // {lng, lat}
+    let locationMarker = null;   // blue dot on map
+    let navLine = null;          // route line
+
+    document.getElementById('btn-my-location').addEventListener('click', function() {
+        this.textContent = '👆 请点击地图设置位置';
+        this.style.background = '#f59e0b';
+        this.style.borderColor = '#f59e0b';
+        this.style.color = '#fff';
+    });
+
+    document.getElementById('btn-clear-location').addEventListener('click', () => {
+        myLocation = null;
+        if (locationMarker) { map.remove(locationMarker); locationMarker = null; }
+        if (navLine) { map.remove(navLine); navLine = null; }
+        document.getElementById('location-info').style.display = 'none';
+        document.getElementById('nav-info').style.display = 'none';
+        const btn = document.getElementById('btn-my-location');
+        btn.textContent = '📍 设置我的位置';
+        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+    });
+
+    // Map click handler for location setting
+    map.on('click', (e) => {
+        const btn = document.getElementById('btn-my-location');
+        if (btn.textContent.includes('请点击')) {
+            // User is setting their location
+            myLocation = { lng: e.lnglat.lng, lat: e.lnglat.lat };
+            if (locationMarker) map.remove(locationMarker);
+            locationMarker = new AMap.Marker({
+                position: [myLocation.lng, myLocation.lat],
+                icon: new AMap.Icon({
+                    size: new AMap.Size(24, 24),
+                    image: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png',
+                    imageSize: new AMap.Size(24, 24),
+                }),
+                zIndex: 100,
+                title: '我的位置'
+            });
+            map.add(locationMarker);
+            document.getElementById('location-info').style.display = 'block';
+            document.getElementById('loc-coords').textContent = '已定位: ' + myLocation.lng.toFixed(5) + ', ' + myLocation.lat.toFixed(5);
+            btn.textContent = '📍 我的位置';
+            btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+        }
+    });
+
+    // Extend marker info click to show navigation
+    const origShowInfo = ui.showInfo;
+    ui.showInfo = function(key) {
+        origShowInfo.call(this, key);
+        if (!myLocation) return;
+        const md = markerData.find(m => m.key === key);
+        if (!md || !md.lngLat) return;
+
+        // Draw walking route
+        if (navLine) map.remove(navLine);
+        navLine = new AMap.Polyline({
+            path: [[myLocation.lng, myLocation.lat], [md.lngLat[0], md.lngLat[1]]],
+            strokeColor: '#f59e0b', strokeWeight: 3, strokeOpacity: 0.8,
+            strokeStyle: 'dashed', lineJoin: 'round', zIndex: 50,
+            showDir: true,
+        });
+        map.add(navLine);
+
+        // Calculate distance
+        const dist = AMap.GeometryUtil.distance(
+            [myLocation.lng, myLocation.lat],
+            [md.lngLat[0], md.lngLat[1]]
+        );
+        const walkTime = Math.ceil(dist / 80); // 80m/min walking speed
+        const info = document.getElementById('nav-info');
+        info.style.display = 'block';
+        info.textContent = '📍 ' + dist.toFixed(0) + 'm · 步行约 ' + (walkTime < 1 ? '<1' : walkTime) + ' 分钟';
+    };
+    map.on('click', (e) => {
+        const clicked = e.lnglat;
+        for (const md of markerData) {
+            const dist = AMap.GeometryUtil.distance(
+                [clicked.lng, clicked.lat],
+                [md.lngLat[0], md.lngLat[1]]
+            );
+            if (dist < 25) {
+                ui.showInfo(md.key);
+                return;
+            }
+        }
+        ui.hideInfo();
+    });
+
+    // Smooth camera animation helper
+    function flyTo(targetLngLat, targetZoom, targetPitch, targetRotation, duration = 1200) {
+        const startZoom = map.getZoom();
+        const startPitch = map.getPitch();
+        const startRotation = map.getRotation();
+        const startCenter = map.getCenter();
+        const startTime = performance.now();
+
+        return new Promise(resolve => {
+            function step(now) {
+                const elapsed = now - startTime;
+                const t = Math.min(elapsed / duration, 1);
+                // easeInOutCubic
+                const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+                map.setZoom(startZoom + (targetZoom - startZoom) * ease);
+                map.setPitch(startPitch + (targetPitch - startPitch) * ease);
+                map.setRotation(startRotation + (targetRotation - startRotation) * ease);
+
+                const lng = startCenter.lng + (targetLngLat[0] - startCenter.lng) * ease;
+                const lat = startCenter.lat + (targetLngLat[1] - startCenter.lat) * ease;
+                map.setCenter([lng, lat]);
+
+                if (t < 1) {
+                    requestAnimationFrame(step);
+                } else {
+                    resolve();
+                }
+            }
+            requestAnimationFrame(step);
+        });
+    }
+
+    // Map style switching (bottom-right controls)
+    const layerStyles = { dark: 'amap://styles/dark', normal: 'amap://styles/light', satellite: 'amap://styles/light' };
+    let satelliteLayer = null;
+    document.querySelectorAll('#bottom-controls button[data-layer]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#bottom-controls button[data-layer]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const layer = btn.dataset.layer;
+            if (layer === 'satellite') {
+                if (!satelliteLayer) satelliteLayer = new AMap.TileLayer.Satellite();
+                map.setLayers([new AMap.TileLayer(), satelliteLayer]);
+            } else {
+                map.setLayers([new AMap.TileLayer()]);
+            }
+            map.setMapStyle(layerStyles[layer] || 'amap://styles/dark');
+        });
+    });
+
+    // 2D/3D toggle (bottom-right controls)
+    let savedPitch = CONFIG.geo.pitch || 55;
+    document.querySelectorAll('#bottom-controls button[data-mode]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#bottom-controls button[data-mode]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            if (btn.dataset.mode === '2d') {
+                savedPitch = map.getPitch();
+                map.setPitch(0);
+                map.setRotation(0);
+            } else {
+                map.setPitch(savedPitch);
+            }
+        });
+    });
+
+    // Auto-rotate (orbit the Amap camera)
+    let autoRotate = false;
+    let rotationAngle = CONFIG.geo.rotation || 20;
+    document.getElementById('btn-auto-rotate').addEventListener('click', () => {
+        autoRotate = !autoRotate;
+        const btn = document.getElementById('btn-auto-rotate');
+        if (autoRotate) { btn.textContent = '⏸'; btn.style.color = 'var(--accent-main)'; }
+        else { btn.textContent = '⟳'; btn.style.color = ''; }
+    });
+
+    // Animation loop — update objects, trigger GLCustomLayer render
+    const clock = new THREE.Clock();
+    function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(clock.getDelta(), 0.1);
+        const elapsed = clock.elapsedTime;
+
+        // Auto-rotate
+        if (autoRotate) {
+            rotationAngle += dt * 8;
+            map.setRotation(rotationAngle % 360);
+        }
+
+        // Update route spheres
+        for (const ro of routeObjs) {
+            ro.t += dt * 0.12 * ro.speed;
+            if (ro.t > 1) ro.t -= 1;
+            ro.sphere.position.copy(ro.curve.getPoint(ro.t));
+        }
+
+        // Pulse marker rings & cones
+        scene.children.forEach(child => {
+            if (child.isMesh && child.geometry.type === 'RingGeometry' && child.userData.phase !== undefined) {
+                const s = 1 + 0.25 * Math.sin(elapsed * 2.2 + child.userData.phase);
+                child.scale.set(s, s, 1);
+                child.material.opacity = 0.25 + 0.2 * Math.sin(elapsed * 2.2 + child.userData.phase);
+            }
+            if (child.isMesh && child.geometry.type === 'ConeGeometry' && child.userData.baseEmissive !== undefined) {
+                const base = child.userData.baseEmissive;
+                child.material.emissiveIntensity = base + 0.3 * Math.sin(elapsed * 2.5 + (child.userData.phase || 0));
+            }
+        });
+
+        // Animate particles (use scaled values)
+        if (particleSystem) {
+            const posArr = particleSystem.geometry.attributes.position.array;
+            for (let i = 0; i < posArr.length; i += 3) {
+                posArr[i + 2] += dt * 0.5 * localPerMeter; // rise in Z
+                if (posArr[i + 2] > pHeightScaled) {
+                    posArr[i + 2] = 0;
+                    posArr[i] = (Math.random() - 0.5) * pSpreadScaled * 2;
+                    posArr[i + 1] = (Math.random() - 0.5) * pSpreadScaled * 2;
+                }
+            }
+            particleSystem.geometry.attributes.position.needsUpdate = true;
+        }
+
+        // Trigger Amap re-render → GLCustomLayer.render() → Three.js renders
+        map.render();
+    }
+
+    // Simulate loading finish
+    ui.setProgress('就绪', 100);
+    await new Promise(r => setTimeout(r, 500));
+    ui.hideLoading();
+
+    // Start animation loop
+    animate();
+
+    // Resize
+    window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    console.log('✅ ' + (CONFIG.brand?.name||'3D 智慧导览') + ' 已就绪');
+    console.log('   🗺️  高德地图底图 + Three.js 3D 叠加层');
+    console.log('   📍 点击入口标记查看详情');
+    console.log('   🎯 右侧按钮切换视角');
+    console.log('   🅿️  右下角查看停车位实时数据');
+    console.log('   🌓 右下角切换地图样式');
+}
+
+// Launch
+boot().catch(err => {
+    console.error('启动失败:', err);
+    document.getElementById('loading-screen').innerHTML =
+        '<div style="color:#f85149;font-size:1.2rem;">⚠️ 加载失败: ' + err.message + '<br><small>请刷新页面重试</small></div>';
+});
+</script>
+</body>
+</html>

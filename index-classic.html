@@ -1,0 +1,936 @@
+﻿﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>会展中心 · 入场导览</title>
+
+    <!-- ============================================================
+    CSS DESIGN SYSTEM
+    ============================================================ -->
+    <style>
+        /* ---------- Reset & Base ---------- */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            overflow: hidden;
+            font-family: 'Inter', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+            background: #0a0e17;
+            color: #fff;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* ---------- Design Tokens ---------- */
+        :root {
+            --bg-deep:     #0a0e17;
+            --bg-panel:    rgba(12, 18, 30, 0.88);
+            --bg-glass:    rgba(255, 255, 255, 0.04);
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --border-active: rgba(255, 255, 255, 0.18);
+            --shadow-panel: 0 8px 32px rgba(0, 0, 0, 0.45);
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 22px;
+            --radius-full: 9999px;
+
+            --accent-main:  #4da6ff;
+            --accent-east:  #00d4aa;
+            --accent-west:  #ffb347;
+            --accent-vip:   #c79fff;
+            --text-primary:  rgba(255, 255, 255, 0.92);
+            --text-secondary: rgba(255, 255, 255, 0.58);
+            --text-muted:    rgba(255, 255, 255, 0.32);
+        }
+
+        /* ---------- Canvas ---------- */
+        #app-canvas { display: block; position: fixed; top: 0; left: 0; z-index: 0; }
+
+        /* ---------- Loading Screen ---------- */
+        #loading-screen {
+            position: fixed; inset: 0; z-index: 100;
+            background: var(--bg-deep);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            transition: opacity 0.6s ease, visibility 0.6s ease;
+        }
+        #loading-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        .loader-brand { font-size: 2rem; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 8px; }
+        .loader-brand span { color: var(--accent-main); }
+        .loader-sub { font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 40px; letter-spacing: 0.06em; }
+        .loader-track {
+            width: 240px; height: 3px; background: rgba(255,255,255,0.08);
+            border-radius: var(--radius-full); overflow: hidden;
+        }
+        .loader-bar {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, var(--accent-main), var(--accent-vip));
+            border-radius: var(--radius-full);
+            transition: width 0.3s ease;
+        }
+        .loader-pct { margin-top: 12px; font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+        /* ---------- HUD: Top Bar ---------- */
+        #hud-top {
+            position: fixed; top: 20px; left: 20px; z-index: 10;
+            pointer-events: none;
+        }
+        .hud-title {
+            font-size: 1.5rem; font-weight: 700; letter-spacing: 0.02em;
+            background: var(--bg-panel); backdrop-filter: blur(16px);
+            padding: 10px 22px; border-radius: var(--radius-md);
+            border-left: 4px solid var(--accent-main);
+            box-shadow: var(--shadow-panel);
+        }
+        .hud-title small { display: block; font-size: 0.6875rem; font-weight: 400; color: var(--text-secondary); letter-spacing: 0.05em; text-transform: uppercase; margin-top: 2px; }
+
+        /* ---------- HUD: Bottom Legend ---------- */
+        #hud-legend {
+            position: fixed; bottom: 30px; left: 24px; z-index: 10;
+            pointer-events: none;
+            background: var(--bg-panel); backdrop-filter: blur(16px);
+            padding: 14px 20px; border-radius: var(--radius-md);
+            box-shadow: var(--shadow-panel);
+            font-size: 0.8125rem;
+        }
+        .legend-row { display: flex; align-items: center; gap: 10px; margin: 5px 0; }
+        .legend-dot { width: 24px; height: 4px; border-radius: 2px; }
+        .legend-dot.public { background: var(--accent-main); box-shadow: 0 0 10px var(--accent-main); }
+        .legend-dot.vip    { background: var(--accent-vip);  box-shadow: 0 0 10px var(--accent-vip); }
+        .legend-hint { margin-top: 8px; font-size: 0.6875rem; color: var(--text-muted); }
+
+        /* ---------- Camera Preset Buttons ---------- */
+        #camera-presets {
+            position: fixed; right: 20px; top: 50%; transform: translateY(-50%);
+            z-index: 10;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        #camera-presets button {
+            background: var(--bg-panel); backdrop-filter: blur(16px);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            padding: 10px 18px;
+            border-radius: var(--radius-sm);
+            font-size: 0.8125rem; font-family: inherit;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            white-space: nowrap;
+            letter-spacing: 0.03em;
+            text-align: left;
+        }
+        #camera-presets button:hover {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border-color: var(--border-active);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
+        #camera-presets button.active {
+            color: #fff;
+            border-color: var(--accent-main);
+            box-shadow: 0 0 20px rgba(77,166,255,0.25);
+        }
+
+        /* ---------- Auto-Rotate Toggle ---------- */
+        #btn-auto-rotate {
+            position: fixed; top: 24px; right: 24px; z-index: 10;
+            width: 44px; height: 44px;
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-panel); backdrop-filter: blur(16px);
+            color: var(--text-secondary); font-size: 1.2rem;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.25s ease;
+            box-shadow: var(--shadow-panel);
+        }
+        #btn-auto-rotate:hover { color: #fff; border-color: var(--border-active); }
+        #btn-auto-rotate.on { color: var(--accent-main); border-color: var(--accent-main); box-shadow: 0 0 16px rgba(77,166,255,0.3); }
+
+        /* ---------- Info Card ---------- */
+        #info-card-backdrop {
+            position: fixed; inset: 0; z-index: 25;
+            background: rgba(0,0,0,0.35);
+            opacity: 0; visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        #info-card-backdrop.show { opacity: 1; visibility: visible; }
+
+        #info-card {
+            position: fixed; z-index: 30;
+            bottom: 40px; left: 50%; transform: translateX(-50%) translateY(20px);
+            width: 420px; max-width: calc(100vw - 32px);
+            background: var(--bg-panel); backdrop-filter: blur(24px);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 28px 28px 24px;
+            box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+            opacity: 0; visibility: hidden;
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        #info-card.show { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+
+        .info-close {
+            position: absolute; top: 12px; right: 14px;
+            width: 32px; height: 32px; border-radius: var(--radius-full);
+            border: none; background: rgba(255,255,255,0.06);
+            color: var(--text-secondary); font-size: 1rem;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s ease;
+        }
+        .info-close:hover { background: rgba(255,255,255,0.14); color: #fff; }
+
+        .info-icon { font-size: 2.5rem; margin-bottom: 8px; }
+        .info-title {
+            font-size: 1.25rem; font-weight: 700; margin-bottom: 4px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .info-title .badge {
+            display: inline-block; font-size: 0.625rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.06em;
+            padding: 4px 10px; border-radius: var(--radius-full);
+        }
+        .badge.main { background: rgba(77,166,255,0.2);  color: var(--accent-main); }
+        .badge.east { background: rgba(0,212,170,0.2);   color: var(--accent-east); }
+        .badge.west { background: rgba(255,179,71,0.2);  color: var(--accent-west); }
+        .badge.vip  { background: rgba(199,159,255,0.2); color: var(--accent-vip); }
+
+        .info-desc { font-size: 0.875rem; color: var(--text-secondary); margin: 10px 0 16px; line-height: 1.5; }
+
+        .info-features { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+        .info-feature {
+            font-size: 0.75rem; padding: 6px 12px;
+            border-radius: var(--radius-full);
+            background: var(--bg-glass); border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .info-action {
+            display: flex; gap: 10px;
+        }
+        .info-btn {
+            flex: 1; padding: 10px 0; border-radius: var(--radius-sm);
+            font-family: inherit; font-size: 0.8125rem; font-weight: 600;
+            cursor: pointer; border: none;
+            transition: all 0.2s ease;
+            letter-spacing: 0.02em;
+        }
+        .info-btn.primary {
+            background: var(--accent-main); color: #000;
+        }
+        .info-btn.primary:hover { filter: brightness(1.15); }
+        .info-btn.ghost {
+            background: transparent; color: var(--text-secondary); border: 1px solid var(--border-subtle);
+        }
+        .info-btn.ghost:hover { border-color: var(--border-active); color: #fff; }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 768px) {
+            .hud-title { font-size: 1.15rem; padding: 8px 16px; }
+            #hud-legend { bottom: 16px; left: 12px; padding: 10px 14px; font-size: 0.75rem; }
+            #camera-presets {
+                right: auto; left: 50%; top: auto; bottom: 16px;
+                transform: translateX(-50%);
+                flex-direction: row; gap: 4px;
+                background: var(--bg-panel); border-radius: var(--radius-full);
+                padding: 5px 8px;
+            }
+            #camera-presets button { padding: 8px 12px; font-size: 0.6875rem; border: none; }
+            #btn-auto-rotate { top: 16px; right: 12px; width: 38px; height: 38px; }
+            #info-card { bottom: 100px; width: calc(100vw - 24px); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ============================================================
+    HTML OVERLAY LAYERS
+    ============================================================ -->
+
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+        <div class="loader-brand">会展<span>中心</span></div>
+        <div class="loader-sub">EXHIBITION CENTER</div>
+        <div class="loader-track"><div class="loader-bar" id="loader-bar"></div></div>
+        <div class="loader-pct" id="loader-pct">0%</div>
+    </div>
+
+    <!-- Top HUD -->
+    <div id="hud-top">
+        <div class="hud-title">
+            🏛️ 会展中心 · 入场导览
+            <small>Interactive 3D Navigation</small>
+        </div>
+    </div>
+
+    <!-- Legend -->
+    <div id="hud-legend">
+        <div class="legend-row"><span class="legend-dot public"></span> 普通观众路线</div>
+        <div class="legend-row"><span class="legend-dot vip"></span> VIP 专属路线</div>
+        <div class="legend-hint">🖱️ 拖拽旋转 · 滚轮缩放 · 点击入口查看详情</div>
+    </div>
+
+    <!-- Camera Presets -->
+    <div id="camera-presets">
+        <button data-preset="overview" class="active">🏙️ 全景</button>
+        <button data-preset="main">🚪 主入口</button>
+        <button data-preset="east">🏢 东入口</button>
+        <button data-preset="west">🏢 西入口</button>
+        <button data-preset="vip">👑 VIP入口</button>
+    </div>
+
+    <!-- Auto-Rotate Toggle -->
+    <button id="btn-auto-rotate" title="自动旋转">⟳</button>
+
+    <!-- Info Card Backdrop -->
+    <div id="info-card-backdrop"></div>
+
+    <!-- Info Card -->
+    <div id="info-card">
+        <button class="info-close">✕</button>
+        <div class="info-icon" id="info-icon">🚪</div>
+        <div class="info-title">
+            <span id="info-title-text">主入口</span>
+            <span class="badge main" id="info-badge">MAIN</span>
+        </div>
+        <p class="info-desc" id="info-desc"></p>
+        <div class="info-features" id="info-features"></div>
+        <div class="info-action">
+            <button class="info-btn primary" id="info-btn-nav">📍 导航至此</button>
+            <button class="info-btn ghost" id="info-btn-close">关闭</button>
+        </div>
+    </div>
+
+    <!-- ============================================================
+    THREE.JS IMPORT MAP
+    ============================================================ -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <!-- ============================================================
+    APPLICATION JAVASCRIPT
+    ============================================================ -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+        // ========================================================
+        // SECTION A: CONFIGURATION (loaded from config.json)
+        // ========================================================
+        let CONFIG = null;
+
+        // 默认配置（config.json 加载失败时使用）
+        const DEFAULT_CONFIG = {
+            groundSize: 200, fogColor: '#0a0e17', fogNear: 60, fogFar: 220,
+            building: {
+                main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0] },
+                subs: [
+                    { w: 12, d: 12, h: 8, x: -45, z: -35, color: '#253a6a' },
+                    { w: 15, d: 10, h: 6, x: 50, z: -30, color: '#2a4075' },
+                    { w: 10, d: 15, h: 9, x: 40, z: 40, color: '#1f3560' },
+                    { w: 14, d: 14, h: 7, x: -50, z: 38, color: '#2a3f70' },
+                ], roadWidth: 8,
+            },
+            markers: {
+                main: { pos: [0, 0, 35], color: '#4da6ff', icon: '🚪', label: '主入口', badge: 'MAIN',
+                    desc: '会展中心正门，面向南广场。', features: ['🎫 签到注册', 'ℹ️ 综合咨询台'] },
+                east: { pos: [25, 0, 0], color: '#00d4aa', icon: '🏢', label: '东入口', badge: 'EAST',
+                    desc: '东侧入口，团体通道。', features: ['👥 团体通道', '♿ 无障碍通道'] },
+                west: { pos: [-25, 0, 0], color: '#ffb347', icon: '🏢', label: '西入口', badge: 'WEST',
+                    desc: '西侧入口，展商通道。', features: ['📦 展商通道', '🎤 会议厅入口'] },
+                vip: { pos: [0, 0, -35], color: '#c79fff', icon: '👑', label: 'VIP入口', badge: 'VIP',
+                    desc: '贵宾专属通道。', features: ['🅿️ 专属停车', '🍸 贵宾休息室'] },
+            },
+            routes: {
+                public: { pts: [[0, 0.6, 55], [0, 0.6, 40], [0, 0.6, 28], [0, 0.6, 10]], color: '#4da6ff', speed: 0.9 },
+                vip: { pts: [[-40, 0.6, -50], [-40, 0.6, -30], [-14, 0.6, -35], [0, 0.6, -35]], color: '#c79fff', speed: 0.7 },
+            },
+            particles: { count: 180, spread: 90, height: 35 },
+            camera: {
+                fov: 42, near: 0.5, far: 400,
+                initial: { pos: [70, 50, 80], target: [0, 4, 0] },
+                presets: {
+                    overview: { pos: [70, 50, 80], target: [0, 4, 0] },
+                    main: { pos: [0, 10, 55], target: [0, 4, 30] },
+                    east: { pos: [45, 10, 10], target: [22, 3, 0] },
+                    west: { pos: [-45, 10, 10], target: [-22, 3, 0] },
+                    vip: { pos: [0, 10, -55], target: [0, 4, -30] },
+                },
+                tweenMs: 1400, orbitDamping: 0.08, minDist: 12, maxDist: 160, maxPolarFactor: 0.46,
+            },
+        };
+
+        async function loadConfig() {
+            try {
+                const resp = await fetch('/config.json');
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                CONFIG = await resp.json();
+                // 处理 maxPolar（JSON 不支持 Math.PI 表达式）
+                if (CONFIG.camera.maxPolarFactor) {
+                    CONFIG.camera.maxPolar = Math.PI * CONFIG.camera.maxPolarFactor;
+                }
+                console.log('✅ 配置已从 config.json 加载');
+            } catch (err) {
+                console.warn('⚠️ 配置加载失败，使用默认配置:', err.message);
+                CONFIG = DEFAULT_CONFIG;
+                CONFIG.camera.maxPolar = Math.PI * (CONFIG.camera.maxPolarFactor || 0.46);
+            }
+            // 路由颜色从 hex 字符串转数字
+            for (const key of Object.keys(CONFIG.routes)) {
+                const c = CONFIG.routes[key].color;
+                if (typeof c === 'string' && c.startsWith('#')) {
+                    CONFIG.routes[key].color = parseInt(c.slice(1), 16);
+                }
+            }
+        }
+
+        // ========================================================
+        // SECTION B: UTILITIES
+        // ========================================================
+        const lerp = (a, b, t) => a + (b - a) * t;
+        const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+        // ========================================================
+        // SECTION C: SIMPLE TWEEN ENGINE
+        // ========================================================
+        class TweenManager {
+            constructor() { this._map = new Map(); }
+            start(key, from, to, duration, easing = easeInOutCubic) {
+                this._map.set(key, { from: from.clone(), to: to.clone(), start: performance.now(), duration, easing, value: from.clone() });
+            }
+            get(key) { const t = this._map.get(key); return t ? t.value : null; }
+            isActive(key) { return this._map.has(key); }
+            anyActive() { return this._map.size > 0; }
+            update(now) {
+                for (const [key, t] of this._map) {
+                    const elapsed = now - t.start;
+                    if (elapsed >= t.duration) {
+                        t.value.copy(t.to);
+                        this._map.delete(key);
+                    } else {
+                        const p = t.easing(elapsed / t.duration);
+                        t.value.lerpVectors(t.from, t.to, p);
+                    }
+                }
+            }
+        }
+
+        // ========================================================
+        // SECTION D: SCENE SETUP
+        // ========================================================
+        function setupScene() {
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(CONFIG.fogColor);
+            scene.fog = new THREE.Fog(CONFIG.fogColor, CONFIG.fogNear, CONFIG.fogFar);
+
+            const camera = new THREE.PerspectiveCamera(
+                CONFIG.camera.fov, window.innerWidth / window.innerHeight, CONFIG.camera.near, CONFIG.camera.far);
+            camera.position.set(...CONFIG.camera.initial.pos);
+
+            // WebGL Renderer
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.15;
+            document.body.prepend(renderer.domElement);
+            renderer.domElement.id = 'app-canvas';
+
+            // CSS2D Renderer
+            const labelRenderer = new CSS2DRenderer();
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.domElement.style.position = 'fixed';
+            labelRenderer.domElement.style.top = '0';
+            labelRenderer.domElement.style.left = '0';
+            labelRenderer.domElement.style.pointerEvents = 'none';
+            labelRenderer.domElement.style.zIndex = '5';
+            document.body.appendChild(labelRenderer.domElement);
+
+            // OrbitControls
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = CONFIG.camera.orbitDamping;
+            controls.minDistance = CONFIG.camera.minDist;
+            controls.maxDistance = CONFIG.camera.maxDist;
+            controls.maxPolarAngle = CONFIG.camera.maxPolar;
+            controls.target.set(...CONFIG.camera.initial.target);
+            controls.update();
+
+            // Lighting
+            scene.add(new THREE.AmbientLight(0x334466, 0.5));
+            const sun = new THREE.DirectionalLight(0xffeedd, 2.8);
+            sun.position.set(50, 70, 40);
+            sun.castShadow = true;
+            sun.shadow.mapSize.set(2048, 2048);
+            const sd = 90;
+            sun.shadow.camera.left = -sd; sun.shadow.camera.right = sd;
+            sun.shadow.camera.top = sd; sun.shadow.camera.bottom = -sd;
+            sun.shadow.camera.near = 1; sun.shadow.camera.far = 200;
+            scene.add(sun);
+
+            const fill = new THREE.DirectionalLight(0x8899cc, 0.6);
+            fill.position.set(-40, 20, -50);
+            scene.add(fill);
+
+            // Ground
+            const grid = new THREE.GridHelper(CONFIG.groundSize, 24, 0x336699, 0x224466);
+            grid.position.y = -0.01;
+            scene.add(grid);
+
+            const ground = new THREE.Mesh(
+                new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize),
+                new THREE.MeshStandardMaterial({ color: 0x0a1420, roughness: 0.85, metalness: 0.05, transparent: true, opacity: 0.5 }));
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.05;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            return { scene, camera, renderer, labelRenderer, controls };
+        }
+
+        // ========================================================
+        // SECTION E: BUILDINGS & SCENERY
+        // ========================================================
+        function buildCity(scene) {
+            const clickables = []; // meshes for raycaster
+
+            // Main building
+            const { w, d, h, color, pos } = CONFIG.building.main;
+            const bMat = new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.25 });
+            const mainBld = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bMat);
+            mainBld.position.set(pos[0], h / 2, pos[2]);
+            mainBld.castShadow = true; mainBld.receiveShadow = true;
+            scene.add(mainBld);
+
+            // Glass curtain wall grid
+            const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
+            const edgeLine = new THREE.LineSegments(edgeGeo,
+                new THREE.LineBasicMaterial({ color: 0x5588cc, transparent: true, opacity: 0.2 }));
+            edgeLine.position.copy(mainBld.position);
+            scene.add(edgeLine);
+
+            // Windows on front face
+            const winMat = new THREE.MeshStandardMaterial({
+                color: 0x88ccff, emissive: 0x112244, emissiveIntensity: 0.3, transparent: true, opacity: 0.5 });
+            for (let row = -2; row <= 2; row += 1.6) {
+                for (let col = -5; col <= 5; col += 2.5) {
+                    if (Math.abs(row) < 0.05 && Math.abs(col) < 0.05) continue;
+                    const win = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2), winMat);
+                    win.position.set(row * 3.2, 3 + col * 1.9, d / 2 + 0.15);
+                    scene.add(win);
+                }
+            }
+
+            // Sub buildings
+            for (const sb of CONFIG.building.subs) {
+                const mat = new THREE.MeshStandardMaterial({ color: sb.color, roughness: 0.45, metalness: 0.15 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(sb.w, sb.h, sb.d), mat);
+                mesh.position.set(sb.x, sb.h / 2, sb.z);
+                mesh.castShadow = true; mesh.receiveShadow = true;
+                scene.add(mesh);
+            }
+
+            // Roads
+            const roadMat = new THREE.MeshStandardMaterial({ color: 0x151d2e, roughness: 0.9, transparent: true, opacity: 0.65 });
+            const rw = CONFIG.building.roadWidth;
+            const hw = w / 2 + rw / 2, hd = d / 2 + rw / 2;
+            [
+                { w: w + rw * 2, d: rw, x: 0, z: hd + rw / 2 },
+                { w: w + rw * 2, d: rw, x: 0, z: -hd - rw / 2 },
+                { w: rw, d: d + rw * 2, x: hw + rw / 2, z: 0 },
+                { w: rw, d: d + rw * 2, x: -hw - rw / 2, z: 0 },
+            ].forEach(r => {
+                const road = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.d), roadMat);
+                road.rotation.x = -Math.PI / 2;
+                road.position.set(r.x, 0.03, r.z);
+                road.receiveShadow = true;
+                scene.add(road);
+            });
+
+            // Trees
+            const treeSpots = [[-32, -32], [32, -32], [-32, 32], [32, 32], [-58, 0], [58, 0], [0, -58], [0, 58]];
+            for (const [tx, tz] of treeSpots) {
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 2.2),
+                    new THREE.MeshStandardMaterial({ color: 0x4a3020 }));
+                trunk.position.set(tx, 1.1, tz); trunk.castShadow = true; scene.add(trunk);
+                const crown = new THREE.Mesh(new THREE.SphereGeometry(1.6, 8, 6),
+                    new THREE.MeshStandardMaterial({ color: 0x1f5530 }));
+                crown.position.set(tx, 3.2, tz); crown.castShadow = true; scene.add(crown);
+            }
+
+            // Ambient particles
+            const pCount = CONFIG.particles.count;
+            const pGeo = new THREE.BufferGeometry();
+            const positions = new Float32Array(pCount * 3);
+            const spread = CONFIG.particles.spread;
+            const pHeight = CONFIG.particles.height;
+            for (let i = 0; i < pCount; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * spread * 2;
+                positions[i * 3 + 1] = Math.random() * pHeight;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * spread * 2;
+            }
+            pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const pMat = new THREE.PointsMaterial({
+                color: 0x8899cc, size: 0.12, transparent: true, opacity: 0.55,
+                blending: THREE.AdditiveBlending, depthWrite: false,
+            });
+            const particles = new THREE.Points(pGeo, pMat);
+            particles.name = 'particles';
+            scene.add(particles);
+
+            return { clickables, particles };
+        }
+
+        // ========================================================
+        // SECTION F: ENTRANCE MARKERS
+        // ========================================================
+        function createMarkers(scene, labelRenderer) {
+            const markerMeshes = []; // for raycaster
+
+            for (const [key, m] of Object.entries(CONFIG.markers)) {
+                const [x, y, z] = m.pos;
+                const col = new THREE.Color(m.color);
+
+                // Glowing cone
+                const cone = new THREE.Mesh(new THREE.ConeGeometry(1.0, 3.2, 16),
+                    new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.7, transparent: true, opacity: 0.9 }));
+                cone.position.set(x, 1.7, z);
+                cone.castShadow = true;
+                cone.userData = { markerKey: key, baseEmissive: 0.7 };
+                scene.add(cone);
+                markerMeshes.push(cone);
+
+                // Base glow ring
+                const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.0, 32),
+                    new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.4, transparent: true, opacity: 0.35, side: THREE.DoubleSide }));
+                ring.rotation.x = -Math.PI / 2;
+                ring.position.set(x, 0.12, z);
+                ring.userData = { markerKey: key, phase: Math.random() * Math.PI * 2 };
+                scene.add(ring);
+
+                // CSS2D Label
+                const div = document.createElement('div');
+                div.textContent = m.label;
+                div.style.cssText = `
+                    color:#fff; font-size:16px; font-weight:700;
+                    text-shadow: 0 0 18px ${m.color}, 0 0 36px ${m.color};
+                    background: rgba(10,14,23,0.75); padding: 6px 18px;
+                    border-radius: 20px; border: 2px solid ${m.color};
+                    backdrop-filter: blur(6px); letter-spacing: 1px;
+                `;
+                const label = new CSS2DObject(div);
+                label.position.set(x, 4.2, z);
+                scene.add(label);
+            }
+
+            return markerMeshes;
+        }
+
+        // ========================================================
+        // SECTION G: DYNAMIC ROUTES
+        // ========================================================
+        function createRoutes(scene) {
+            const routeObjs = [];
+            for (const [key, r] of Object.entries(CONFIG.routes)) {
+                const pts = r.pts.map(p => new THREE.Vector3(...p));
+                const curve = new THREE.CatmullRomCurve3(pts, false);
+
+                // Tube track
+                const tube = new THREE.Mesh(
+                    new THREE.TubeGeometry(curve, 64, 0.22, 8, false),
+                    new THREE.MeshStandardMaterial({ color: r.color, emissive: r.color, emissiveIntensity: 0.15, transparent: true, opacity: 0.22, side: THREE.DoubleSide }));
+                scene.add(tube);
+
+                // Moving sphere
+                const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 12),
+                    new THREE.MeshStandardMaterial({ color: r.color, emissive: r.color, emissiveIntensity: 1.4 }));
+                sphere.castShadow = true;
+                scene.add(sphere);
+
+                routeObjs.push({ curve, sphere, speed: r.speed, t: Math.random() });
+            }
+            return routeObjs;
+        }
+
+        // ========================================================
+        // SECTION H: RAYCASTER INTERACTION
+        // ========================================================
+        function setupInteraction(camera, rendererDom, markerMeshes, onMarkerClick) {
+            const raycaster = new THREE.Raycaster();
+            raycaster.params.Points.threshold = 0.5; // not used but safe
+            const pointer = new THREE.Vector2();
+            let hovered = null;
+
+            function getIntersections(event) {
+                pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+                pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(pointer, camera);
+                return raycaster.intersectObjects(markerMeshes, false);
+            }
+
+            rendererDom.addEventListener('pointermove', (e) => {
+                const hits = getIntersections(e);
+                if (hits.length > 0) {
+                    const obj = hits[0].object;
+                    if (hovered !== obj) {
+                        if (hovered) resetHighlight(hovered);
+                        hovered = obj;
+                        highlight(obj);
+                        rendererDom.style.cursor = 'pointer';
+                    }
+                } else {
+                    if (hovered) { resetHighlight(hovered); hovered = null; }
+                    rendererDom.style.cursor = 'grab';
+                }
+            });
+
+            rendererDom.addEventListener('click', (e) => {
+                const hits = getIntersections(e);
+                if (hits.length > 0 && hits[0].object.userData.markerKey) {
+                    onMarkerClick(hits[0].object.userData.markerKey);
+                }
+            });
+
+            function highlight(obj) {
+                obj.material._origEmissive = obj.material.emissiveIntensity;
+                obj.material.emissiveIntensity = 1.5;
+                obj.scale.set(1.15, 1.15, 1.15);
+            }
+            function resetHighlight(obj) {
+                const base = obj.userData.baseEmissive || 0.7;
+                obj.material.emissiveIntensity = obj.material._origEmissive || base;
+                obj.scale.set(1, 1, 1);
+            }
+        }
+
+        // ========================================================
+        // SECTION I: CAMERA CONTROLLER
+        // ========================================================
+        class CameraController {
+            constructor(camera, controls) {
+                this.camera = camera;
+                this.controls = controls;
+                this.tweens = new TweenManager();
+                this._autoRotate = false;
+            }
+
+            flyToPreset(name) {
+                const preset = CONFIG.camera.presets[name];
+                if (!preset) return;
+                const toPos = new THREE.Vector3(...preset.pos);
+                const toTarget = new THREE.Vector3(...preset.target);
+                this.tweens.start('pos', this.camera.position, toPos, CONFIG.camera.tweenMs);
+                this.tweens.start('target', this.controls.target, toTarget, CONFIG.camera.tweenMs);
+            }
+
+            setAutoRotate(on) {
+                this._autoRotate = on;
+                this.controls.autoRotate = on;
+                this.controls.autoRotateSpeed = 0.4;
+            }
+            toggleAutoRotate() { this.setAutoRotate(!this._autoRotate); return this._autoRotate; }
+
+            update() {
+                const now = performance.now();
+                this.tweens.update(now);
+                const pv = this.tweens.get('pos');
+                const tv = this.tweens.get('target');
+                if (pv) this.camera.position.copy(pv);
+                if (tv) this.controls.target.copy(tv);
+                if (!this.tweens.anyActive()) {
+                    this.controls.update();
+                }
+            }
+        }
+
+        // ========================================================
+        // SECTION J: UI CONTROLLER
+        // ========================================================
+        class UIController {
+            constructor() {
+                this.loadingEl = document.getElementById('loading-screen');
+                this.loaderBar = document.getElementById('loader-bar');
+                this.loaderPct = document.getElementById('loader-pct');
+                this.infoCard = document.getElementById('info-card');
+                this.infoBackdrop = document.getElementById('info-card-backdrop');
+                this.autoRotateBtn = document.getElementById('btn-auto-rotate');
+                this.presetBtns = document.querySelectorAll('#camera-presets button');
+
+                this._bindInfoClose();
+            }
+
+            setProgress(pct) {
+                this.loaderBar.style.width = pct + '%';
+                this.loaderPct.textContent = Math.round(pct) + '%';
+            }
+
+            hideLoading() {
+                this.loadingEl.classList.add('hidden');
+            }
+
+            showInfo(key) {
+                const m = CONFIG.markers[key];
+                if (!m) return;
+                document.getElementById('info-icon').textContent = m.icon;
+                document.getElementById('info-title-text').textContent = m.label;
+                const badge = document.getElementById('info-badge');
+                badge.textContent = m.badge;
+                badge.className = 'badge ' + key;
+                document.getElementById('info-desc').textContent = m.desc;
+                const featEl = document.getElementById('info-features');
+                featEl.innerHTML = m.features.map(f => `<span class="info-feature">${f}</span>`).join('');
+                document.getElementById('info-btn-nav').onclick = () => {
+                    this._onNavigate && this._onNavigate(key);
+                    this.hideInfo();
+                };
+                this.infoCard.classList.add('show');
+                this.infoBackdrop.classList.add('show');
+            }
+
+            hideInfo() {
+                this.infoCard.classList.remove('show');
+                this.infoBackdrop.classList.remove('show');
+            }
+
+            setActivePreset(name) {
+                this.presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === name));
+            }
+
+            setAutoRotateUI(on) {
+                this.autoRotateBtn.classList.toggle('on', on);
+                this.autoRotateBtn.textContent = on ? '⏸' : '⟳';
+            }
+
+            _bindInfoClose() {
+                document.querySelector('.info-close').addEventListener('click', () => this.hideInfo());
+                document.getElementById('info-card-backdrop').addEventListener('click', () => this.hideInfo());
+                document.getElementById('info-btn-close').addEventListener('click', () => this.hideInfo());
+            }
+        }
+
+        // ========================================================
+        // SECTION K: APPLICATION BOOT
+        // ========================================================
+        async function boot() {
+            // 加载配置
+            await loadConfig();
+            const { scene, camera, renderer, labelRenderer, controls } = setupScene();
+            const camCtrl = new CameraController(camera, controls);
+            const ui = new UIController();
+
+            // Build world
+            const { particles } = buildCity(scene);
+            const markerMeshes = createMarkers(scene, labelRenderer);
+            const routeObjs = createRoutes(scene);
+
+            // Wire interactions
+            setupInteraction(camera, renderer.domElement, markerMeshes, (key) => {
+                ui.showInfo(key);
+            });
+
+            // Wire UI callbacks
+            ui._onNavigate = (key) => camCtrl.flyToPreset(key);
+            document.querySelectorAll('#camera-presets button').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const name = btn.dataset.preset;
+                    camCtrl.flyToPreset(name);
+                    ui.setActivePreset(name);
+                });
+            });
+            document.getElementById('btn-auto-rotate').addEventListener('click', () => {
+                const on = camCtrl.toggleAutoRotate();
+                ui.setAutoRotateUI(on);
+            });
+
+            // Simulate loading
+            ui.setProgress(0);
+            for (let p = 0; p <= 100; p += Math.random() * 18 + 4) {
+                ui.setProgress(Math.min(p, 100));
+                await new Promise(r => setTimeout(r, 60 + Math.random() * 90));
+            }
+            ui.setProgress(100);
+            await new Promise(r => setTimeout(r, 300));
+            ui.hideLoading();
+
+            // Animation loop
+            const clock = new THREE.Clock();
+            function animate() {
+                requestAnimationFrame(animate);
+                const dt = Math.min(clock.getDelta(), 0.1);
+                const elapsed = clock.getElapsedTime();
+
+                camCtrl.update();
+
+                // Update route spheres
+                for (const ro of routeObjs) {
+                    ro.t += dt * 0.12 * ro.speed;
+                    if (ro.t > 1) ro.t -= 1;
+                    ro.sphere.position.copy(ro.curve.getPoint(ro.t));
+                }
+
+                // Pulse marker rings
+                scene.children.forEach(child => {
+                    if (child.isMesh && child.geometry.type === 'RingGeometry' && child.userData.phase !== undefined) {
+                        const s = 1 + 0.25 * Math.sin(elapsed * 2.2 + child.userData.phase);
+                        child.scale.set(s, s, 1);
+                        child.material.opacity = 0.25 + 0.2 * Math.sin(elapsed * 2.2 + child.userData.phase);
+                    }
+                    // Pulse cones emissive
+                    if (child.isMesh && child.geometry.type === 'ConeGeometry' && child.userData.baseEmissive !== undefined) {
+                        const base = child.userData.baseEmissive;
+                        child.material.emissiveIntensity = base + 0.3 * Math.sin(elapsed * 2.5 + (child.userData.phase || 0));
+                    }
+                });
+
+                // Animate particles
+                if (particles) {
+                    const posArr = particles.geometry.attributes.position.array;
+                    for (let i = 0; i < posArr.length; i += 3) {
+                        posArr[i + 1] += dt * 0.5;
+                        if (posArr[i + 1] > CONFIG.particles.height) {
+                            posArr[i + 1] = 0;
+                            posArr[i] = (Math.random() - 0.5) * CONFIG.particles.spread * 2;
+                            posArr[i + 2] = (Math.random() - 0.5) * CONFIG.particles.spread * 2;
+                        }
+                    }
+                    particles.geometry.attributes.position.needsUpdate = true;
+                }
+
+                renderer.render(scene, camera);
+                labelRenderer.render(scene, camera);
+            }
+            animate();
+
+            // Resize handler
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            console.log('✅ 会展中心 3D 导览已就绪');
+            console.log('   🖱️ 拖拽旋转 | 滚轮缩放 | 右键平移');
+            console.log('   📍 点击发光入口标记查看详情');
+            console.log('   🎯 右侧按钮切换视角');
+            console.log('   🔄 右上角按钮开启自动旋转');
+        }
+
+        // Launch
+        boot().catch(err => {
+            console.error('启动失败:', err);
+            document.getElementById('loading-screen').innerHTML =
+                '<div style="color:#ff5555;font-size:1.2rem;">⚠️ 加载失败，请刷新页面重试</div>';
+        });
+    </script>
+</body>
+</html>

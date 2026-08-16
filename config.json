@@ -1,0 +1,69 @@
+{
+  "brand": {
+    "name": "城东体育馆",
+    "subtitle": "3D 智慧导览",
+    "logo": "🏟️"
+  },
+  "geo": {
+    "amapKey": "114608b320fd502f9b74fed97ca7f0b6",
+    "amapSecurityCode": "bfe9d6cd68cdd37613b70ab63918c9a3",
+    "center": [
+      104.14141,
+      30.67133
+    ],
+    "zoom": 17,
+    "pitch": 55,
+    "rotation": 20,
+    "mapStyle": "amap://styles/dark"
+  },
+  "groundSize": 200,
+  "fogColor": "#0a0e17",
+  "fogNear": 60,
+  "fogFar": 220,
+  "building": {
+    "main": {
+      "w": 10,
+      "d": 10,
+      "h": 10,
+      "color": "#1e2d5a",
+      "pos": [
+        0,
+        0,
+        0
+      ]
+    },
+    "subs": [],
+    "roadWidth": 8
+  },
+  "markers": {},
+  "routes": {},
+  "parking": [],
+  "particles": {
+    "count": 0,
+    "spread": 90,
+    "height": 35
+  },
+  "camera": {
+    "fov": 42,
+    "near": 0.5,
+    "far": 400,
+    "initial": {
+      "pos": [
+        70,
+        50,
+        80
+      ],
+      "target": [
+        0,
+        4,
+        0
+      ]
+    },
+    "presets": {},
+    "tweenMs": 1400,
+    "orbitDamping": 0.08,
+    "minDist": 12,
+    "maxDist": 160,
+    "maxPolarFactor": 0.46
+  }
+}

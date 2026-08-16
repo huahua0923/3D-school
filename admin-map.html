@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>地图编辑器</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#0a0e17;color:#e0e0f0;height:100vh;display:flex;flex-direction:column;overflow:hidden;user-select:none}
+:root{--accent:#3b82f6;--green:#10b981;--danger:#ef4444;--bg:#0d1117;--panel:rgba(12,18,30,0.95);--border:rgba(255,255,255,0.06)}
+
+/* Top bar */
+#topbar{display:flex;align-items:center;gap:8px;padding:6px 14px;background:var(--panel);border-bottom:1px solid var(--border);height:44px;min-height:44px;z-index:20}
+#topbar .brand{font-weight:700;font-size:0.85rem;letter-spacing:0.04em;white-space:nowrap}
+#topbar .brand span{color:var(--accent)}
+.sep{width:1px;height:20px;background:rgba(255,255,255,0.08);margin:0 2px}
+
+.btn{padding:4px 12px;border-radius:5px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);color:#aaaacc;font-size:0.78rem;font-family:inherit;cursor:pointer;transition:all 0.15s;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
+.btn:hover{color:#fff;border-color:rgba(255,255,255,0.18);background:rgba(255,255,255,0.06)}
+.btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.danger{color:var(--danger)}
+.btn.danger:hover{background:rgba(239,68,68,0.12)}
+.btn:disabled{opacity:0.3;cursor:default;pointer-events:none}
+.spacer{flex:1}
+#status-text{font-size:0.7rem;color:rgba(255,255,255,0.35);min-width:100px;text-align:right}
+#zoom-label{font-size:0.7rem;color:rgba(255,255,255,0.4);min-width:40px;text-align:center}
+
+/* Main layout */
+#main{flex:1;display:flex;overflow:hidden}
+#map-wrap{flex:1;position:relative}
+
+/* Map controls overlay */
+#map-controls{position:absolute;bottom:16px;right:16px;z-index:10;display:flex;flex-direction:column;gap:4px}
+#map-controls button{width:32px;height:32px;border-radius:50%;border:1px solid rgba(255,255,255,0.1);background:var(--panel);color:rgba(255,255,255,0.5);font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
+#map-controls button:hover{color:#fff;border-color:rgba(255,255,255,0.2)}
+
+/* Right panel */
+#panel{width:280px;min-width:280px;background:var(--panel);border-left:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;font-size:0.78rem}
+.ps{padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.pl{font-size:0.6rem;color:rgba(255,255,255,0.3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px}
+.layer-row{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;font-size:0.78rem;cursor:pointer;transition:all 0.12s;border:1px solid transparent}
+.layer-row:hover{background:rgba(255,255,255,0.04)}
+.layer-row.selected{border-color:var(--accent);background:rgba(59,130,246,0.1)}
+.layer-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.layer-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.layer-vis{color:rgba(255,255,255,0.4);font-size:0.75rem;padding:2px 4px;border-radius:3px}
+.layer-vis:hover{color:#fff;background:rgba(255,255,255,0.08)}
+.layer-del{color:var(--danger);font-size:0.7rem;padding:2px 5px;border-radius:3px;cursor:pointer}
+.layer-del:hover{background:rgba(239,68,68,0.15)}
+
+/* Props inputs */
+.prop-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.prop-row label{width:60px;font-size:0.7rem;color:rgba(255,255,255,0.5);flex-shrink:0}
+.prop-row input,.prop-row select{flex:1;padding:4px 8px;border-radius:4px;border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.3);color:#e0e0f0;font-size:0.78rem;font-family:inherit;outline:none}
+.prop-row input:focus{border-color:var(--accent)}
+.prop-row input[type=color]{width:32px;flex:0 0 32px;height:26px;padding:1px;cursor:pointer}
+.color-presets{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.color-preset{width:18px;height:18px;border-radius:3px;cursor:pointer;border:2px solid transparent}
+.color-preset:hover{border-color:#fff}
+
+/* Status bar */
+#statusbar{display:flex;align-items:center;gap:12px;padding:3px 14px;background:rgba(0,0,0,0.3);border-top:1px solid var(--border);height:24px;min-height:24px;font-size:0.65rem;color:rgba(255,255,255,0.3);z-index:10}
+#statusbar .s{white-space:nowrap}
+
+/* Modal */
+.modal{position:fixed;inset:0;z-index:500;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center}
+.modal-box{background:rgba(22,27,34,0.98);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:22px 28px;min-width:340px;box-shadow:0 16px 48px rgba(0,0,0,0.5);animation:modalIn 0.2s ease}
+@keyframes modalIn{from{opacity:0;transform:scale(0.95)}}
+.modal-box h2{font-size:1rem;margin-bottom:10px}
+.modal-box input{width:100%;padding:9px 12px;border-radius:7px;border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.3);color:#e0e0f0;font-size:0.85rem;font-family:inherit;outline:none}
+.modal-box input:focus{border-color:var(--accent)}
+.modal-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
+
+.toast{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:2000;background:#1a1a2e;color:#e0e0f0;padding:7px 18px;border-radius:7px;font-size:0.8rem;border:1px solid rgba(255,255,255,0.1);pointer-events:none;opacity:0;transition:opacity 0.3s}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+    <div class="brand">🗺️ 地图<span>编辑器</span></div>
+    <div class="sep"></div>
+    <button class="btn active" data-tool="pointer">🖱️ 选择</button>
+    <button class="btn" data-tool="polyline">📏 路线</button>
+    <button class="btn" data-tool="polygon">⬡ 区域</button>
+    <button class="btn" id="btn-undo" disabled title="撤销 Ctrl+Z">↩</button>
+    <button class="btn" id="btn-redo" disabled title="重做 Ctrl+Y">↪</button>
+    <div class="sep"></div>
+    <button class="btn" id="btn-delete" disabled>🗑</button>
+    <button class="btn" id="btn-duplicate" disabled>📋</button>
+    <div class="sep"></div>
+    <button class="btn primary" id="btn-save">💾 保存</button>
+    <button class="btn" id="btn-export">📤 导出</button>
+    <span class="spacer"></span>
+    <span id="zoom-label">100%</span>
+    <span class="sep"></span>
+    <span id="status-text">就绪</span>
+    <a href="/admin.html" class="btn">← 后台</a>
+</div>
+
+<div id="main">
+    <div id="map-wrap">
+        <div id="map-controls">
+            <button id="btn-zoom-in" title="放大">+</button>
+            <button id="btn-zoom-out" title="缩小">−</button>
+            <button id="btn-reset-view" title="重置">⌂</button>
+        </div>
+    </div>
+
+    <div id="panel">
+        <div class="ps"><div class="pl">图层</div><div id="layer-list"></div></div>
+        <div class="ps" id="props-section" style="display:none">
+            <div class="pl">属性</div>
+            <div class="prop-row"><label>名称</label><input type="text" id="prop-name" /></div>
+            <div class="prop-row"><label>颜色</label><input type="color" id="prop-color" /></div>
+            <div class="color-presets" id="color-presets"></div>
+            <div class="prop-row"><label>线宽</label><input type="range" id="prop-stroke" min="1" max="12" value="3" style="flex:1" /></div>
+            <div class="prop-row"><label>透明度</label><input type="range" id="prop-opacity" min="5" max="100" value="100" style="flex:1" /></div>
+            <div id="prop-points-info" style="font-size:0.7rem;color:rgba(255,255,255,0.35);margin-top:4px"></div>
+            <div style="display:flex;gap:4px;margin-top:8px">
+                <button class="btn" id="btn-bring-front">⬆ 置顶</button>
+                <button class="btn" id="btn-send-back">⬇ 置底</button>
+            </div>
+        </div>
+        <div class="ps"><div class="pl">统计</div><span id="stats" style="color:rgba(255,255,255,0.5)"></span></div>
+    </div>
+</div>
+
+<div id="statusbar">
+    <span class="s" id="sb-name"></span>
+    <span class="s" id="sb-counts"></span>
+    <span class="spacer"></span>
+    <span class="s" id="sb-zoom"></span>
+    <span class="s" id="sb-history"></span>
+</div>
+
+<div id="login-modal" class="modal" style="display:none">
+    <div class="modal-box"><h2>🔐 管理员验证</h2>
+        <input type="password" id="login-pwd" placeholder="管理员密码" />
+        <div class="modal-actions"><button class="btn" id="login-cancel">取消</button><button class="btn primary" id="login-submit">确认</button></div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+'use strict';
+
+const DEFAULT_CENTER = [104.14141, 30.67133], DEFAULT_ZOOM = 17;
+const COLOR_PRESETS = ['#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#f97316','#84cc16','#14b8a6','#6366f1','#d946ef','#0ea5e9','#e11d48','#eab308','#a855f7','#64748b','#ffffff','#000000'];
+const MAX_HISTORY = 50;
+
+let map, mouseTool, currentTool='pointer', overlays=[], selectedOv=null;
+let history=[], historyIdx=-1;
+let config={geo:{amapKey:'',amapSecurityCode:'',center:DEFAULT_CENTER,zoom:DEFAULT_ZOOM,pitch:55,rotation:20,mapStyle:'amap://styles/dark'}};
+
+async function loadConfig(){
+    try{const r=await fetch('/config.json');if(r.ok)config=await r.json()}catch(e){}
+}
+
+function saveSnapshot(){
+    const snap=JSON.parse(JSON.stringify(overlays.map(o=>({_type:o._type,_name:o._name,_color:o._color,path:o.getPath().map(p=>[p.lng,p.lat])}))));
+    history=history.slice(0,historyIdx+1);history.push(snap);
+    if(history.length>MAX_HISTORY)history.shift();
+    historyIdx=history.length-1;
+    updateUI();
+}
+
+function undo(){
+    if(historyIdx<0)return;
+    const snap=history[historyIdx];
+    overlays.forEach(o=>map.remove(o));
+    overlays=[];
+    restoreSnapshot(snap);
+    historyIdx--;
+    deselectOv();
+    updateUI();
+}
+
+function redo(){
+    if(historyIdx>=history.length-2)return;
+    historyIdx+=2;
+    const snap=history[historyIdx];
+    overlays.forEach(o=>map.remove(o));
+    overlays=[];
+    restoreSnapshot(snap);
+    updateUI();
+}
+
+function restoreSnapshot(snap){
+    snap.forEach(d=>{
+        let ov;
+        if(d._type==='route'){
+            ov=new AMap.Polyline({strokeColor:d._color,strokeWeight:3,strokeOpacity:0.9,zIndex:10,path:d.path.map(p=>[p[0],p[1]])});
+        }else{
+            ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:2,fillColor:d._color,fillOpacity:0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
+        }
+        ov.setMap(map);
+        ov._type=d._type;ov._name=d._name;ov._color=d._color;
+        ov.on('click',()=>selectOv(ov));
+        overlays.push(ov);
+    });
+}
+
+async function initMap(){
+    await loadConfig();
+    const geo=config.geo;
+    if(geo.amapSecurityCode)window._AMapSecurityConfig={securityJsCode:geo.amapSecurityCode};
+    await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://webapi.amap.com/maps?v=2.0&key='+(geo.amapKey||'YOUR_KEY');
+        s.onload=res;s.onerror=rej;document.head.appendChild(s);
+    });
+    if(!window.AMap){alert('地图加载失败');return}
+    map=new AMap.Map('map-wrap',{viewMode:'3D',center:geo.center||DEFAULT_CENTER,zoom:geo.zoom||DEFAULT_ZOOM,pitch:geo.pitch||55,rotation:geo.rotation||20,mapStyle:geo.mapStyle||'amap://styles/dark',features:['bg','road','building','point'],showBuildingBlock:true});
+    loadOverlays();
+    AMap.plugin('AMap.MouseTool',()=>{mouseTool=new AMap.MouseTool(map);mouseTool.on('draw',onDraw)});
+    map.on('zoom',updateZoomLabel);
+    map.on('click',()=>{if(currentTool==='pointer')deselectOv()});
+    updateZoomLabel();
+}
+
+function loadOverlays(){
+    if(config.routes)Object.entries(config.routes).forEach(([n,r])=>{
+        if(!r.pts||r.pts.length<2)return;
+        const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:3,strokeOpacity:0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
+        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov.on('click',()=>selectOv(ov));overlays.push(ov);
+    });
+    if(config.areas)Object.entries(config.areas).forEach(([n,a])=>{
+        if(!a.pts||a.pts.length<3)return;
+        const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity||0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
+        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov.on('click',()=>selectOv(ov));overlays.push(ov);
+    });
+    updateUI();
+}
+
+document.querySelectorAll('#topbar button[data-tool]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
+
+function setTool(tool){
+    currentTool=tool;
+    document.querySelectorAll('#topbar button[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===tool));
+    if(mouseTool)mouseTool.close();
+    deselectOv();
+    const st=document.getElementById('status-text');
+    if(tool==='pointer')st.textContent='就绪';
+    else if(tool==='polyline'){mouseTool.polyline({strokeColor:'#3b82f6',strokeWeight:3,strokeOpacity:0.9});st.textContent='📏 画路线 — 点击加顶点，双击完成'}
+    else if(tool==='polygon'){mouseTool.polygon({strokeColor:'#10b981',strokeWeight:2,strokeOpacity:0.8,fillColor:'#10b981',fillOpacity:0.2});st.textContent='⬡ 画区域 — 点击加顶点，双击完成'}
+}
+
+function onDraw(e){
+    saveSnapshot();
+    const ov=e.obj,type=currentTool==='polygon'?'area':'route';
+    const cnt=overlays.filter(o=>o._type===type).length+1;
+    ov._type=type;ov._name=(type==='area'?'区域 ':'路线 ')+cnt;
+    ov._color=type==='area'?'#10b981':'#3b82f6';
+    ov.setMap(map);  // 确保图形在地图上显示
+    ov.on('click',()=>selectOv(ov));
+    overlays.push(ov);
+    updateUI();setTool('pointer');
+    toast('✅ 已添加: '+ov._name);
+}
+
+function selectOv(ov){
+    if(currentTool!=='pointer')return;
+    deselectOv();selectedOv=ov;
+    if(ov instanceof AMap.Polyline)ov.setOptions({strokeWeight:6,strokeColor:'#fff'});
+    else ov.setOptions({strokeWeight:4,strokeColor:'#fff'});
+    document.getElementById('btn-delete').disabled=false;
+    document.getElementById('btn-duplicate').disabled=false;
+    document.getElementById('status-text').textContent='已选中: '+(ov._name||'');
+    updateUI();updateProps();
+}
+
+function deselectOv(){
+    if(!selectedOv)return;
+    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeWeight:3,strokeColor:selectedOv._color});
+    else selectedOv.setOptions({strokeWeight:2,strokeColor:selectedOv._color});
+    selectedOv=null;
+    document.getElementById('btn-delete').disabled=true;
+    document.getElementById('btn-duplicate').disabled=true;
+    document.getElementById('status-text').textContent='就绪';
+    updateUI();updateProps();
+}
+
+// Delete
+document.getElementById('btn-delete').addEventListener('click',()=>{
+    if(!selectedOv)return;
+    saveSnapshot();map.remove(selectedOv);
+    overlays=overlays.filter(o=>o!==selectedOv);selectedOv=null;
+    document.getElementById('btn-delete').disabled=true;
+    updateUI();toast('已删除');
+});
+
+// Duplicate
+document.getElementById('btn-duplicate').addEventListener('click',()=>{
+    if(!selectedOv)return;
+    saveSnapshot();
+    const path=selectedOv.getPath().map(p=>[p.lng,p.lat]),type=selectedOv._type;
+    let ov;
+    if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:3,strokeOpacity:0.9,zIndex:10});
+    else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:2,fillColor:selectedOv._color,fillOpacity:0.2,zIndex:5});
+    ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;
+    ov.on('click',()=>selectOv(ov));
+    overlays.push(ov);updateUI();toast('已复制');
+});
+
+// Z-order
+document.getElementById('btn-bring-front').addEventListener('click',()=>{
+    if(!selectedOv)return;
+    saveSnapshot();
+    const idx=overlays.indexOf(selectedOv);
+    if(idx>=0&&idx<overlays.length-1){overlays.splice(idx,1);overlays.push(selectedOv);}
+    overlays.forEach((o,i)=>{if(o.setOptions)o.setOptions({zIndex:(i+1)*10})});
+    updateUI();
+});
+
+document.getElementById('btn-send-back').addEventListener('click',()=>{
+    if(!selectedOv)return;
+    saveSnapshot();
+    const idx=overlays.indexOf(selectedOv);
+    if(idx>0){overlays.splice(idx,1);overlays.unshift(selectedOv);}
+    overlays.forEach((o,i)=>{if(o.setOptions)o.setOptions({zIndex:(i+1)*10})});
+    updateUI();
+});
+
+// Undo/Redo buttons
+document.getElementById('btn-undo').addEventListener('click',undo);
+document.getElementById('btn-redo').addEventListener('click',redo);
+
+// Properties panel
+function updateProps(){
+    const section=document.getElementById('props-section');
+    if(!selectedOv){section.style.display='none';return}
+    section.style.display='block';
+    document.getElementById('prop-name').value=selectedOv._name||'';
+    document.getElementById('prop-color').value=selectedOv._color||'#3b82f6';
+    document.getElementById('prop-opacity').value=Math.round((selectedOv._opacity||1)*100);
+    if(selectedOv instanceof AMap.Polyline)document.getElementById('prop-stroke').value=3;
+    else document.getElementById('prop-stroke').value=2;
+    document.getElementById('prop-points-info').textContent='顶点: '+(selectedOv.getPath?selectedOv.getPath().length:'-')+' 个';
+}
+
+document.getElementById('prop-name').addEventListener('input',function(){
+    if(!selectedOv)return;selectedOv._name=this.value;updateUI();saveSnapshot();
+});
+document.getElementById('prop-color').addEventListener('input',function(){
+    if(!selectedOv)return;
+    saveSnapshot();selectedOv._color=this.value;
+    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeColor:this.value});
+    else selectedOv.setOptions({strokeColor:this.value,fillColor:this.value});
+    updateUI();
+});
+document.getElementById('prop-stroke').addEventListener('input',function(){
+    if(!selectedOv)return;
+    const v=Number(this.value);
+    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeWeight:v});
+    else selectedOv.setOptions({strokeWeight:v});
+});
+document.getElementById('prop-opacity').addEventListener('input',function(){
+    if(!selectedOv)return;
+    const v=Number(this.value)/100;selectedOv._opacity=v;
+    if(selectedOv instanceof AMap.Polygon)selectedOv.setOptions({fillOpacity:v});
+});
+
+// Color presets
+document.getElementById('color-presets').innerHTML=COLOR_PRESETS.map(c=>`<span class="color-preset" style="background:${c}" data-color="${c}"></span>`).join('');
+document.getElementById('color-presets').addEventListener('click',e=>{
+    const p=e.target.closest('.color-preset');if(!p||!selectedOv)return;
+    const c=p.dataset.color;
+    saveSnapshot();selectedOv._color=c;
+    document.getElementById('prop-color').value=c;
+    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeColor:c});
+    else selectedOv.setOptions({strokeColor:c,fillColor:c});
+    updateUI();
+});
+
+// Layer list
+document.getElementById('layer-list').addEventListener('click',e=>{
+    const row=e.target.closest('.layer-row');if(!row)return;
+    if(e.target.classList.contains('layer-vis')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){const o=overlays[idx];o._hidden=!o._hidden;if(o._hidden){o.hide()}else{o.show()}updateUI()}return}
+    if(e.target.classList.contains('layer-del')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){saveSnapshot();map.remove(overlays[idx]);overlays.splice(idx,1);deselectOv();updateUI();toast('已删除')}return}
+    const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length)selectOv(overlays[idx]);
+});
+
+// Save
+document.getElementById('btn-save').addEventListener('click',async()=>{
+    const t=localStorage.getItem('admin_token');if(!t){showLogin();return}await doSave(t);
+});
+
+async function doSave(token){
+    const routes={},areas={};
+    overlays.forEach(o=>{
+        const pts=o.getPath().map(p=>[p.lng,p.lat]);
+        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',speed:0.9};
+        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:2,opacity:typeof o._opacity==='number'?o._opacity:0.2};
+    });
+    config.routes=routes;config.areas=areas;
+    try{
+        const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(config)});
+        if(r.ok)toast('✅ 保存成功');else toast('❌ 保存失败');
+    }catch(e){toast('❌ 网络错误')}
+}
+
+function showLogin(){
+    const m=document.getElementById('login-modal');m.style.display='flex';
+    document.getElementById('login-pwd').value='';setTimeout(()=>document.getElementById('login-pwd').focus(),100);
+}
+document.getElementById('login-cancel').addEventListener('click',()=>{document.getElementById('login-modal').style.display='none'});
+document.getElementById('login-submit').addEventListener('click',async()=>{
+    const p=document.getElementById('login-pwd').value;if(!p)return;
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p})});
+    const j=await r.json();
+    if(j.token){localStorage.setItem('admin_token',j.token);document.getElementById('login-modal').style.display='none';await doSave(j.token)}
+    else alert(j.error||'密码错误');
+});
+document.getElementById('login-modal').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.style.display='none'});
+document.getElementById('login-pwd').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('login-submit').click()});
+
+// Export
+document.getElementById('btn-export').addEventListener('click',()=>{
+    const routes={},areas={};
+    overlays.forEach(o=>{const pts=o.getPath().map(p=>[p.lng,p.lat]);if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6'};else areas[o._name]={pts,color:o._color||'#10b981'}});
+    const blob=new Blob([JSON.stringify({routes,areas},null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.download='map-data.json';a.href=URL.createObjectURL(blob);a.click();
+    URL.revokeObjectURL(a.href);toast('✅ 已导出 JSON');
+});
+
+// Zoom controls
+document.getElementById('btn-zoom-in').addEventListener('click',()=>map&&map.zoomIn());
+document.getElementById('btn-zoom-out').addEventListener('click',()=>map&&map.zoomOut());
+document.getElementById('btn-reset-view').addEventListener('click',()=>{if(!map)return;map.setZoomAndCenter(config.geo.zoom||DEFAULT_ZOOM,config.geo.center||DEFAULT_CENTER)});
+function updateZoomLabel(){if(!map)return;document.getElementById('zoom-label').textContent=Math.round(map.getZoom()/18*100)+'%';document.getElementById('sb-zoom').textContent='缩放 '+map.getZoom().toFixed(1)}
+
+// Keyboard
+document.addEventListener('keydown',e=>{
+    const ctrl=e.ctrlKey||e.metaKey;
+    if(ctrl&&e.key==='z'&&!e.shiftKey){e.preventDefault();undo()}
+    if(ctrl&&(e.key==='z'&&e.shiftKey||e.key==='y')){e.preventDefault();redo()}
+    if(ctrl&&e.key==='s'){e.preventDefault();document.getElementById('btn-save').click()}
+    if(ctrl&&e.key==='d'){e.preventDefault();document.getElementById('btn-duplicate').click()}
+    if(e.key==='Escape')setTool('pointer');
+    if((e.key==='Delete'||e.key==='Backspace')&&selectedOv){e.preventDefault();document.getElementById('btn-delete').click()}
+    if(e.key==='v')setTool('pointer');
+    if(e.key==='l')setTool('polyline');
+    if(e.key==='r')setTool('polygon');
+});
+
+// UI
+function updateUI(){
+    const list=document.getElementById('layer-list');list.innerHTML='';
+    if(overlays.length===0){list.textContent='使用顶部工具在地图上绘制';list.style.color='rgba(255,255,255,0.3)';list.style.padding='8px';list.style.fontSize='0.8rem'}
+    else{list.style.color='';list.style.padding='';list.style.fontSize='';
+        overlays.forEach((o,i)=>{
+            const row=document.createElement('div');
+            row.className='layer-row'+(o===selectedOv?' selected':'');
+            row.dataset.index=i;
+            const dot=document.createElement('span');dot.className='layer-dot';dot.style.background=o._color||'#888';
+            if(o._hidden)dot.style.opacity='0.3';
+            const name=document.createElement('span');name.className='layer-name';name.textContent=o._name||'';if(o._hidden)name.style.opacity='0.4';
+            const vis=document.createElement('span');vis.className='layer-vis';vis.textContent=o._hidden?'👁‍🗗':'👁';
+            const del=document.createElement('span');del.className='layer-del';del.textContent='✕';
+            row.appendChild(dot);row.appendChild(name);row.appendChild(vis);row.appendChild(del);
+            list.appendChild(row);
+        });
+    }
+    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length;
+    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a;
+    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a;
+    document.getElementById('sb-history').textContent=history.length>0?((historyIdx+1)+'/'+history.length):'0/0';
+    document.getElementById('btn-undo').disabled=historyIdx<0;
+    document.getElementById('btn-redo').disabled=historyIdx>=history.length-2;
+}
+
+function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e.style.opacity='1';setTimeout(()=>{e.style.opacity='0'},2000)}
+
+initMap().catch(err=>{document.getElementById('map-wrap').textContent='地图加载失败: '+err.message});
+})();
+</script>
+</body>
+</html>

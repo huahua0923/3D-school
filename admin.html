@@ -1,0 +1,651 @@
+﻿﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>后台配置 · 会展中心导览</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: 'Inter', 'Microsoft YaHei', system-ui, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    display: flex; height: 100vh; overflow: hidden;
+}
+a { color: #58a6ff; }
+
+/* -- Login overlay -- */
+#login-overlay {
+    position: fixed; inset: 0; z-index: 100;
+    background: #0d1117;
+    display: flex; align-items: center; justify-content: center;
+}
+#login-overlay.hidden { display: none; }
+.login-box {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 40px 36px; width: 360px; text-align: center;
+}
+.login-box h1 { font-size: 1.4rem; margin-bottom: 6px; color: #f0f6fc; }
+.login-box p { font-size: 0.85rem; color: #8b949e; margin-bottom: 24px; }
+.login-box input {
+    width: 100%; padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #30363d; background: #0d1117; color: #f0f6fc;
+    font-size: 1rem; font-family: inherit; outline: none; margin-bottom: 16px;
+}
+.login-box input:focus { border-color: #58a6ff; }
+.login-box button {
+    width: 100%; padding: 10px; border-radius: 8px; border: none;
+    background: #238636; color: #fff; font-size: 1rem; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+}
+.login-box button:hover { background: #2ea043; }
+.login-box .err { color: #f85149; font-size: 0.85rem; margin-top: 10px; min-height: 20px; }
+
+/* -- Sidebar -- */
+#sidebar {
+    width: 200px; min-width: 200px; background: #161b22;
+    border-right: 1px solid #30363d; padding: 20px 0;
+    display: flex; flex-direction: column;
+}
+#sidebar .logo { padding: 0 20px 16px; font-size: 1.1rem; font-weight: 700; color: #f0f6fc; border-bottom: 1px solid #21262d; margin-bottom: 8px; }
+#sidebar nav button {
+    display: block; width: 100%; text-align: left; padding: 10px 20px;
+    border: none; background: none; color: #8b949e; font-size: 0.9rem;
+    cursor: pointer; font-family: inherit; transition: all 0.15s;
+    border-left: 3px solid transparent;
+}
+#sidebar nav button:hover { color: #f0f6fc; background: #1c2128; }
+#sidebar nav button.active { color: #f0f6fc; border-left-color: #58a6ff; background: #1c2128; }
+
+/* -- Main content -- */
+#main { flex: 1; overflow-y: auto; padding: 24px 32px; }
+
+/* -- Top bar -- */
+#topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #21262d;
+}
+#topbar h2 { font-size: 1.25rem; color: #f0f6fc; }
+#topbar .actions { display: flex; gap: 10px; }
+#topbar .actions button {
+    padding: 8px 18px; border-radius: 8px; border: none; font-size: 0.85rem;
+    font-weight: 600; cursor: pointer; font-family: inherit;
+}
+.btn-save { background: #238636; color: #fff; }
+.btn-save:hover { background: #2ea043; }
+.btn-preview { background: #1f6feb; color: #fff; }
+.btn-preview:hover { background: #388bfd; }
+.btn-logout { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+.btn-logout:hover { color: #f0f6fc; }
+
+/* -- Form panels -- */
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* -- Section card -- */
+.section {
+    background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+    padding: 20px 24px; margin-bottom: 20px;
+}
+.section h3 { font-size: 1rem; color: #f0f6fc; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+
+/* -- Form grid -- */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-group label { font-size: 0.78rem; color: #8b949e; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; }
+.form-group input, .form-group textarea, .form-group select {
+    padding: 8px 10px; border-radius: 6px; border: 1px solid #30363d;
+    background: #0d1117; color: #f0f6fc; font-size: 0.88rem; font-family: inherit; outline: none;
+}
+.form-group input:focus, .form-group textarea:focus { border-color: #58a6ff; }
+.form-group textarea { resize: vertical; min-height: 60px; }
+.form-group .color-input { display: flex; align-items: center; gap: 8px; }
+.form-group .color-input input[type="color"] { width: 36px; height: 36px; padding: 0; border: none; cursor: pointer; border-radius: 4px; }
+.form-group .color-input input[type="text"] { flex: 1; }
+
+/* -- Features list (entrance editor) -- */
+.feature-list { display: flex; flex-direction: column; gap: 6px; }
+.feature-row { display: flex; gap: 8px; align-items: center; }
+.feature-row input { flex: 1; }
+.feature-row button {
+    padding: 4px 10px; border-radius: 4px; border: 1px solid #30363d;
+    background: #21262d; color: #f85149; cursor: pointer; font-size: 0.8rem;
+}
+.feature-row button:hover { background: #da3633; color: #fff; }
+.btn-add-feat {
+    padding: 6px 14px; border-radius: 6px; border: 1px dashed #30363d;
+    background: none; color: #8b949e; cursor: pointer; font-size: 0.82rem;
+    align-self: flex-start; margin-top: 4px;
+}
+.btn-add-feat:hover { border-color: #58a6ff; color: #58a6ff; }
+
+/* -- Route points editor -- */
+.point-list { display: flex; flex-direction: column; gap: 6px; }
+.point-row { display: flex; gap: 8px; align-items: center; }
+.point-row input { width: 80px; }
+
+/* -- Sub-buildings -- */
+.sub-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* -- Status bar -- */
+#statusbar {
+    padding: 12px 24px; background: #161b22; border-top: 1px solid #21262d;
+    font-size: 0.82rem; color: #8b949e; display: flex; align-items: center; justify-content: space-between;
+    position: fixed; bottom: 0; left: 200px; right: 0;
+}
+#statusbar .success { color: #3fb950; }
+#statusbar .error { color: #f85149; }
+
+/* -- Toast -- */
+#toast {
+    position: fixed; top: 20px; right: 20px; z-index: 200;
+    padding: 12px 20px; border-radius: 8px; font-size: 0.9rem; font-weight: 600;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+#toast.ok { background: #238636; color: #fff; }
+#toast.err { background: #da3633; color: #fff; }
+
+@media (max-width: 768px) {
+    #sidebar { width: 140px; min-width: 140px; }
+    #main { padding: 16px; }
+    #statusbar { left: 140px; }
+    .form-grid { grid-template-columns: 1fr; }
+}
+
+#sidebar nav a.nav-link {
+    display: block; text-align: left; padding: 10px 20px;
+    border: none; background: none; color: #8b949e;
+    font-size: 0.9rem; cursor: pointer; font-family: inherit;
+    transition: all 0.15s; border-left: 3px solid transparent;
+    text-decoration: none;
+}
+#sidebar nav a.nav-link:hover { color: #f0f6fc; background: #1c2128; }
+#sidebar nav a.nav-link.active { color: #f0f6fc; border-left-color: #58a6ff; background: #1c2128; }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-overlay">
+    <div class="login-box">
+        <h1>⚙️ 后台配置</h1>
+        <p>会展中心 3D 导览管理系统</p>
+        <input type="password" id="login-pwd" placeholder="请输入管理员密码" autofocus />
+        <button id="login-btn">登 录</button>
+        <div class="err" id="login-err"></div>
+    </div>
+</div>
+
+<!-- Sidebar -->
+<div id="sidebar">
+    <div class="logo">🏛️ 导览配置</div>
+    <nav>
+    <button class="active" data-panel="brand">⚙️ 系统配置</button>
+    <button data-panel="geo">🌍 地理信息</button>
+    <a href="admin-map.html" class="nav-link">🗺️ 地图绘制</a>
+    <a href="editor.html" class="nav-link">✏️ 路线图编辑器</a>
+</nav>
+</div>
+
+<!-- Main -->
+<div id="main">
+    <div id="topbar">
+        <h2 id="panel-title">📐 建筑 & 场景</h2>
+        <div class="actions">
+            <button class="btn-preview" onclick="preview()">👁️ 预览</button>
+            <button class="btn-save" onclick="saveConfig()">💾 保存配置</button>
+            <button class="btn-logout" onclick="logout()">退出</button>
+        </div>
+    </div>
+
+    <!-- ====== Building Panel ====== -->
+    
+    <!-- ====== Brand Panel ====== -->
+    <div class="panel active" id="panel-brand">
+        <div class="section"><h3>🏷️ 品牌信息</h3>
+            <div class="form-grid" id="form-brand"></div>
+        </div>
+    </div>
+
+    <div class="panel" id="panel-building">
+        <div class="section"><h3>🏢 主建筑</h3>
+            <div class="form-grid" id="form-main-building"></div>
+        </div>
+        <div class="section"><h3>🏗️ 配楼</h3>
+            <div class="sub-list" id="form-subs"></div>
+        </div>
+        <div class="section"><h3>🛣️ 其他</h3>
+            <div class="form-grid" id="form-scene"></div>
+        </div>
+    </div>
+
+    <!-- ====== Markers Panel ====== -->
+    <div class="panel" id="panel-markers">
+        <div id="form-markers"></div>
+    </div>
+
+    <!-- ====== Routes Panel ====== -->
+    <div class="panel" id="panel-routes">
+        <div id="form-routes"></div>
+    </div>
+
+    <!-- ====== Areas Panel ====== -->
+    <div class="panel" id="panel-areas">
+        <div id="form-areas"></div>
+    </div>
+
+    <!-- ====== Camera Panel ====== -->
+    <div class="panel" id="panel-camera">
+        <div class="section"><h3>📷 相机参数</h3>
+            <div class="form-grid" id="form-camera-params"></div>
+        </div>
+        <div class="section"><h3>🎯 视角预设</h3>
+            <div id="form-presets"></div>
+        </div>
+    </div>
+
+    <!-- ====== Particles Panel ====== -->
+    <div class="panel" id="panel-particles">
+        <div class="section"><h3>✨ 粒子参数</h3>
+            <div class="form-grid" id="form-particles"></div>
+        </div>
+    </div>
+
+    <!-- ====== Geo Panel ====== -->
+    <div class="panel" id="panel-geo">
+        <div class="section"><h3>🌍 高德地图设置</h3>
+            <div class="form-grid" id="form-geo"></div>
+        </div>
+    </div>
+
+    <!-- ====== Parking Panel ====== -->
+    <div class="panel" id="panel-parking">
+        <div id="form-parking"></div>
+    </div>
+</div>
+
+<!-- Status bar -->
+<div id="statusbar">
+    <span id="status-text">就绪</span>
+    <span id="status-time"></span>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ============================================================
+// Admin Panel JS
+// ============================================================
+
+let config = null;
+let token = localStorage.getItem('admin_token') || '';
+
+// ---------- Auth ----------
+async function login() {
+    const pwd = document.getElementById('login-pwd').value;
+    const errEl = document.getElementById('login-err');
+    try {
+        const resp = await fetch('/api/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pwd }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) { errEl.textContent = data.error || '登录失败'; return; }
+        token = data.token;
+        localStorage.setItem('admin_token', token);
+        document.getElementById('login-overlay').classList.add('hidden');
+        await loadConfig();
+    } catch (e) {
+        errEl.textContent = '网络错误: ' + e.message;
+    }
+}
+
+function logout() {
+    token = '';
+    localStorage.removeItem('admin_token');
+    document.getElementById('login-overlay').classList.remove('hidden');
+}
+
+// Enter key to login
+document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+document.getElementById('login-btn').addEventListener('click', login);
+
+// ---------- Tab switching ----------
+
+    // Default to brand panel
+    document.getElementById('panel-brand').classList.add('active');
+    document.getElementById('panel-building').classList.remove('active');
+    document.querySelectorAll('#sidebar nav button').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('#sidebar nav button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.getElementById('panel-' + btn.dataset.panel).classList.add('active');
+        document.getElementById('panel-title').textContent = btn.textContent;
+        renderAll(); // re-render
+    });
+});
+
+// ---------- Config loading ----------
+async function loadConfig() {
+    try {
+        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        const resp = await fetch('/api/config', { headers });
+        if (resp.status === 401) { logout(); return; }
+        config = await resp.json();
+        renderAll();
+    } catch (e) {
+        showToast('加载配置失败: ' + e.message, 'err');
+    }
+}
+
+// ---------- Save ----------
+async function saveConfig() {
+    collectAll();
+    try {
+        const resp = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify(config),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast('✅ 配置已保存', 'ok');
+            document.getElementById('status-time').textContent = '上次保存: ' + new Date(data.time).toLocaleString();
+        } else {
+            showToast('❌ ' + (data.error || '保存失败'), 'err');
+        }
+    } catch (e) {
+        showToast('网络错误: ' + e.message, 'err');
+    }
+}
+
+function preview() { window.open('/', '_blank'); }
+
+// ---------- Toast ----------
+function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = type + ' show';
+    setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ---------- Form helpers ----------
+function fld(key, label, type = 'text', opts = {}) {
+    const isColor = type === 'color';
+    let inputHtml;
+    if (isColor) {
+        inputHtml = `<div class="color-input">
+            <input type="color" value="${opts.value || '#000000'}" onchange="updateNested(config, '${key}', this.value)" />
+            <input type="text" value="${opts.value || ''}" onchange="updateNested(config, '${key}', this.value)" />
+        </div>`;
+    } else if (type === 'textarea') {
+        inputHtml = `<textarea onchange="updateNested(config, '${key}', this.value)">${opts.value || ''}</textarea>`;
+    } else {
+        inputHtml = `<input type="${type}" value="${opts.value || ''}" step="${opts.step || 'any'}" onchange="updateNested(config, '${key}', this.type === 'number' ? +this.value : this.value)" />`;
+    }
+    return `<div class="form-group"><label>${label}</label>${inputHtml}</div>`;
+}
+
+function updateNested(obj, path, value) {
+    const keys = path.split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        if (keys[i].includes('[')) {
+            const [name, idx] = keys[i].split('[');
+            cur = cur[name][parseInt(idx)];
+        } else {
+            cur = cur[keys[i]];
+        }
+    }
+    const lastKey = keys[keys.length - 1];
+    cur[lastKey] = value;
+}
+
+function getNested(obj, path) {
+    const keys = path.split('.');
+    let cur = obj;
+    for (const k of keys) {
+        if (k.includes('[')) {
+            const [name, idx] = k.split('[');
+            cur = cur[name] ? cur[name][parseInt(idx)] : undefined;
+        } else {
+            cur = cur ? cur[k] : undefined;
+        }
+        if (cur === undefined) return '';
+    }
+    return cur;
+}
+
+// ---------- Render functions ----------
+function renderAll() {
+    if (!config) return;
+    renderBrand();
+    renderBuilding();
+    renderMarkers();
+    renderRoutes();
+    renderAreas();
+    renderCamera();
+    renderParticles();
+    renderGeo();
+    renderParking();
+}
+
+
+function renderBrand() {
+    var b = config.brand || {name:'',subtitle:'',logo:''};
+    document.getElementById('form-brand').innerHTML =
+        fld('brand.name', '项目名称', 'text', {value:b.name||''}) +
+        fld('brand.subtitle', '副标题', 'text', {value:b.subtitle||''}) +
+        fld('brand.logo', 'Logo图标', 'text', {value:b.logo||''});
+}
+function renderBuilding() {
+    const m = config.building.main;
+    document.getElementById('form-main-building').innerHTML =
+        fld('building.main.w', '宽度', 'number', { value: m.w, step: 1 }) +
+        fld('building.main.d', '深度', 'number', { value: m.d, step: 1 }) +
+        fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
+        fld('building.main.color', '颜色', 'color', { value: m.color });
+
+    document.getElementById('form-subs').innerHTML = config.building.subs.map((s, i) => {
+        const base = `building.subs[${i}]`;
+        return `<div class="section"><h4>配楼 #${i + 1}</h4><div class="form-grid">` +
+            fld(`${base}.w`, '宽', 'number', { value: s.w, step: 1 }) +
+            fld(`${base}.d`, '深', 'number', { value: s.d, step: 1 }) +
+            fld(`${base}.h`, '高', 'number', { value: s.h, step: 1 }) +
+            fld(`${base}.x`, 'X', 'number', { value: s.x, step: 1 }) +
+            fld(`${base}.z`, 'Z', 'number', { value: s.z, step: 1 }) +
+            fld(`${base}.color`, '颜色', 'color', { value: s.color }) +
+            `</div></div>`;
+    }).join('');
+
+    document.getElementById('form-scene').innerHTML =
+        fld('building.roadWidth', '道路宽度', 'number', { value: config.building.roadWidth, step: 1 }) +
+        fld('groundSize', '地面大小', 'number', { value: config.groundSize, step: 10 }) +
+        fld('fogNear', '雾近端', 'number', { value: config.fogNear, step: 1 }) +
+        fld('fogFar', '雾远端', 'number', { value: config.fogFar, step: 1 });
+}
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function renderMarkers() {
+    document.getElementById('form-markers').innerHTML = Object.entries(config.markers).map(([key, m]) => {
+        const base = `markers.${key}`;
+        return `<div class="section"><h3>${m.icon} ${m.label} <span style="font-size:0.7rem;color:#8b949e;">(${key})</span></h3>
+            <div class="form-grid">
+                ${fld(`${base}.label`, '名称', 'text', { value: m.label })}
+                ${fld(`${base}.icon`, '图标', 'text', { value: m.icon })}
+                ${fld(`${base}.badge`, '徽章文字', 'text', { value: m.badge })}
+                ${fld(`${base}.color`, '颜色', 'color', { value: m.color })}
+                ${fld(`${base}.pos[0]`, '坐标 X', 'number', { value: m.pos[0], step: 1 })}
+                ${fld(`${base}.pos[1]`, '坐标 Y', 'number', { value: m.pos[1], step: 0.5 })}
+                ${fld(`${base}.pos[2]`, '坐标 Z', 'number', { value: m.pos[2], step: 1 })}
+            </div>
+            <div class="form-group" style="margin-top:12px">
+                <label>描述</label>
+                <textarea onchange="updateNested(config, '${base}.desc', this.value)">${m.desc || ''}</textarea>
+            </div>
+            <div style="margin-top:12px">
+                <label style="font-size:0.78rem;color:#8b949e;text-transform:uppercase">设施列表</label>
+                <div class="feature-list" id="feat-${key}">
+                    ${(m.features || []).map((f, fi) => `
+                        <div class="feature-row">
+                            <input value="${f}" onchange="config.markers[${JSON.stringify(key)}].features[${fi}] = this.value" />
+                            <button onclick="config.markers[${JSON.stringify(key)}].features.splice(${fi},1);renderMarkers()">✕</button>
+                        </div>`).join('')}
+                </div>
+                <button class="btn-add-feat" onclick="config.markers[${JSON.stringify(key)}].features.push('新设施');renderMarkers()">+ 添加设施</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderRoutes() {
+    document.getElementById('form-routes').innerHTML = Object.entries(config.routes).map(([key, r]) => {
+        return `<div class="section"><h3>${key === 'public' ? '🔵 普通观众路线' : '🟣 VIP 路线'}</h3>
+            <div class="form-grid">
+                ${fld(`routes.${key}.color`, '颜色', 'color', { value: r.color })}
+                ${fld(`routes.${key}.speed`, '速度', 'number', { value: r.speed, step: 0.1 })}
+            </div>
+            <div style="margin-top:12px">
+                <label style="font-size:0.78rem;color:#8b949e;text-transform:uppercase">路径点 (X, Y, Z)</label>
+                <div class="point-list" id="pts-${key}">
+                    ${(r.pts || []).map((p, pi) => `
+                        <div class="point-row">
+                            <input type="number" value="${p[0]}" step="1" onchange="config.routes[${JSON.stringify(key)}].pts[${pi}][0]=+this.value" />
+                            <input type="number" value="${p[1]}" step="0.1" onchange="config.routes[${JSON.stringify(key)}].pts[${pi}][1]=+this.value" />
+                            <input type="number" value="${p[2]}" step="1" onchange="config.routes[${JSON.stringify(key)}].pts[${pi}][2]=+this.value" />
+                            <button onclick="config.routes[${JSON.stringify(key)}].pts.splice(${pi},1);renderRoutes()" style="padding:4px 8px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;">✕</button>
+                        </div>`).join('')}
+                </div>
+                <button class="btn-add-feat" onclick="config.routes[${JSON.stringify(key)}].pts.push([0,0.6,0]);renderRoutes()">+ 添加路径点</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderAreas() {
+    var areas = config.areas || {};
+    document.getElementById('form-areas').innerHTML = Object.entries(areas).map(function(e) {
+        var key = e[0], a = e[1], sk = JSON.stringify(key), ek = escHtml(key);
+        return '<div class="section"><h3>📐 ' + ek + '</h3>'
+            + '<div class="form-grid">'
+            + fld('areas.'+ek+'.color', '颜色', 'color', { value: a.color || '#10b981' })
+            + fld('areas.'+ek+'.strokeWidth', '线宽', 'number', { value: a.strokeWidth || 2, step: 1, min: 1 })
+            + fld('areas.'+ek+'.opacity', '透明度', 'number', { value: a.opacity || 0.2, step: 0.1, min: 0, max: 1 })
+            + '</div>'
+            + '<div style="margin-top:12px">'
+            + '<label style="font-size:0.78rem;color:#8b949e;text-transform:uppercase">顶点坐标 (lng, lat)</label>'
+            + '<div class="point-list" id="pts-area-'+ek+'">'
+            + (a.pts || []).map(function(p, pi) { return '<div class="point-row">'
+                + '<input type="number" value="'+p[0]+'" step="0.0001" onchange="config.areas['+sk+'].pts['+pi+'][0]=+this.value" />'
+                + '<input type="number" value="'+p[1]+'" step="0.0001" onchange="config.areas['+sk+'].pts['+pi+'][1]=+this.value" />'
+                + '<button onclick="config.areas['+sk+'].pts.splice('+pi+',1);renderAreas()" style="padding:4px 8px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;">✕</button>'
+                + '</div>'; }).join('')
+            + '</div>'
+            + '<button class="btn-add-feat" onclick="config.areas['+sk+'].pts.push([104.14,30.67]);renderAreas()">+ 添加顶点</button>'
+            + '</div></div>';
+    }).join('');
+}
+
+function renderCamera() {
+    document.getElementById('form-camera-params').innerHTML =
+        fld('camera.fov', 'FOV', 'number', { value: config.camera.fov, step: 1 }) +
+        fld('camera.near', 'Near', 'number', { value: config.camera.near, step: 0.1 }) +
+        fld('camera.far', 'Far', 'number', { value: config.camera.far, step: 10 }) +
+        fld('camera.tweenMs', '过渡时间(ms)', 'number', { value: config.camera.tweenMs, step: 100 }) +
+        fld('camera.orbitDamping', '阻尼', 'number', { value: config.camera.orbitDamping, step: 0.01 }) +
+        fld('camera.minDist', '最小距离', 'number', { value: config.camera.minDist, step: 1 }) +
+        fld('camera.maxDist', '最大距离', 'number', { value: config.camera.maxDist, step: 10 }) +
+        fld('camera.maxPolarFactor', '仰角系数', 'number', { value: config.camera.maxPolarFactor || 0.46, step: 0.01 });
+
+    document.getElementById('form-presets').innerHTML = Object.entries(config.camera.presets).map(([key, p]) => {
+        return `<div class="section"><h4>${key}</h4><div class="form-grid">` +
+            fld(`camera.presets.${key}.pos[0]`, '位置 X', 'number', { value: p.pos[0], step: 1 }) +
+            fld(`camera.presets.${key}.pos[1]`, '位置 Y', 'number', { value: p.pos[1], step: 1 }) +
+            fld(`camera.presets.${key}.pos[2]`, '位置 Z', 'number', { value: p.pos[2], step: 1 }) +
+            fld(`camera.presets.${key}.target[0]`, '目标 X', 'number', { value: p.target[0], step: 1 }) +
+            fld(`camera.presets.${key}.target[1]`, '目标 Y', 'number', { value: p.target[1], step: 1 }) +
+            fld(`camera.presets.${key}.target[2]`, '目标 Z', 'number', { value: p.target[2], step: 1 }) +
+            '</div></div>';
+    }).join('');
+}
+
+function renderParticles() {
+    const p = config.particles;
+    document.getElementById('form-particles').innerHTML =
+        fld('particles.count', '数量', 'number', { value: p.count, step: 10 }) +
+        fld('particles.spread', '扩散半径', 'number', { value: p.spread, step: 5 }) +
+        fld('particles.height', '高度范围', 'number', { value: p.height, step: 1 });
+}
+
+function renderGeo() {
+    const g = config.geo || { amapKey: '', center: [116, 39], zoom: 17, pitch: 55, rotation: 20, mapStyle: 'amap://styles/dark' };
+    if (!config.geo) config.geo = g;
+    document.getElementById('form-geo').innerHTML =
+        fld('geo.amapKey', '高德 Key', 'text', { value: g.amapKey || '' }) +
+        fld('geo.amapSecurityCode', '安全密钥 (jscode)', 'text', { value: g.amapSecurityCode || '' }) +
+        fld('geo.center[0]', '中心经度 (lng)', 'number', { value: g.center[0], step: 0.0001 }) +
+        fld('geo.center[1]', '中心纬度 (lat)', 'number', { value: g.center[1], step: 0.0001 }) +
+        fld('geo.zoom', '默认缩放', 'number', { value: g.zoom, step: 0.5 }) +
+        fld('geo.pitch', '视角俯仰', 'number', { value: g.pitch, step: 1 }) +
+        fld('geo.rotation', '初始旋转', 'number', { value: g.rotation, step: 1 }) +
+        `<div class="form-group"><label>地图样式</label><select onchange="config.geo.mapStyle=this.value">
+            <option value="amap://styles/dark" ${g.mapStyle === 'amap://styles/dark' ? 'selected' : ''}>暗黑</option>
+            <option value="amap://styles/light" ${g.mapStyle === 'amap://styles/light' ? 'selected' : ''}>标准</option>
+            <option value="amap://styles/whitesmoke" ${g.mapStyle === 'amap://styles/whitesmoke' ? 'selected' : ''}>浅色</option>
+        </select></div>`;
+}
+
+function renderParking() {
+    config.parking = config.parking || [];
+    document.getElementById('form-parking').innerHTML = config.parking.map((p, i) => {
+        const base = `parking[${i}]`;
+        return `<div class="section"><h3>🅿️ ${p.name || '停车场 #' + (i+1)}</h3>
+            <div class="form-grid">
+                ${fld(`${base}.name`, '名称', 'text', { value: p.name })}
+                ${fld(`${base}.offset[0]`, '坐标 X', 'number', { value: p.offset[0], step: 1 })}
+                ${fld(`${base}.offset[1]`, '坐标 Y', 'number', { value: p.offset[1], step: 0.5 })}
+                ${fld(`${base}.offset[2]`, '坐标 Z', 'number', { value: p.offset[2], step: 1 })}
+                ${fld(`${base}.capacity`, '总车位', 'number', { value: p.capacity, step: 10 })}
+                ${fld(`${base}.available`, '可用车位', 'number', { value: p.available, step: 1 })}
+                ${fld(`${base}.color`, '颜色', 'color', { value: p.color || '#ffb347' })}
+            </div>
+            <button style="margin-top:8px;padding:4px 12px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;"
+                onclick="config.parking.splice(${i},1);renderParking()">✕ 删除</button>
+        </div>`;
+    }).join('') +
+    `<button class="btn-add-feat" style="margin-top:12px" onclick="config.parking.push({name:'新停车场',offset:[0,0,30],capacity:100,available:50,color:'#ffb347'});renderParking()">+ 添加停车场</button>`;
+}
+
+function collectAll() {
+    // All updates happen live via onchange, this is a no-op but kept for explicitness.
+    // Ensure colors are valid hex strings
+    for (const [, m] of Object.entries(config.markers)) {
+        if (m.color && !m.color.startsWith('#')) m.color = '#' + m.color;
+    }
+    for (const [, r] of Object.entries(config.routes)) {
+        if (r.color && !r.color.startsWith('#')) r.color = '#' + r.color;
+    }
+}
+
+// ---------- Init ----------
+(async () => {
+    if (token) {
+        // Verify token
+        try {
+            const resp = await fetch('/api/check', { headers: { 'Authorization': 'Bearer ' + token } });
+            if (resp.ok) {
+                document.getElementById('login-overlay').classList.add('hidden');
+                await loadConfig();
+                return;
+            }
+        } catch (_) {}
+    }
+    // Show login
+    document.getElementById('login-overlay').classList.remove('hidden');
+})();
+</script>
+</body>
+</html>

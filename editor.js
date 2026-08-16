@@ -1,0 +1,1354 @@
+// ============================================================
+// 路线图编辑器 — 核心逻辑 v2
+// 基于 HTML5 Canvas，无框架依赖
+// 功能完整对齐 Coze 原始项目
+// ============================================================
+
+(function () {
+  'use strict';
+
+  // ===================== 常量 =====================
+  const DEFAULT_ROUTE_COLOR = '#3b82f6';
+  const DEFAULT_AREA_COLOR = '#10b981';
+  const DEFAULT_TEXT_COLOR = '#ffffff';
+  const DEFAULT_TEXT_BG = 'rgba(0,0,0,0.7)';
+  const COLOR_PRESETS = [
+    '#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4',
+    '#f97316','#84cc16','#14b8a6','#6366f1','#d946ef','#0ea5e9','#e11d48',
+    '#22c55e','#eab308','#a855f7','#64748b','#ffffff','#000000'
+  ];
+  const TEXT_BG_PRESETS = [
+    'rgba(0,0,0,0.7)','rgba(255,255,255,0.8)','rgba(59,130,246,0.6)',
+    'rgba(16,185,129,0.6)','rgba(239,68,68,0.6)','rgba(245,158,11,0.6)',
+    'rgba(139,92,246,0.6)','rgba(236,72,153,0.6)','rgba(249,115,22,0.6)',
+    'rgba(34,211,238,0.6)'
+  ];
+  const MAX_HISTORY = 50;
+
+  // ===================== 状态管理 =====================
+  const state = {
+    projectId: null,
+    projectName: '未命名项目',
+    backgroundImage: null,
+    imageWidth: 0,
+    imageHeight: 0,
+    bgOpacity: 1,
+    currentTool: 'select',
+    elements: [],
+    selectedElementId: null,
+    selectedElementIds: [],
+    isDrawing: false,
+    drawingPoints: [],
+    stageScale: 1,
+    stagePosition: { x: 0, y: 0 },
+    mousePos: null,
+    gridEnabled: true,
+    gridSize: 20,
+    snapToGrid: true,
+    guideLines: [],
+    history: [],
+    historyIndex: -1,
+  };
+
+  let bgImageObj = null;
+
+  const listeners = {};
+  function on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); }
+  function emit(evt, data) { (listeners[evt] || []).forEach(fn => fn(data)); }
+  function setState(updates) { Object.assign(state, updates); emit('change'); }
+
+  // ===================== DOM 引用 =====================
+  const canvas = document.getElementById('editor-canvas');
+  const ctx = canvas.getContext('2d');
+  const canvasWrap = document.getElementById('canvas-wrap');
+  const $name = document.getElementById('project-name');
+  const $layerList = document.getElementById('layer-list');
+  const $propsPanel = document.getElementById('props-panel');
+  const $noSelection = document.getElementById('no-selection');
+  const $ctxMenu = document.getElementById('ctx-menu');
+  const $zoomSlider = document.getElementById('zoom-slider');
+  const $zoomLabel = document.getElementById('zoom-label');
+  const $alignBtns = document.getElementById('align-btns');
+  const $exportDropdown = document.getElementById('export-dropdown');
+  const $textProps = document.getElementById('text-props');
+
+  // ===================== Canvas 渲染 =====================
+
+  function fromCanvas(cx, cy) {
+    return {
+      x: (cx - state.stagePosition.x) / state.stageScale,
+      y: (cy - state.stagePosition.y) / state.stageScale
+    };
+  }
+
+  function snap(v) {
+    if (!state.snapToGrid) return v;
+    return Math.round(v / state.gridSize) * state.gridSize;
+  }
+
+  function render() {
+    const w = canvasWrap.clientWidth;
+    const h = canvasWrap.clientHeight;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h;
+    }
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.translate(state.stagePosition.x, state.stagePosition.y);
+    ctx.scale(state.stageScale, state.stageScale);
+
+    // Background
+    const vx = -state.stagePosition.x / state.stageScale;
+    const vy = -state.stagePosition.y / state.stageScale;
+    const vw = w / state.stageScale;
+    const vh = h / state.stageScale;
+    ctx.fillStyle = '#f8f9fa';
+    ctx.fillRect(vx, vy, vw, vh);
+
+    // Grid
+    if (state.gridEnabled) {
+      const gs = state.gridSize;
+      const lw = 0.3 / state.stageScale;
+      const startX = Math.floor(vx / gs) * gs;
+      const startY = Math.floor(vy / gs) * gs;
+      const endX = vx + vw + gs;
+      const endY = vy + vh + gs;
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      for (let x = startX; x <= endX; x += gs) { ctx.moveTo(x, startY); ctx.lineTo(x, endY); }
+      for (let y = startY; y <= endY; y += gs) { ctx.moveTo(startX, y); ctx.lineTo(endX, y); }
+      ctx.stroke();
+    }
+
+    // Background image
+    if (bgImageObj && state.bgOpacity > 0) {
+      ctx.globalAlpha = state.bgOpacity;
+      ctx.drawImage(bgImageObj, 0, 0, state.imageWidth || bgImageObj.width, state.imageHeight || bgImageObj.height);
+      ctx.globalAlpha = 1;
+    }
+
+    // Guide lines
+    state.guideLines.forEach(gl => {
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 1 / state.stageScale;
+      ctx.setLineDash([4 / state.stageScale, 4 / state.stageScale]);
+      ctx.beginPath();
+      if (gl.orientation === 'horizontal') { ctx.moveTo(vx, gl.position); ctx.lineTo(vx + vw, gl.position); }
+      else { ctx.moveTo(gl.position, vy); ctx.lineTo(gl.position, vy + vh); }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // Elements
+    for (const el of state.elements) { if (el.visible) drawElement(el); }
+
+    // Drawing preview
+    if (state.isDrawing && state.drawingPoints.length > 0) drawDrawingPreview();
+
+    // Box select
+    if (boxSelectState) {
+      const s = boxSelectState;
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 1 / state.stageScale;
+      ctx.setLineDash([5 / state.stageScale, 3 / state.stageScale]);
+      ctx.strokeRect(s.x, s.y, s.w, s.h);
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(59,130,246,0.08)';
+      ctx.fillRect(s.x, s.y, s.w, s.h);
+    }
+
+    ctx.restore();
+  }
+
+  function drawElement(el) {
+    ctx.save();
+    ctx.globalAlpha = el.opacity;
+    if (el.type === 'route') drawRoute(el);
+    else if (el.type === 'area') drawArea(el);
+    else if (el.type === 'text') drawText(el);
+    ctx.restore();
+
+    if (el.id === state.selectedElementId && !el.locked && (el.type === 'route' || el.type === 'area')) {
+      drawVertexHandles(el);
+    }
+  }
+
+  function drawRoute(el) {
+    if (el.points.length < 2) return;
+
+    // Glow base (thicker, semi-transparent stroke underneath)
+    ctx.strokeStyle = el.color + '40';
+    ctx.lineWidth = (el.strokeWidth || 3) + 4;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(el.points[0].x, el.points[0].y);
+    for (let i = 1; i < el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+    ctx.stroke();
+
+    // Main line
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = el.strokeWidth || 3;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(el.points[0].x, el.points[0].y);
+    for (let i = 1; i < el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+    ctx.stroke();
+
+    // Flowing water effect - dashed highlight that animates along the line
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(el.points[0].x, el.points[0].y);
+    for (let i = 1; i < el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = Math.max(2, (el.strokeWidth || 3) - 2);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.setLineDash([18, 25]);
+    ctx.lineDashOffset = -flowOffset * 2;
+    ctx.stroke();
+    ctx.restore();
+
+    // Arrows at midpoints
+    for (let i = 0; i < el.points.length - 1; i++) {
+      const mx = (el.points[i].x + el.points[i + 1].x) / 2;
+      const my = (el.points[i].y + el.points[i + 1].y) / 2;
+      const angle = Math.atan2(el.points[i + 1].y - el.points[i].y, el.points[i + 1].x - el.points[i].x);
+      const al = Math.max(6, (el.strokeWidth || 3) * 2.5);
+      ctx.save(); ctx.translate(mx, my); ctx.rotate(angle);
+      ctx.fillStyle = el.color;
+      ctx.beginPath();
+      ctx.moveTo(al, 0); ctx.lineTo(-al * 0.3, -al * 0.4); ctx.lineTo(-al * 0.3, al * 0.4);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // Start/end dots
+    [el.points[0], el.points[el.points.length - 1]].forEach(p => {
+      ctx.fillStyle = el.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    });
+
+    // Length
+    if (el.points.length >= 2) {
+      let len = 0;
+      for (let i = 0; i < el.points.length - 1; i++) len += Math.hypot(el.points[i + 1].x - el.points[i].x, el.points[i + 1].y - el.points[i].y);
+      const mp = el.points[Math.floor(el.points.length / 2)];
+      drawPill(mp.x + 10, mp.y - 10, Math.round(len) + 'px', el.color);
+    }
+  }
+
+  function drawArea(el) {
+    if (el.points.length < 3) return;
+    ctx.fillStyle = hexToRgba(el.color, el.opacity * 0.25);
+    ctx.beginPath();
+    ctx.moveTo(el.points[0].x, el.points[0].y);
+    for (let i = 1; i < el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = el.strokeWidth || 2; ctx.lineJoin = 'round'; ctx.stroke();
+
+    const cx = el.points.reduce((s, p) => s + p.x, 0) / el.points.length;
+    const cy = el.points.reduce((s, p) => s + p.y, 0) / el.points.length;
+    drawPill(cx, cy, Math.round(Math.abs(computePolygonArea(el.points))) + 'px²', el.color);
+  }
+
+  function drawText(el) {
+    const p = el.points[0]; if (!p) return;
+    const fs = el.fontSize || 16;
+    ctx.font = `${fs}px "Inter","PingFang SC","Microsoft YaHei",sans-serif`;
+    const text = el.label || '';
+    const m = ctx.measureText(text);
+    const pw = m.width + 16, ph = fs + 10;
+    ctx.fillStyle = el.backgroundColor || DEFAULT_TEXT_BG;
+    ctx.beginPath(); roundRect(ctx, p.x, p.y - ph / 2, pw, ph, ph / 2); ctx.fill();
+    ctx.fillStyle = el.color || DEFAULT_TEXT_COLOR;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, p.x + 8, p.y);
+  }
+
+  function drawVertexHandles(el) {
+    el.points.forEach(p => {
+      ctx.fillStyle = '#3b82f6';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 5 / state.stageScale, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 / state.stageScale; ctx.stroke();
+    });
+  }
+
+  function drawDrawingPreview() {
+    const pts = state.drawingPoints;
+    const isArea = state.currentTool === 'draw-area';
+    const color = isArea ? DEFAULT_AREA_COLOR : DEFAULT_ROUTE_COLOR;
+    if (pts.length >= 2) {
+      ctx.strokeStyle = color; ctx.lineWidth = isArea ? 2 : 3;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.setLineDash([6, 4]); ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      if (isArea && state.mousePos) {
+        ctx.lineTo(state.mousePos.x, state.mousePos.y);
+        ctx.lineTo(pts[0].x, pts[0].y);
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    pts.forEach(p => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); });
+  }
+
+  function drawPill(x, y, text, color) {
+    ctx.font = 'bold 11px "Inter","PingFang SC","Microsoft YaHei",sans-serif';
+    const m = ctx.measureText(text); const pw = m.width + 8, ph = 16;
+    ctx.fillStyle = color;
+    ctx.beginPath(); roundRect(ctx, x - pw / 2, y - ph / 2, pw, ph, 8); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+    ctx.fillText(text, x, y); ctx.textAlign = 'start';
+    ctx.globalAlpha = 1;
+  }
+
+  // ===================== Helpers =====================
+
+  function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.moveTo(x + r, y); c.lineTo(x + w - r, y);
+    c.arcTo(x + w, y, x + w, y + r, r);
+    c.lineTo(x + w, y + h - r);
+    c.arcTo(x + w, y + h, x + w - r, y + h, r);
+    c.lineTo(x + r, y + h);
+    c.arcTo(x, y + h, x, y + h - r, r);
+    c.lineTo(x, y + r);
+    c.arcTo(x, y, x + r, y, r);
+  }
+
+  function computePolygonArea(pts) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const j = (i + 1) % pts.length;
+      area += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+    }
+    return area / 2;
+  }
+
+  function hitTest(mx, my) {
+    const threshold = 8;
+    for (let i = state.elements.length - 1; i >= 0; i--) {
+      const el = state.elements[i];
+      if (!el.visible || el.locked) continue;
+      if (el.type === 'route') {
+        for (let j = 0; j < el.points.length - 1; j++) {
+          if (pointNearSegment(mx, my, el.points[j], el.points[j + 1], threshold)) return el;
+        }
+      } else if (el.type === 'area') {
+        if (pointInPolygon(mx, my, el.points)) return el;
+      } else if (el.type === 'text') {
+        const p = el.points[0];
+        if (p && Math.abs(mx - p.x) < 60 && Math.abs(my - p.y) < 24) return el;
+      }
+    }
+    const sel = getSelEl();
+    if (sel && !sel.locked && (sel.type === 'route' || sel.type === 'area')) {
+      for (let i = 0; i < sel.points.length; i++) {
+        if (Math.hypot(mx - sel.points[i].x, my - sel.points[i].y) < threshold) {
+          return { __vertex: i, element: sel };
+        }
+      }
+    }
+    return null;
+  }
+
+  function pointNearSegment(px, py, a, b, threshold) {
+    const dx = b.x - a.x, dy = b.y - a.y, lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(px - a.x, py - a.y) < threshold;
+    let t = ((px - a.x) * dx + (py - a.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy)) < threshold;
+  }
+
+  function pointInPolygon(px, py, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      if ((pts[i].y > py) !== (pts[j].y > py) &&
+          px < (pts[j].x - pts[i].x) * (py - pts[i].y) / (pts[j].y - pts[i].y) + pts[i].x) inside = !inside;
+    }
+    return inside;
+  }
+
+  function getSelEl() { return state.elements.find(e => e.id === state.selectedElementId) || null; }
+
+  // ===================== History =====================
+
+  function saveHistory() {
+    const sp = {
+      elements: JSON.parse(JSON.stringify(state.elements)),
+      backgroundImage: state.backgroundImage,
+      imageWidth: state.imageWidth, imageHeight: state.imageHeight,
+      bgOpacity: state.bgOpacity,
+    };
+    const nh = state.history.slice(0, state.historyIndex + 1);
+    nh.push(sp);
+    if (nh.length > MAX_HISTORY) nh.shift();
+    setState({ history: nh, historyIndex: nh.length - 1 });
+  }
+
+  function undo() {
+    if (state.historyIndex < 0) return;
+    const sp = state.history[state.historyIndex];
+    setState({
+      elements: JSON.parse(JSON.stringify(sp.elements)),
+      backgroundImage: sp.backgroundImage, imageWidth: sp.imageWidth, imageHeight: sp.imageHeight,
+      bgOpacity: sp.bgOpacity, historyIndex: state.historyIndex - 1,
+      selectedElementId: null, isDrawing: false, drawingPoints: [],
+    });
+    loadBgImage(sp.backgroundImage, sp.imageWidth, sp.imageHeight);
+  }
+
+  function redo() {
+    if (state.historyIndex >= state.history.length - 2) return;
+    const ni = state.historyIndex + 2;
+    const sp = state.history[ni];
+    setState({
+      elements: JSON.parse(JSON.stringify(sp.elements)),
+      backgroundImage: sp.backgroundImage, imageWidth: sp.imageWidth, imageHeight: sp.imageHeight,
+      bgOpacity: sp.bgOpacity, historyIndex: ni,
+      selectedElementId: null, isDrawing: false, drawingPoints: [],
+    });
+    loadBgImage(sp.backgroundImage, sp.imageWidth, sp.imageHeight);
+  }
+
+  // ===================== Element Operations =====================
+
+  function selectElement(el) {
+    setState({ selectedElementId: el && el.id ? el.id : null, selectedElementIds: [] });
+    updatePropsPanel();
+  }
+
+  function deleteSelected() {
+    const ids = state.selectedElementIds.length > 0 ? state.selectedElementIds : (state.selectedElementId ? [state.selectedElementId] : []);
+    if (ids.length === 0) return;
+    saveHistory();
+    setState({ elements: state.elements.filter(e => !ids.includes(e.id)), selectedElementId: null, selectedElementIds: [] });
+  }
+
+  function duplicateSelected() {
+    const el = getSelEl(); if (!el) return;
+    saveHistory();
+    const newEl = { ...JSON.parse(JSON.stringify(el)), id: genId(), name: el.name + ' 副本',
+      points: el.points.map(p => ({ x: p.x + 20, y: p.y + 20 })) };
+    setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id });
+  }
+
+  function bringToFront(id) {
+    const idx = state.elements.findIndex(e => e.id === id);
+    if (idx < 0 || idx === state.elements.length - 1) return;
+    saveHistory();
+    const els = [...state.elements];
+    els.push(els.splice(idx, 1)[0]);
+    setState({ elements: els });
+  }
+
+  function sendToBack(id) {
+    const idx = state.elements.findIndex(e => e.id === id);
+    if (idx <= 0) return;
+    saveHistory();
+    const els = [...state.elements];
+    els.unshift(els.splice(idx, 1)[0]);
+    setState({ elements: els });
+  }
+
+  function alignElements(ids, type) {
+    const els = state.elements.filter(e => ids.includes(e.id));
+    if (els.length < 2) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    els.forEach(e => e.points.forEach(p => {
+      if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+    }));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    saveHistory();
+    const newEls = state.elements.map(e => {
+      if (!ids.includes(e.id)) return e;
+      const ecx = e.points.reduce((s, p) => s + p.x, 0) / e.points.length;
+      const ecy = e.points.reduce((s, p) => s + p.y, 0) / e.points.length;
+      let ox = 0, oy = 0;
+      switch (type) {
+        case 'left': ox = minX - ecx; break;
+        case 'center': ox = cx - ecx; break;
+        case 'right': ox = maxX - ecx; break;
+        case 'top': oy = minY - ecy; break;
+        case 'middle': oy = cy - ecy; break;
+        case 'bottom': oy = maxY - ecy; break;
+      }
+      return { ...e, points: e.points.map(p => ({ x: p.x + ox, y: p.y + oy })) };
+    });
+    setState({ elements: newEls });
+  }
+
+  function startDrawing(point) {
+    setState({ isDrawing: true, drawingPoints: [point], selectedElementId: null });
+  }
+
+  function addDrawingPoint(point) {
+    if (!state.isDrawing) return;
+    setState({ drawingPoints: [...state.drawingPoints, point] });
+  }
+
+  function finishDrawing() {
+    if (!state.isDrawing || state.drawingPoints.length < 2) {
+      setState({ isDrawing: false, drawingPoints: [] }); return;
+    }
+    const isArea = state.currentTool === 'draw-area';
+    const bn = isArea ? '区域' : '路线';
+    const cnt = state.elements.filter(e => e.name.startsWith(bn)).length + 1;
+    saveHistory();
+    const newEl = {
+      id: genId(), type: isArea ? 'area' : 'route', name: `${bn} ${cnt}`,
+      visible: true, locked: false, points: [...state.drawingPoints],
+      color: isArea ? DEFAULT_AREA_COLOR : DEFAULT_ROUTE_COLOR,
+      strokeWidth: isArea ? 2 : 3, opacity: isArea ? 0.3 : 1,
+    };
+    setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id, isDrawing: false, drawingPoints: [] });
+  }
+
+  function addTextAnnotation(point) {
+    const text = prompt('输入文字:', '标注');
+    if (!text) return;
+    saveHistory();
+    const cnt = state.elements.filter(e => e.type === 'text').length + 1;
+    const newEl = {
+      id: genId(), type: 'text', name: `文字 ${cnt}`, visible: true, locked: false,
+      points: [point], color: DEFAULT_TEXT_COLOR, strokeWidth: 0, opacity: 1,
+      label: text, fontSize: 16, backgroundColor: DEFAULT_TEXT_BG,
+    };
+    setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id });
+  }
+
+  function updateSelEl(updates) {
+    const id = state.selectedElementId; if (!id) return;
+    saveHistory();
+    setState({ elements: state.elements.map(e => e.id === id ? { ...e, ...updates } : e) });
+  }
+
+  function updateSelPoints(points) {
+    const id = state.selectedElementId; if (!id) return;
+    saveHistory();
+    setState({ elements: state.elements.map(e => e.id === id ? { ...e, points } : e) });
+  }
+
+  function setBackgroundImage(dataUrl, w, h) {
+    saveHistory();
+    setState({ backgroundImage: dataUrl, imageWidth: w, imageHeight: h });
+    loadBgImage(dataUrl, w, h);
+  }
+
+  function loadBgImage(dataUrl, w, h) {
+    if (!dataUrl) { bgImageObj = null; return; }
+    const img = new Image();
+    img.onload = () => { bgImageObj = img; render(); };
+    img.src = dataUrl;
+  }
+
+  // ===================== Export =====================
+
+  function exportPNG() {
+    render(); // ensure latest render
+    // Draw legend overlay
+    const legendEls = state.elements.filter(el => el.visible && (el.type === 'route' || el.type === 'area'));
+    if (legendEls.length > 0) {
+      const lx = 20, ly = 20, lw = 180;
+      const lh = 20 + legendEls.length * 24;
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.beginPath(); roundRectCtx(ctx, lx, ly, lw, Math.max(lh, 40), 8); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('图例', lx + 12, ly + 18);
+      legendEls.forEach((el, i) => {
+        const y = ly + 34 + i * 24;
+        ctx.beginPath(); ctx.arc(lx + 16, y, 5, 0, Math.PI * 2); ctx.fillStyle = el.color; ctx.fill();
+        ctx.fillStyle = '#ddd'; ctx.font = '11px sans-serif';
+        ctx.fillText(el.name, lx + 30, y + 4);
+      });
+      ctx.textAlign = 'start'; ctx.restore();
+    }
+    const link = document.createElement('a');
+    link.download = (state.projectName || '场地路线图') + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    showToast('✅ PNG 已导出');
+  }
+
+  function roundRectCtx(ctx, x, y, w, h, r) {
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+  }
+
+  function exportSVG() {
+    const visEls = state.elements.filter(el => el.visible);
+    const iw = state.imageWidth || 800, ih = state.imageHeight || 600;
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${iw}" height="${ih}" viewBox="0 0 ${iw} ${ih}">`;
+    svg += `<rect width="100%" height="100%" fill="#f8f9fa"/>`;
+    if (state.backgroundImage) {
+      svg += `<image href="${state.backgroundImage}" width="${iw}" height="${ih}" opacity="${state.bgOpacity}"/>`;
+    }
+    for (const el of visEls) {
+      if (el.type === 'route' && el.points.length >= 2) {
+        const d = el.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+        svg += `<path d="${d}" stroke="${el.color}" stroke-width="${el.strokeWidth}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+        for (let i = 0; i < el.points.length - 1; i++) {
+          const ang = Math.atan2(el.points[i + 1].y - el.points[i].y, el.points[i + 1].x - el.points[i].x);
+          const ax = el.points[i + 1].x, ay = el.points[i + 1].y;
+          svg += `<polygon points="${ax},${ay} ${ax - 12 * Math.cos(ang - 0.5)},${ay - 12 * Math.sin(ang - 0.5)} ${ax - 12 * Math.cos(ang + 0.5)},${ay - 12 * Math.sin(ang + 0.5)}" fill="${el.color}"/>`;
+        }
+      } else if (el.type === 'area' && el.points.length >= 3) {
+        const d = el.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + 'Z';
+        const alphaHex = Math.round(el.opacity * 255).toString(16).padStart(2, '0');
+        svg += `<path d="${d}" fill="${el.color}${alphaHex}" stroke="${el.color}" stroke-width="${el.strokeWidth}"/>`;
+      } else if (el.type === 'text' && el.points.length > 0) {
+        const p = el.points[0], text = el.label || el.name, fs = el.fontSize || 16;
+        svg += `<rect x="${p.x - 60}" y="${p.y - fs - 8}" width="120" height="${fs + 16}" rx="6" fill="${el.backgroundColor || DEFAULT_TEXT_BG}"/>`;
+        svg += `<text x="${p.x}" y="${p.y - 4}" text-anchor="middle" fill="${el.color}" font-size="${fs}" font-weight="bold">${escXml(text)}</text>`;
+      }
+    }
+    svg += '</svg>';
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = (state.projectName || '场地路线图') + '.svg';
+    link.href = url; link.click();
+    URL.revokeObjectURL(url);
+    showToast('✅ SVG 已导出');
+  }
+
+  function escXml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  // ===================== Save/Load =====================
+
+  function getProjectData() {
+    return {
+      version: 1, backgroundImage: state.backgroundImage,
+      imageWidth: state.imageWidth, imageHeight: state.imageHeight,
+      bgOpacity: state.bgOpacity, elements: state.elements,
+      projectName: state.projectName,
+    };
+  }
+
+  function loadProjectData(data) {
+    setState({
+      backgroundImage: data.backgroundImage || null,
+      imageWidth: data.imageWidth || 0, imageHeight: data.imageHeight || 0,
+      bgOpacity: data.bgOpacity ?? 1,
+      elements: Array.isArray(data.elements) ? data.elements : [],
+      projectName: data.projectName || '未命名项目',
+      history: [], historyIndex: -1, selectedElementId: null, selectedElementIds: [],
+      isDrawing: false, drawingPoints: [], stageScale: 1, stagePosition: { x: 0, y: 0 },
+    });
+    loadBgImage(data.backgroundImage, data.imageWidth, data.imageHeight);
+    $name.value = data.projectName || '未命名项目';
+    updateUI();
+  }
+
+  async function saveToServer() {
+    const data = getProjectData();
+    const token = getToken();
+    if (!token) throw new Error('未登录');
+    const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
+    let res;
+    if (state.projectId) {
+      res = await fetch(`/api/editor/projects/${state.projectId}`, { method: 'PUT', headers, body: JSON.stringify({ name: state.projectName, data }) });
+    } else {
+      res = await fetch('/api/editor/projects', { method: 'POST', headers, body: JSON.stringify({ name: state.projectName, data }) });
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'HTTP ' + res.status);
+    }
+    const json = await res.json();
+    if (json.id) state.projectId = json.id;
+    showToast('✅ 项目已保存到服务器');
+  }
+
+  async function loadFromServer() {
+    const res = await fetch('/api/editor/projects');
+    const json = await res.json();
+    showProjectList(json.data || []);
+  }
+
+  function showProjectList(projects) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    let html = '<div class="modal-box"><h2>📂 打开项目</h2>';
+    if (projects.length === 0) {
+      html += '<p style="color:#8888aa;text-align:center;padding:24px;">暂无保存的项目</p>';
+    } else {
+      projects.forEach(p => {
+        html += `<div class="project-row" data-id="${p.id}">
+          <span class="name">${esc(p.name)}</span>
+          <span class="time">${esc(p.updated_at || '')}</span>
+          <button class="toolbar-btn danger" data-delete="${p.id}" style="padding:2px 8px;font-size:0.7rem;">🗑</button>
+        </div>`;
+      });
+    }
+    html += '<div class="actions"><button class="toolbar-btn" id="modal-close">关闭</button></div></div>';
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#modal-close').onclick = () => overlay.remove();
+    overlay.querySelectorAll('.project-row').forEach(row => {
+      row.onclick = async (e) => {
+        if (e.target.dataset.delete) {
+          e.stopPropagation();
+          if (confirm('确定删除此项目？')) {
+            const t = getToken();
+            await fetch(`/api/editor/projects/${e.target.dataset.delete}`, { method: 'DELETE', headers: t ? { 'Authorization': 'Bearer ' + t } : {} });
+            overlay.remove(); loadFromServer();
+          }
+          return;
+        }
+        const id = Number(row.dataset.id);
+        const res = await fetch(`/api/editor/projects/${id}`);
+        const json = await res.json();
+        if (json.data) { state.projectId = id; loadProjectData(json.data.data || json.data); overlay.remove(); showToast('✅ 项目已加载'); }
+      };
+    });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  function getToken() { return localStorage.getItem('editor_token') || null; }
+
+  function showLoginPrompt(onSuccess) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-box"><h2>🔐 管理员登录</h2>
+      <p style="color:#8888aa;margin-bottom:12px;">保存和加载项目需要管理员密码</p>
+      <input type="password" id="login-pwd" placeholder="管理员密码" style="width:100%;padding:8px;border-radius:6px;border:1px solid #2a2a4e;background:#0f0f1a;color:#e0e0f0;font-size:0.9rem;margin-bottom:12px;" />
+      <div class="actions"><button class="toolbar-btn" id="login-cancel">取消</button>
+      <button class="toolbar-btn primary" id="login-submit">登录</button></div></div>`;
+    document.body.appendChild(overlay);
+    const pwdInput = overlay.querySelector('#login-pwd');
+    overlay.querySelector('#login-cancel').onclick = () => overlay.remove();
+    overlay.querySelector('#login-submit').onclick = async () => {
+      const pwd = pwdInput.value;
+      if (!pwd) { alert('请输入密码'); return; }
+      try {
+        const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+        const json = await res.json();
+        if (json.token) {
+          localStorage.setItem('editor_token', json.token);
+          overlay.remove();
+          showToast('✅ 登录成功');
+          if (onSuccess) setTimeout(onSuccess, 300);
+        } else {
+          alert(json.error || '密码错误');
+        }
+      } catch (err) {
+        alert('登录失败: ' + err.message);
+      }
+    };
+    // Enter key submits
+    pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') overlay.querySelector('#login-submit').click(); });
+    // Focus the input
+    setTimeout(() => pwdInput.focus(), 100);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  function showToast(msg) {
+    const el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText = 'position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:2000;background:#1a1a2e;color:#e0e0f0;padding:8px 20px;border-radius:8px;font-size:0.85rem;border:1px solid #2a2a4e;pointer-events:none;opacity:0;transition:opacity 0.3s;';
+    document.body.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = '1'; });
+    setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2000);
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]); }
+
+  // ===================== UI =====================
+
+  function updateUI() {
+    $name.value = state.projectName;
+    $zoomSlider.value = Math.round(state.stageScale * 100);
+    $zoomLabel.textContent = Math.round(state.stageScale * 100) + '%';
+    document.getElementById('btn-undo').disabled = state.historyIndex < 0;
+    document.getElementById('btn-redo').disabled = state.historyIndex >= state.history.length - 2;
+    document.getElementById('stat-project').textContent = state.projectName;
+    document.getElementById('stat-elements').textContent =
+      `路线:${state.elements.filter(e => e.type === 'route').length} 区域:${state.elements.filter(e => e.type === 'area').length} 文字:${state.elements.filter(e => e.type === 'text').length} | 共${state.elements.length}个`;
+    document.getElementById('stat-zoom').textContent = '缩放 ' + Math.round(state.stageScale * 100) + '%';
+    document.getElementById('stat-snap').textContent = '吸附 ' + (state.snapToGrid ? '✓' : '✗');
+    document.getElementById('stat-history').textContent = '历史 ' + (state.history.length > 0 ? `${state.historyIndex + 1}/${state.history.length}` : '0/0');
+    document.getElementById('history-step-label').textContent = state.history.length > 0 ? `${state.historyIndex + 1}/${state.history.length}` : '';
+
+    // Guide lines
+    const glCount = state.guideLines.length;
+    document.getElementById('sep-guides').style.display = glCount > 0 ? '' : 'none';
+    document.getElementById('stat-guides').style.display = glCount > 0 ? '' : 'none';
+    document.getElementById('btn-clear-guides').style.display = glCount > 0 ? '' : 'none';
+    document.getElementById('stat-guides').textContent = `参考线 ${glCount}条`;
+
+    // Align buttons visibility
+    const selIds = state.selectedElementIds.length > 0 ? state.selectedElementIds : (state.selectedElementId ? [state.selectedElementId] : []);
+    $alignBtns.style.display = selIds.length >= 2 ? 'flex' : 'none';
+
+    // Background image info
+    document.getElementById('bg-img-info').textContent = state.backgroundImage ? `尺寸: ${state.imageWidth} × ${state.imageHeight}px` : '';
+
+    // Layer list
+    let html = '';
+    for (let i = state.elements.length - 1; i >= 0; i--) {
+      const el = state.elements[i];
+      const sel = el.id === state.selectedElementId;
+      html += `<div class="layer-item${sel ? ' selected' : ''}" data-id="${el.id}">
+        <span class="color-dot" style="background:${el.color};opacity:${el.opacity}"></span>
+        <span class="name">${esc(el.name)}</span>
+        <button class="${el.visible ? '' : 'off'}" data-action="toggle-vis">👁</button>
+        <button class="${el.locked ? '' : 'off'}" data-action="toggle-lock">🔒</button>
+      </div>`;
+    }
+    $layerList.innerHTML = html || '<div style="padding:16px;text-align:center;color:#555577;font-size:0.8rem;">使用工具开始绘制</div>';
+
+    document.getElementById('bg-opacity').value = Math.round(state.bgOpacity * 100);
+
+    updatePropsPanel();
+  }
+
+  function updatePropsPanel() {
+    const el = getSelEl();
+    if (!el) {
+      $propsPanel.classList.remove('visible');
+      $noSelection.style.display = 'block';
+      return;
+    }
+    $propsPanel.classList.add('visible');
+    $noSelection.style.display = 'none';
+
+    document.getElementById('prop-name').value = el.name;
+    document.getElementById('prop-color').value = el.color;
+    document.getElementById('prop-stroke').value = el.strokeWidth || 0;
+    document.getElementById('prop-opacity').value = Math.round((el.opacity ?? 1) * 100);
+
+    const isText = el.type === 'text';
+    $textProps.style.display = isText ? '' : 'none';
+    document.getElementById('label-stroke').style.display = isText ? 'none' : '';
+    document.getElementById('prop-stroke').style.display = isText ? 'none' : '';
+    document.getElementById('label-fontsize').style.display = isText ? '' : 'none';
+    document.getElementById('prop-fontsize').style.display = isText ? '' : 'none';
+
+    if (isText) {
+      document.getElementById('prop-text').value = el.label || '';
+      document.getElementById('prop-fontsize').value = el.fontSize || 16;
+    }
+
+    // Point info
+    let info = `节点数: ${el.points.length}`;
+    if (el.type === 'route' && el.points.length >= 2) {
+      let len = 0;
+      for (let i = 0; i < el.points.length - 1; i++) len += Math.hypot(el.points[i + 1].x - el.points[i].x, el.points[i + 1].y - el.points[i].y);
+      info += ' | 长度: ' + Math.round(len) + 'px';
+    }
+    if (el.type === 'area' && el.points.length >= 3) info += ' | 面积: ' + Math.round(Math.abs(computePolygonArea(el.points))) + 'px²';
+    document.getElementById('prop-point-info').textContent = info;
+  }
+
+  function updateColorPresets() {
+    document.getElementById('color-presets').innerHTML = COLOR_PRESETS.map(c =>
+      `<span class="color-preset" style="background:${c}" data-color="${c}" title="${c}"></span>`).join('');
+    document.getElementById('text-bg-presets').innerHTML = TEXT_BG_PRESETS.map(c =>
+      `<span class="color-preset" style="background:${c}" data-color="${c}" title="${c}"></span>`).join('');
+  }
+
+  // ===================== Mouse/Touch =====================
+
+  let dragState = null;
+  let boxSelectState = null;
+
+  function getEventPos(e) {
+    const rect = canvasWrap.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return { clientX: cx, clientY: cy, rx: cx - rect.left, ry: cy - rect.top };
+  }
+
+  canvasWrap.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const pos = getEventPos(e);
+    const world = fromCanvas(pos.rx, pos.ry);
+
+    if (e.button === 2) {
+      const hit = hitTest(world.x, world.y);
+      if (hit && hit.id) { selectElement(hit); showCtxMenu(pos.clientX, pos.clientY); }
+      return;
+    }
+
+    if (state.currentTool === 'pan' || (state.currentTool === 'select' && e.shiftKey)) {
+      dragState = { type: 'pan', sx: pos.clientX, sy: pos.clientY, sp: { ...state.stagePosition } };
+      canvasWrap.classList.add('panning');
+      return;
+    }
+
+    if (state.currentTool === 'draw-route' || state.currentTool === 'draw-area') {
+      if (state.isDrawing) {
+        if (e.detail >= 2) { state.drawingPoints.pop(); finishDrawing(); return; }
+        addDrawingPoint({ x: snap(world.x), y: snap(world.y) });
+      } else {
+        startDrawing({ x: snap(world.x), y: snap(world.y) });
+      }
+      return;
+    }
+
+    if (state.currentTool === 'text-tool') {
+      addTextAnnotation({ x: snap(world.x), y: snap(world.y) });
+      return;
+    }
+
+    // Select mode
+    const hit = hitTest(world.x, world.y);
+    if (hit && hit.__vertex !== undefined) {
+      selectElement(hit.element);
+      dragState = { type: 'vertex', eid: hit.element.id, nidx: hit.__vertex, spts: JSON.parse(JSON.stringify(hit.element.points)) };
+      return;
+    }
+    if (hit && hit.id) {
+      selectElement(hit);
+      if (!hit.locked) dragState = { type: 'element', eid: hit.id, sw: world, spts: JSON.parse(JSON.stringify(hit.points)) };
+    } else {
+      selectElement(null);
+      boxSelectState = { x: world.x, y: world.y, w: 0, h: 0 };
+    }
+  });
+
+  canvasWrap.addEventListener('pointermove', (e) => {
+    e.preventDefault();
+    const pos = getEventPos(e);
+    const world = fromCanvas(pos.rx, pos.ry);
+    setState({ mousePos: world });
+    document.getElementById('stat-pos').textContent = `X:${Math.round(world.x)} Y:${Math.round(world.y)}`;
+
+    if (dragState && dragState.type === 'pan') {
+      setState({ stagePosition: { x: dragState.sp.x + (pos.clientX - dragState.sx), y: dragState.sp.y + (pos.clientY - dragState.sy) } });
+      return;
+    }
+    if (dragState && dragState.type === 'vertex') {
+      const el = state.elements.find(e => e.id === dragState.eid); if (!el) return;
+      const np = [...el.points]; np[dragState.nidx] = { x: snap(world.x), y: snap(world.y) };
+      updateSelPoints(np);
+      return;
+    }
+    if (dragState && dragState.type === 'element') {
+      const dx = world.x - dragState.sw.x, dy = world.y - dragState.sw.y;
+      const np = dragState.spts.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      setState({ elements: state.elements.map(e => e.id === dragState.eid ? { ...e, points: np } : e) });
+      return;
+    }
+    if (boxSelectState) { boxSelectState.w = world.x - boxSelectState.x; boxSelectState.h = world.y - boxSelectState.y; }
+  });
+
+  canvasWrap.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    canvasWrap.classList.remove('panning');
+
+    if (boxSelectState) {
+      const bx = boxSelectState.w < 0 ? boxSelectState.x + boxSelectState.w : boxSelectState.x;
+      const by = boxSelectState.h < 0 ? boxSelectState.y + boxSelectState.h : boxSelectState.y;
+      const bw = Math.abs(boxSelectState.w), bh = Math.abs(boxSelectState.h);
+      if (bw > 5 || bh > 5) {
+        const ids = [];
+        for (const el of state.elements) {
+          if (!el.visible) continue;
+          if (el.points.every(p => p.x >= bx && p.x <= bx + bw && p.y >= by && p.y <= by + bh)) ids.push(el.id);
+        }
+        if (ids.length > 0) setState({ selectedElementIds: ids, selectedElementId: ids[0] });
+      }
+      boxSelectState = null;
+    }
+
+    if (dragState && (dragState.type === 'element' || dragState.type === 'vertex')) saveHistory();
+    dragState = null;
+  });
+
+  canvasWrap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const pos = getEventPos(e);
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const ns = Math.max(0.1, Math.min(5, state.stageScale * delta));
+    const np = { x: pos.rx - (pos.rx - state.stagePosition.x) * (ns / state.stageScale), y: pos.ry - (pos.ry - state.stagePosition.y) * (ns / state.stageScale) };
+    setState({ stageScale: ns, stagePosition: np });
+  });
+
+  canvasWrap.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvasWrap.addEventListener('dragover', (e) => { e.preventDefault(); });
+  canvasWrap.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => { setBackgroundImage(ev.target.result, img.width, img.height); setState({ stageScale: 1, stagePosition: { x: 0, y: 0 } }); showToast('✅ 背景图已导入'); };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // ===================== Context Menu =====================
+
+  function showCtxMenu(x, y) {
+    $ctxMenu.style.left = x + 'px'; $ctxMenu.style.top = y + 'px'; $ctxMenu.classList.add('visible');
+    setTimeout(() => document.addEventListener('click', function h() { $ctxMenu.classList.remove('visible'); document.removeEventListener('click', h); }, { once: true }), 0);
+  }
+
+  $ctxMenu.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = state.selectedElementId; if (!id) return;
+      const a = btn.dataset.action;
+      if (a === 'duplicate') duplicateSelected();
+      if (a === 'toFront') bringToFront(id);
+      if (a === 'toBack') sendToBack(id);
+      if (a === 'delete') deleteSelected();
+      $ctxMenu.classList.remove('visible');
+    });
+  });
+
+  // ===================== Keyboard =====================
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const k = e.key.toLowerCase();
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    if (ctrl && (k === 'z' && e.shiftKey || k === 'y')) { e.preventDefault(); redo(); }
+    if (ctrl && k === 's') { e.preventDefault(); handleSave(); }
+    if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
+    if ((k === 'delete' || k === 'backspace') && !ctrl) { e.preventDefault(); deleteSelected(); }
+    if (k === 'v') { setState({ currentTool: 'select', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
+    if (k === 'h') { setState({ currentTool: 'pan', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
+    if (k === 'l') { setState({ currentTool: 'draw-route', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
+    if (k === 'r') { setState({ currentTool: 'draw-area', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
+    if (k === 't') { setState({ currentTool: 'text-tool', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
+    if (k === 'escape') { setState({ isDrawing: false, drawingPoints: [], currentTool: 'select' }); updateToolBtns(); }
+    if (k === 'enter' && state.isDrawing) { finishDrawing(); }
+    if (k === '?' && !ctrl) { document.getElementById('btn-shortcuts').click(); }
+  });
+
+  function updateToolBtns() {
+    document.querySelectorAll('#toolbar button').forEach(b => { b.classList.toggle('active', b.dataset.tool === state.currentTool); });
+  }
+
+  // ===================== Buttons =====================
+
+  $name.addEventListener('input', function () { setState({ projectName: this.value || '未命名项目' }); });
+
+  document.querySelectorAll('#toolbar button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tool = btn.dataset.tool; if (!tool) return;
+      setState({ currentTool: tool, isDrawing: false, drawingPoints: [] });
+      updateToolBtns();
+    });
+  });
+
+  document.getElementById('btn-undo').addEventListener('click', undo);
+  document.getElementById('btn-redo').addEventListener('click', redo);
+  document.getElementById('btn-delete').addEventListener('click', deleteSelected);
+  document.getElementById('btn-duplicate').addEventListener('click', duplicateSelected);
+  document.getElementById('btn-to-front').addEventListener('click', () => bringToFront(state.selectedElementId));
+  document.getElementById('btn-to-back').addEventListener('click', () => sendToBack(state.selectedElementId));
+
+  document.getElementById('btn-grid').addEventListener('click', function () {
+    setState({ gridEnabled: !state.gridEnabled });
+    this.classList.toggle('primary', state.gridEnabled);
+  });
+  document.getElementById('btn-grid').classList.add('primary');
+
+  document.getElementById('grid-size').addEventListener('change', function () { setState({ gridSize: Number(this.value) }); });
+
+  document.getElementById('zoom-slider').addEventListener('input', function () { setState({ stageScale: Number(this.value) / 100 }); });
+  document.getElementById('btn-zoom-in').addEventListener('click', () => setState({ stageScale: Math.min(5, state.stageScale * 1.25) }));
+  document.getElementById('btn-zoom-out').addEventListener('click', () => setState({ stageScale: Math.max(0.1, state.stageScale * 0.8) }));
+  document.getElementById('btn-reset-view').addEventListener('click', () => setState({ stageScale: 1, stagePosition: { x: 0, y: 0 } }));
+
+  document.getElementById('bg-opacity').addEventListener('input', function () {
+    const o = Number(this.value) / 100; saveHistory(); setState({ bgOpacity: o });
+  });
+
+  // Export
+  document.getElementById('btn-export').addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.getElementById('export-dropdown').classList.toggle('visible');
+  });
+  document.getElementById('export-dropdown').querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', (e) => {
+      const t = b.dataset.export;
+      if (t === 'png') exportPNG();
+      if (t === 'svg') exportSVG();
+      document.getElementById('export-dropdown').classList.remove('visible');
+    });
+  });
+  document.addEventListener('click', () => document.getElementById('export-dropdown').classList.remove('visible'));
+
+  // Import image
+  // 导入图片 — Chrome 要求 input 始终在 DOM 中，click 在用户事件同步回调中触发
+  const fileInput = document.getElementById('hidden-file-input');
+  fileInput.addEventListener('change', function () {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => { setBackgroundImage(ev.target.result, img.width, img.height); showToast('✅ 背景图已导入'); };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+    this.value = '';
+  });
+  document.getElementById('btn-import-img').addEventListener('click', function (e) {
+    e.preventDefault();
+    fileInput.click();
+  });
+
+  // Snap toggle
+  document.getElementById('snap-toggle').addEventListener('change', function () {
+    setState({ snapToGrid: this.checked });
+  });
+
+  // Clear guides
+  document.getElementById('btn-clear-guides').addEventListener('click', () => setState({ guideLines: [] }));
+
+  // Align buttons
+  document.querySelectorAll('#align-btns button').forEach(b => {
+    b.addEventListener('click', () => {
+      const ids = state.selectedElementIds.length > 0 ? state.selectedElementIds : (state.selectedElementId ? [state.selectedElementId] : []);
+      const type = b.dataset.align; if (ids.length < 2 || !type) return;
+      alignElements(ids, type);
+    });
+  });
+
+  // Save/Load/New
+  async function handleSave() {
+    const token = getToken();
+    if (!token) { showLoginPrompt(() => handleSave()); return; }
+    try { await saveToServer(); } catch (err) { showToast('❌ 保存失败: ' + err.message); }
+  }
+  document.getElementById('btn-save').addEventListener('click', handleSave);
+  document.getElementById('btn-load').addEventListener('click', loadFromServer);
+  document.getElementById('btn-new').addEventListener('click', () => {
+    if (state.elements.length > 0 && !confirm('确定新建？未保存更改将丢失。')) return;
+    setState({
+      projectId: null, projectName: '未命名项目',
+      backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
+      elements: [], selectedElementId: null, selectedElementIds: [],
+      history: [], historyIndex: -1, stageScale: 1, stagePosition: { x: 0, y: 0 },
+    });
+    bgImageObj = null; $name.value = '未命名项目'; updateUI();
+  });
+
+  // Shortcuts help
+  document.getElementById('btn-shortcuts').addEventListener('click', () => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-box"><h2>⌨️ 快捷键</h2>
+      <div class="shortcut-grid">
+        <span>选择</span><span class="key">V</span><span>平移</span><span class="key">H</span>
+        <span>画线</span><span class="key">L</span><span>画框</span><span class="key">R</span>
+        <span>文字</span><span class="key">T</span><span>撤销</span><span class="key">Ctrl+Z</span>
+        <span>重做</span><span class="key">Ctrl+Y</span><span>保存</span><span class="key">Ctrl+S</span>
+        <span>复制</span><span class="key">Ctrl+D</span><span>删除</span><span class="key">Delete</span>
+        <span>取消</span><span class="key">Esc</span><span>完成绘制</span><span class="key">Enter</span>
+        <span>缩放</span><span class="key">滚轮</span><span>平移</span><span class="key">Shift+拖拽</span>
+        <span>框选</span><span class="key">Shift+拖拽</span>
+      </div>
+      <div class="actions"><button class="toolbar-btn" id="sc-close">关闭</button></div></div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#sc-close').onclick = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  });
+
+  // ===================== Properties panel =====================
+
+  document.getElementById('prop-name').addEventListener('input', function () { updateSelEl({ name: this.value }); });
+  document.getElementById('prop-color').addEventListener('input', function () { updateSelEl({ color: this.value }); });
+  document.getElementById('prop-stroke').addEventListener('input', function () { updateSelEl({ strokeWidth: Number(this.value) }); });
+  document.getElementById('prop-opacity').addEventListener('input', function () { updateSelEl({ opacity: Number(this.value) / 100 }); });
+  document.getElementById('prop-fontsize').addEventListener('input', function () { updateSelEl({ fontSize: Number(this.value) }); });
+  document.getElementById('prop-text').addEventListener('input', function () { updateSelEl({ label: this.value }); });
+
+  // Color presets
+  document.getElementById('color-presets').addEventListener('click', (e) => {
+    const p = e.target.closest('.color-preset'); if (!p) return;
+    updateSelEl({ color: p.dataset.color });
+    document.getElementById('prop-color').value = p.dataset.color;
+  });
+
+  // Text bg presets
+  document.getElementById('text-bg-presets').addEventListener('click', (e) => {
+    const p = e.target.closest('.color-preset'); if (!p) return;
+    updateSelEl({ backgroundColor: p.dataset.color });
+  });
+
+  // Layer list
+  $layerList.addEventListener('click', (e) => {
+    const item = e.target.closest('.layer-item'); if (!item) return;
+    const id = item.dataset.id;
+    const action = e.target.dataset.action;
+    if (action === 'toggle-vis') {
+      saveHistory();
+      setState({ elements: state.elements.map(el => el.id === id ? { ...el, visible: !el.visible } : el) });
+    } else if (action === 'toggle-lock') {
+      setState({ elements: state.elements.map(el => el.id === id ? { ...el, locked: !el.locked } : el) });
+    } else {
+      selectElement(state.elements.find(el => el.id === id));
+    }
+  });
+
+  // ===================== Resize =====================
+  new ResizeObserver(() => { render(); renderRulers(); }).observe(canvasWrap);
+
+  // ===================== Ruler Rendering =====================
+  const rulerTopCanvas = document.getElementById('ruler-top-canvas');
+  const rulerLeftCanvas = document.getElementById('ruler-left-canvas');
+  const rulerTopCtx = rulerTopCanvas.getContext('2d');
+  const rulerLeftCtx = rulerLeftCanvas.getContext('2d');
+
+  function renderRulers() {
+    const cw = canvasWrap.clientWidth;
+    const ch = canvasWrap.clientHeight;
+    const tw = rulerTopCanvas.parentElement.clientWidth;
+    const lh = rulerLeftCanvas.parentElement.clientHeight;
+
+    // Top ruler
+    if (rulerTopCanvas.width !== tw || rulerTopCanvas.height !== 20) {
+      rulerTopCanvas.width = tw; rulerTopCanvas.height = 20;
+    }
+    rulerTopCtx.clearRect(0, 0, tw, 20);
+    rulerTopCtx.fillStyle = '#1a1a2e';
+    rulerTopCtx.fillRect(0, 0, tw, 20);
+
+    const gs = state.gridSize * state.stageScale;
+    const offsetX = state.stagePosition.x % gs;
+    rulerTopCtx.fillStyle = '#8888aa';
+    rulerTopCtx.font = '9px monospace';
+    rulerTopCtx.textAlign = 'center';
+    for (let x = offsetX; x < tw; x += gs) {
+      const worldX = Math.round((x - state.stagePosition.x) / state.stageScale / state.gridSize) * state.gridSize;
+      rulerTopCtx.fillRect(x - 0.5, 14, 1, 6);
+      if (gs > 30) rulerTopCtx.fillText(worldX, x, 10);
+    }
+
+    // Left ruler
+    if (rulerLeftCanvas.width !== 20 || rulerLeftCanvas.height !== lh) {
+      rulerLeftCanvas.width = 20; rulerLeftCanvas.height = lh;
+    }
+    rulerLeftCtx.clearRect(0, 0, 20, lh);
+    rulerLeftCtx.fillStyle = '#1a1a2e';
+    rulerLeftCtx.fillRect(0, 0, 20, lh);
+
+    const offsetY = state.stagePosition.y % gs;
+    rulerLeftCtx.fillStyle = '#8888aa';
+    rulerLeftCtx.font = '9px monospace';
+    rulerLeftCtx.textAlign = 'right';
+    for (let y = offsetY; y < lh; y += gs) {
+      const worldY = Math.round((y - state.stagePosition.y) / state.stageScale / state.gridSize) * state.gridSize;
+      rulerLeftCtx.fillRect(14, y - 0.5, 6, 1);
+      if (gs > 30) {
+        rulerLeftCtx.save();
+        rulerLeftCtx.translate(8, y);
+        rulerLeftCtx.rotate(-Math.PI / 2);
+        rulerLeftCtx.fillText(String(worldY), 0, 0);
+        rulerLeftCtx.restore();
+      }
+    }
+  }
+
+  // ===================== Ruler Drag =====================
+  let rulerDragState = null;
+
+  function addGuideLine(orientation, worldPos) {
+    const gl = { id: 'gl_' + Date.now(), orientation, position: worldPos };
+    setState({ guideLines: [...state.guideLines, gl] });
+    return gl;
+  }
+
+  document.getElementById('ruler-top').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const rect = rulerTopCanvas.getBoundingClientRect();
+    const screenY = e.clientY - rect.top + rect.height;
+    const worldY = (screenY - state.stagePosition.y) / state.stageScale;
+    rulerDragState = { orientation: 'horizontal', startWorldPos: worldY };
+    addGuideLine('horizontal', worldY);
+  });
+
+  document.getElementById('ruler-left').addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const rect = rulerLeftCanvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left + rect.width;
+    const worldX = (screenX - state.stagePosition.x) / state.stageScale;
+    rulerDragState = { orientation: 'vertical', startWorldPos: worldX };
+    addGuideLine('vertical', worldX);
+  });
+
+  // Global move for ruler drag — update last guide line position
+  document.addEventListener('pointermove', (e) => {
+    if (!rulerDragState || state.guideLines.length === 0) return;
+    const last = state.guideLines[state.guideLines.length - 1];
+    let worldPos;
+    if (rulerDragState.orientation === 'horizontal') {
+      const rect = rulerTopCanvas.getBoundingClientRect();
+      const screenY = e.clientY - rect.top + rect.height;
+      worldPos = (screenY - state.stagePosition.y) / state.stageScale;
+    } else {
+      const rect = rulerLeftCanvas.getBoundingClientRect();
+      const screenX = e.clientX - rect.left + rect.width;
+      worldPos = (screenX - state.stagePosition.x) / state.stageScale;
+    }
+    state.guideLines[state.guideLines.length - 1] = { ...last, position: worldPos };
+    emit('change');
+  });
+
+  document.addEventListener('pointerup', () => {
+    rulerDragState = null;
+  });
+
+  // ===================== Flow Animation Loop =====================
+  let flowOffset = 0;
+  function animateFlow() {
+    flowOffset += 0.5;
+    if (flowOffset > 20) flowOffset = 0;
+    if (state.elements.some(e => e.type === 'route' && e.visible)) render();
+    requestAnimationFrame(animateFlow);
+  }
+  requestAnimationFrame(animateFlow);
+
+  // ===================== Init =====================
+
+  let counter = 0;
+  function genId() { return 'el_' + Date.now() + '_' + (++counter); }
+
+  function init() {
+    updateColorPresets();
+    loadBgImage(state.backgroundImage, state.imageWidth, state.imageHeight);
+    updateUI(); updateToolBtns(); render(); renderRulers();
+  }
+
+  on('change', () => { updateUI(); render(); renderRulers(); });
+
+  // Auto-save to localStorage
+  setInterval(() => {
+    try { localStorage.setItem('editor_autosave', JSON.stringify(getProjectData())); } catch (_) {}
+  }, 30000);
+
+  // Restore autosave
+  const autosave = localStorage.getItem('editor_autosave');
+  if (autosave) { try { loadProjectData(JSON.parse(autosave)); } catch (_) {} }
+
+  init();
+
+  // ===================== API =====================
+  window.editorAPI = { getState: () => state, loadProject: loadProjectData, getProject: getProjectData, render };
+})();
