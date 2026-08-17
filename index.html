@@ -782,14 +782,14 @@ function createFlowMaterial(color) {
             uniform vec3 uColor;
             uniform float uTime;
             void main() {
-                float t = vUv.y;                          // 沿管长度 0..1
+                float t = vUv.x;                          // 沿管长度 0..1（TubeGeometry 的 uv.x 是长度方向）
                 float head = fract(uTime * 0.25);         // 流动头部位置（循环）
                 float d = fract(head - t);                // 相对头部距离（含循环边界）
-                float tail = 1.0 - smoothstep(0.0, 0.55, d);    // 拖尾渐隐
-                float headGlow = 1.0 - smoothstep(0.0, 0.10, d); // 头部锐利亮斑
+                float tail = 1.0 - smoothstep(0.0, 0.65, d);    // 拖尾渐隐
+                float headGlow = 1.0 - smoothstep(0.0, 0.12, d); // 头部锐利亮斑
                 float glow = max(tail, headGlow);
-                vec3 col = uColor * (0.3 + 2.6 * glow);
-                float alpha = 0.16 + 0.8 * glow;
+                vec3 col = uColor * (0.35 + 2.8 * glow);
+                float alpha = 0.2 + 0.8 * glow;
                 gl_FragColor = vec4(col, alpha);
             }
         `,
@@ -986,7 +986,7 @@ function displayRoutesAndAreas(map) {
             if (!r.pts || r.pts.length < 2) return;
             // 路线点由「地图编辑器」存储为 [lng, lat]，直接用经纬度
             const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
-            const line = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 });
+            const line = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 3, strokeOpacity: 0.12, zIndex: 10 });
             line.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
             map.add(line);
             routeCount++;
@@ -1082,10 +1082,10 @@ function applyPlan(map, plan) {
             Object.entries(data.routes).forEach(([name, r]) => {
                 if (!r.pts || r.pts.length < 2) return;
                 const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
-                const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: r.strokeWidth || 3, strokeOpacity: r.opacity ?? 0.9, zIndex: 10 });
+                const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: r.strokeWidth || 3, strokeOpacity: 0.12, zIndex: 10 });
                 o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
                 map.add(o); overlays.push(o); group.route++; added++;
-                // 叠加 3D 动线（光球沿路线流动）
+                // 叠加 3D 流光动线（光带沿路线流动）
                 if (threeScene && amapLocal) {
                     const anim = addAnimatedRoute(r.pts, r.color, r.speed);
                     if (anim) group.animated.push(anim);
