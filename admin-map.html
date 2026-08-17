@@ -254,7 +254,12 @@ async function initMap(){
     satelliteLayer=new AMap.TileLayer.Satellite();roadNetLayer=new AMap.TileLayer.RoadNet();
     satelliteLayer.hide();roadNetLayer.hide();map.add([satelliteLayer,roadNetLayer]);
     await loadPlans();
-    if(plans.length>0){loadPlan(plans[0]);}
+    if(plans.length>0){
+        // 支持 ?project=<id> 从后台「编辑」跳转时加载对应方案
+        const urlP=new URLSearchParams(location.search).get('project');
+        const target=urlP?plans.find(p=>String(p.id)===String(urlP)):null;
+        loadPlan(target||plans[0]);
+    }
     AMap.plugin('AMap.MouseTool',()=>{mouseTool=new AMap.MouseTool(map);mouseTool.on('draw',onDraw)});
     AMap.plugin('AMap.RangingTool',()=>{
         // 与高德官方测距一致：起点/中间点/终点用官方图标，实线 + 虚线预览
@@ -667,6 +672,9 @@ function updateZoomLabel(){if(!map)return;document.getElementById('zoom-label').
 
 // Keyboard
 document.addEventListener('keydown',e=>{
+    // 焦点在输入框/下拉框里时，不触发地图快捷键（否则改名称按退格会删掉整个区域、按 v/l/r 会切工具）
+    const tag=e.target&&e.target.tagName?e.target.tagName.toLowerCase():'';
+    if(e.target&&(e.target.isContentEditable||tag==='input'||tag==='textarea'||tag==='select'))return;
     const ctrl=e.ctrlKey||e.metaKey;
     if(ctrl&&e.key==='z'&&!e.shiftKey){e.preventDefault();undo()}
     if(ctrl&&(e.key==='z'&&e.shiftKey||e.key==='y')){e.preventDefault();redo()}

@@ -773,7 +773,7 @@ async function renderPlans() {
         return;
     }
     if (rows.length === 0) {
-        box.innerHTML = `<div class="section"><p style="color:#8b949e;">暂无方案，去 <a href="editor.html" style="color:#58a6ff;">✏️ 路线图编辑器</a> 创建</p></div>`;
+        box.innerHTML = `<div class="section"><p style="color:#8b949e;">暂无方案，去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 创建</p></div>`;
         return;
     }
     box.innerHTML = rows.map(p => {
@@ -786,7 +786,7 @@ async function renderPlans() {
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <span style="font-size:0.78rem;color:#8b949e;">更新: ${escHtml(p.updated_at || '—')}</span>
                 <button class="btn-add-feat" onclick="renamePlan(${p.id})">💾 保存名称</button>
-                <a class="btn-add-feat" href="editor.html?project=${p.id}" style="text-decoration:none;">✏️ 编辑</a>
+                <a class="btn-add-feat" href="admin-map.html?project=${p.id}" style="text-decoration:none;">✏️ 编辑</a>
                 <button class="btn-del" onclick="deletePlan(${p.id})">✕ 删除</button>
             </div>
         </div>`;
