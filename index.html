@@ -798,7 +798,7 @@ function resizeFlowLayer() {
     flowCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function addFlowRoute(id, pts, color, width, speed) {
+function addFlowRoute(id, pts, color, width, speed, direction) {
     removeFlowRoute(id);
     flowRoutes.push({
         id,
@@ -806,6 +806,7 @@ function addFlowRoute(id, pts, color, width, speed) {
         color: colorToHex(color, '#3b82f6'),
         width: width || 3,
         speed: (speed ?? 0.9),
+        dir: (direction === -1 ? -1 : 1),   // 1=正向（起点→终点），-1=反向
         offset: Math.random() * (FLOW_DASH + FLOW_GAP),
     });
 }
@@ -836,7 +837,7 @@ function drawFlowLayer(map) {
         flowCtx.lineCap = 'round';
         flowCtx.lineJoin = 'round';
         flowCtx.setLineDash([FLOW_DASH, FLOW_GAP]);
-        flowCtx.lineDashOffset = r.offset;    // 正值递增 → 虚线沿路径反向滚（方向可调，改符号即反转）
+        flowCtx.lineDashOffset = -r.offset * (r.dir || 1);   // dir=1 正向滚，dir=-1 反向滚（每条路线可单独调方向）
         flowCtx.stroke();
     }
 }
@@ -1117,7 +1118,7 @@ function applyPlan(map, plan) {
                 map.add(o); overlays.push(o); group.route++; added++;
                 // 流动虚线（Canvas 层绘制，严格贴线）
                 const flowId = 'plan:' + plan.id + ':' + name;
-                addFlowRoute(flowId, r.pts, r.color, r.strokeWidth || 3, r.speed);
+                addFlowRoute(flowId, r.pts, r.color, r.strokeWidth || 3, r.speed, r.direction);
                 group.flowIds.push(flowId);
             });
         }
