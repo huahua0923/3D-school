@@ -29,6 +29,7 @@
   const state = {
     projectId: null,
     projectName: '未命名项目',
+    geoBounds: null,
     backgroundImage: null,
     imageWidth: 0,
     imageHeight: 0,
@@ -631,6 +632,57 @@
 
   function escXml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
+  // ===================== 地理范围（供 3D 主地图展示） =====================
+
+  let defaultCenter = [104.14141, 30.67133];
+  const GEO_HALF_LNG = 0.002, GEO_HALF_LAT = 0.0014;
+
+  function defaultGeoBounds() {
+    const [clng, clat] = defaultCenter;
+    return { nw: [clng - GEO_HALF_LNG, clat + GEO_HALF_LAT], se: [clng + GEO_HALF_LNG, clat - GEO_HALF_LAT] };
+  }
+
+  function ensureGeoBounds() {
+    if (!state.geoBounds) { state.geoBounds = defaultGeoBounds(); setState({ geoBounds: state.geoBounds }); }
+    return state.geoBounds;
+  }
+
+  function showGeoBoundsModal() {
+    const gb = ensureGeoBounds();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-box"><h2>🌐 地理范围</h2>
+      <p style="color:#8888aa;font-size:0.8rem;margin-bottom:12px;">设定本方案对应真实地图的经纬度范围，保存后 3D 主地图按此范围展示线/框/文字。</p>
+      <div class="geo-grid">
+        <label>西北角 经度<input type="number" id="geo-nw-lng" step="0.00001" value="${gb.nw[0]}"></label>
+        <label>西北角 纬度<input type="number" id="geo-nw-lat" step="0.00001" value="${gb.nw[1]}"></label>
+        <label>东南角 经度<input type="number" id="geo-se-lng" step="0.00001" value="${gb.se[0]}"></label>
+        <label>东南角 纬度<input type="number" id="geo-se-lat" step="0.00001" value="${gb.se[1]}"></label>
+      </div>
+      <div class="actions">
+        <button class="toolbar-btn" id="geo-default">恢复默认</button>
+        <button class="toolbar-btn" id="geo-cancel">取消</button>
+        <button class="toolbar-btn primary" id="geo-save">确定</button>
+      </div></div>`;
+    document.body.appendChild(overlay);
+    const nwLng = overlay.querySelector('#geo-nw-lng'), nwLat = overlay.querySelector('#geo-nw-lat');
+    const seLng = overlay.querySelector('#geo-se-lng'), seLat = overlay.querySelector('#geo-se-lat');
+    overlay.querySelector('#geo-default').onclick = () => {
+      const d = defaultGeoBounds();
+      nwLng.value = d.nw[0]; nwLat.value = d.nw[1]; seLng.value = d.se[0]; seLat.value = d.se[1];
+    };
+    overlay.querySelector('#geo-cancel').onclick = () => overlay.remove();
+    overlay.querySelector('#geo-save').onclick = () => {
+      const nw = [Number(nwLng.value), Number(nwLat.value)];
+      const se = [Number(seLng.value), Number(seLat.value)];
+      if (nw.some(isNaN) || se.some(isNaN)) { alert('请输入有效经纬度'); return; }
+      setState({ geoBounds: { nw, se } });
+      overlay.remove();
+      showToast('✅ 地理范围已设置');
+    };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
   // ===================== Save/Load =====================
 
   function getProjectData() {
@@ -638,7 +690,7 @@
       version: 1, backgroundImage: state.backgroundImage,
       imageWidth: state.imageWidth, imageHeight: state.imageHeight,
       bgOpacity: state.bgOpacity, elements: state.elements,
-      projectName: state.projectName,
+      projectName: state.projectName, geoBounds: ensureGeoBounds(),
     };
   }
 
@@ -649,6 +701,7 @@
       bgOpacity: data.bgOpacity ?? 1,
       elements: Array.isArray(data.elements) ? data.elements : [],
       projectName: data.projectName || '未命名项目',
+      geoBounds: data.geoBounds || null,
       history: [], historyIndex: -1, selectedElementId: null, selectedElementIds: [],
       isDrawing: false, drawingPoints: [], stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
@@ -1141,13 +1194,14 @@
   document.getElementById('btn-new').addEventListener('click', () => {
     if (state.elements.length > 0 && !confirm('确定新建？未保存更改将丢失。')) return;
     setState({
-      projectId: null, projectName: '未命名项目',
+      projectId: null, projectName: '未命名项目', geoBounds: null,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
       history: [], historyIndex: -1, stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
     bgImageObj = null; $name.value = '未命名项目'; updateUI();
   });
+  document.getElementById('btn-geo').addEventListener('click', showGeoBoundsModal);
 
   // Shortcuts help
   document.getElementById('btn-shortcuts').addEventListener('click', () => {
@@ -1346,6 +1400,13 @@
   // Restore autosave
   const autosave = localStorage.getItem('editor_autosave');
   if (autosave) { try { loadProjectData(JSON.parse(autosave)); } catch (_) {} }
+
+  // 从配置读取地图中心，作为默认地理范围中心
+  fetch('/config.json').then(r => r.ok ? r.json() : null).then(cfg => {
+    if (cfg && cfg.geo && Array.isArray(cfg.geo.center) && cfg.geo.center.length >= 2) {
+      defaultCenter = cfg.geo.center;
+    }
+  }).catch(() => {});
 
   init();
 
