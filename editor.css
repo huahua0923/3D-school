@@ -337,6 +337,29 @@ body {
 .modal-box h2 { font-size: 1.1rem; margin-bottom: 16px; }
 .modal-box .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
+/* ---- Geo Bounds Modal ---- */
+.geo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.geo-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.geo-grid input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-panel);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
 /* ---- Project List ---- */
 .project-row {
   display: flex;
