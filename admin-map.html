@@ -72,7 +72,10 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 .modal-box input:focus{border-color:var(--accent)}
 .modal-actions{display:flex;gap:8px;margin-top:14px;justify-content:flex-end}
 
-.toast{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:2000;background:#1a1a2e;color:#e0e0f0;padding:7px 18px;border-radius:7px;font-size:0.8rem;border:1px solid rgba(255,255,255,0.1);pointer-events:none;opacity:0;transition:opacity 0.3s}
+.toast{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:2000;background:#1a1a2e;color:#fff;font-weight:700;padding:9px 20px;border-radius:8px;font-size:0.9rem;border:1px solid rgba(255,255,255,0.25);pointer-events:none;opacity:0;transition:opacity 0.3s}
+
+/* 测距距离标签：暗色地图上强制白字 + 半透明深色底，保证看清（覆盖高德默认黑字） */
+.amap-overlay-text-container,.amap-marker-label,.amap-marker .amap-text,.amap-text-label{color:#fff !important;background:rgba(8,12,24,0.7) !important;padding:3px 8px !important;border-radius:6px !important;font-weight:700 !important;text-shadow:0 1px 2px #000 !important}
 </style>
 </head>
 <body>
@@ -84,6 +87,7 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
     <button class="btn" data-tool="polyline">📏 路线</button>
     <button class="btn" data-tool="polygon">⬡ 区域</button>
     <button class="btn" data-tool="ranging">📐 测距</button>
+    <button class="btn" data-tool="marker">📍 标记点</button>
     <div class="sep"></div>
     <button class="btn" id="btn-undo" disabled title="撤销 Ctrl+Z">↩</button>
     <button class="btn" id="btn-redo" disabled title="重做 Ctrl+Y">↪</button>
@@ -116,6 +120,11 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
     </div>
 
     <div id="panel">
+        <div class="ps">
+            <div class="pl">方案</div>
+            <div id="plan-list"></div>
+            <button class="btn" id="btn-new-plan" style="width:100%;margin-top:6px;justify-content:center">＋ 新建方案</button>
+        </div>
         <div class="ps"><div class="pl">图层</div><div id="layer-list"></div></div>
         <div class="ps" id="props-section" style="display:none">
             <div class="pl">属性</div>
@@ -170,6 +179,7 @@ const MAX_HISTORY = 50;
 let map, mouseTool, rangingTool=null, currentTool='pointer', overlays=[], selectedOv=null;
 let satelliteLayer=null, roadNetLayer=null, saveToken=null;
 let history=[], historyIdx=-1;
+let currentPlanId=null, plans=[];
 let config={geo:{amapKey:'',amapSecurityCode:'',center:DEFAULT_CENTER,zoom:DEFAULT_ZOOM,pitch:55,rotation:20,mapStyle:'amap://styles/dark'}};
 
 async function loadConfig(){
@@ -177,7 +187,10 @@ async function loadConfig(){
 }
 
 function saveSnapshot(){
-    const snap=JSON.parse(JSON.stringify(overlays.map(o=>({_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,path:o.getPath().map(p=>[p.lng,p.lat])}))));
+    const snap=JSON.parse(JSON.stringify(overlays.map(o=>{
+        const path=o._type==='marker'?[[o.getPosition().lng,o.getPosition().lat]]:o.getPath().map(p=>[p.lng,p.lat]);
+        return {_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,path};
+    })));
     history=history.slice(0,historyIdx+1);history.push(snap);
     if(history.length>MAX_HISTORY)history.shift();
     historyIdx=history.length-1;
@@ -208,7 +221,9 @@ function redo(){
 function restoreSnapshot(snap){
     snap.forEach(d=>{
         let ov;
-        if(d._type==='route'){
+        if(d._type==='marker'){
+            ov=new AMap.Marker({position:d.path[0],content:markerContent(d._color,false),offset:new AMap.Pixel(-8,-8),title:d._name});
+        }else if(d._type==='route'){
             ov=new AMap.Polyline({strokeColor:d._color,strokeWeight:d._stroke||3,strokeOpacity:d._opacity??0.9,zIndex:10,path:d.path.map(p=>[p[0],p[1]])});
         }else{
             ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
@@ -223,10 +238,14 @@ function restoreSnapshot(snap){
 async function initMap(){
     await loadConfig();
     const geo=config.geo;
-    if(geo.amapSecurityCode)window._AMapSecurityConfig={securityJsCode:geo.amapSecurityCode};
+    let amapKey=geo.amapKey||'';
+    let amapSecurityCode=geo.amapSecurityCode||'';
+    // 优先用服务端 .env 注入的高德 Key/安全密钥（高德官方建议：key 不进仓库）
+    try{const r=await fetch('/api/amap');const d=await r.json();if(d&&d.key)amapKey=d.key;if(d&&d.securityJsCode)amapSecurityCode=d.securityJsCode;}catch(_){}
+    if(amapSecurityCode)window._AMapSecurityConfig={securityJsCode:amapSecurityCode};
     await new Promise((res,rej)=>{
         const s=document.createElement('script');
-        s.src='https://webapi.amap.com/maps?v=2.0&key='+(geo.amapKey||'YOUR_KEY');
+        s.src='https://webapi.amap.com/maps?v=2.0&key='+(amapKey||'YOUR_KEY');
         s.onload=res;s.onerror=rej;document.head.appendChild(s);
     });
     if(!window.AMap){alert('地图加载失败');return}
@@ -234,30 +253,109 @@ async function initMap(){
     // 卫星/路网图层（样式切换用）
     satelliteLayer=new AMap.TileLayer.Satellite();roadNetLayer=new AMap.TileLayer.RoadNet();
     satelliteLayer.hide();roadNetLayer.hide();map.add([satelliteLayer,roadNetLayer]);
-    loadOverlays();
+    await loadPlans();
+    if(plans.length>0){loadPlan(plans[0]);}
     AMap.plugin('AMap.MouseTool',()=>{mouseTool=new AMap.MouseTool(map);mouseTool.on('draw',onDraw)});
     AMap.plugin('AMap.RangingTool',()=>{
-        rangingTool=new AMap.RangingTool(map,{lineOptions:{strokeColor:'#3b82f6',strokeWeight:4}});
+        // 与高德官方测距一致：起点/中间点/终点用官方图标，实线 + 虚线预览
+        const mkIcon=(n)=>new AMap.Icon({size:new AMap.Size(19,31),imageSize:new AMap.Size(19,31),image:'https://webapi.amap.com/theme/v1.3/markers/b/'+n+'.png'});
+        const mkOpt=(n)=>({icon:mkIcon(n),offset:new AMap.Pixel(-9,-31)});
+        rangingTool=new AMap.RangingTool(map,{
+            lineOptions:{strokeColor:'#3366FF',strokeWeight:6,strokeStyle:'solid'},
+            tmpLineOptions:{strokeColor:'#3366FF',strokeWeight:3,strokeStyle:'dashed',strokeOpacity:0.6},
+            startMarkerOptions:mkOpt('start'),
+            midMarkerOptions:mkOpt('mid'),
+            endMarkerOptions:mkOpt('end')
+        });
         rangingTool.on('end',e=>{if(e&&typeof e.distance==='number')toast('📐 测距: '+e.distance.toFixed(1)+' 米');setTool('pointer')});
     });
     map.on('zoom',updateZoomLabel);
     map.on('click',()=>{if(currentTool==='pointer')deselectOv()});
     updateZoomLabel();
-    document.getElementById('sb-name').textContent=config.planName||'未命名方案';
+    if(plans.length===0)document.getElementById('sb-name').textContent=config.planName||'未命名方案';
 }
 
-function loadOverlays(){
-    if(config.routes)Object.entries(config.routes).forEach(([n,r])=>{
+function addRoutesAreas(routes,areas){
+    if(routes)Object.entries(routes).forEach(([n,r])=>{
         if(!r.pts||r.pts.length<2)return;
         const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:r.strokeWidth||3,strokeOpacity:r.opacity??0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
         ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
-    if(config.areas)Object.entries(config.areas).forEach(([n,a])=>{
+    if(areas)Object.entries(areas).forEach(([n,a])=>{
         if(!a.pts||a.pts.length<3)return;
         const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity??0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
         ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
-    updateUI();
+}
+
+function addMarkers(markers){
+    if(!markers)return;
+    Object.entries(markers).forEach(([n,m])=>{
+        const ov=new AMap.Marker({position:[m.lng,m.lat],content:markerContent(m.color||'#f59e0b',false),offset:new AMap.Pixel(-8,-8),title:n});
+        ov.setMap(map);ov._type='marker';ov._name=n;ov._color=m.color||'#f59e0b';ov._stroke=0;ov._opacity=1;
+        ov.on('click',()=>selectOv(ov));overlays.push(ov);
+    });
+}
+
+// —— 多方案管理 ——
+async function loadPlans(){
+    try{
+        const r=await fetch('/api/editor/projects');
+        const j=await r.json();
+        plans=(j.data||[]).filter(p=>p.data&&p.data.kind==='map');
+    }catch(e){plans=[]}
+    renderPlanList();
+}
+
+function renderPlanList(){
+    const box=document.getElementById('plan-list');if(!box)return;
+    box.innerHTML='';
+    if(plans.length===0){
+        box.innerHTML='<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案</div>';
+        return;
+    }
+    plans.forEach(p=>{
+        const row=document.createElement('div');
+        row.className='layer-row'+(String(p.id)===String(currentPlanId)?' selected':'');
+        row.style.cursor='pointer';
+        const dot=document.createElement('span');dot.className='layer-dot';dot.style.background='#8b5cf6';
+        const name=document.createElement('span');name.className='layer-name';name.textContent=p.name||('方案 '+p.id);name.title=p.name||'';
+        const del=document.createElement('span');del.className='layer-del';del.textContent='✕';
+        row.appendChild(dot);row.appendChild(name);row.appendChild(del);
+        row.addEventListener('click',e=>{
+            if(e.target===del){deletePlan(p.id);return}
+            loadPlan(p);
+        });
+        box.appendChild(row);
+    });
+}
+
+function clearOverlays(){
+    overlays.forEach(o=>map.remove(o));
+    overlays=[];
+}
+
+function loadPlan(p){
+    clearOverlays();
+    const data=p.data||{};
+    addRoutesAreas(data.routes,data.areas);
+    addMarkers(data.markers);
+    currentPlanId=p.id;
+    document.getElementById('sb-name').textContent=p.name||'未命名方案';
+    deselectOv();saveSnapshot();updateUI();renderPlanList();
+    toast('✅ 已加载「'+(p.name||'')+'」');
+}
+
+function deletePlan(id){
+    const t=localStorage.getItem('admin_token');if(!t){showLogin();return}
+    if(!confirm('删除该方案？'))return;
+    fetch('/api/editor/projects/'+id,{method:'DELETE',headers:{'Authorization':'Bearer '+t}})
+        .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
+        .then(()=>{
+            if(String(id)===String(currentPlanId)){currentPlanId=null;clearOverlays();document.getElementById('sb-name').textContent='未命名方案';updateUI();}
+            loadPlans();toast('✅ 已删除');
+        })
+        .catch(()=>toast('❌ 删除失败'));
 }
 
 document.querySelectorAll('#topbar button[data-tool]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
@@ -273,11 +371,29 @@ function setTool(tool){
     else if(tool==='polyline'){mouseTool.polyline({strokeColor:'#3b82f6',strokeWeight:3,strokeOpacity:0.9});st.textContent='📏 画路线 — 点击加顶点，双击完成'}
     else if(tool==='polygon'){mouseTool.polygon({strokeColor:'#10b981',strokeWeight:2,strokeOpacity:0.8,fillColor:'#10b981',fillOpacity:0.2});st.textContent='⬡ 画区域 — 点击加顶点，双击完成'}
     else if(tool==='ranging'){if(rangingTool)rangingTool.turnOn();st.textContent='📐 测距 — 点击加测量点，双击结束'}
+    else if(tool==='marker'){mouseTool.marker();st.textContent='📍 标记点 — 点击地图放置一个标记点'}
+}
+
+function markerContent(color,selected){
+    const ring=selected?'box-shadow:0 0 0 3px #ffd400,0 2px 8px rgba(0,0,0,0.6)':'box-shadow:0 2px 8px rgba(0,0,0,0.6)';
+    return '<div style="width:12px;height:12px;background:'+color+';border:2px solid #fff;border-radius:50%;'+ring+';cursor:pointer"></div>';
 }
 
 function onDraw(e){
     saveSnapshot();
-    const ov=e.obj,type=currentTool==='polygon'?'area':'route';
+    const ov=e.obj;
+    const type=currentTool==='polygon'?'area':(currentTool==='marker'?'marker':'route');
+    if(type==='marker'){
+        const cnt=overlays.filter(o=>o._type==='marker').length+1;
+        ov._type='marker';ov._name='标记 '+cnt;ov._color='#f59e0b';ov._stroke=0;ov._opacity=1;
+        ov.setContent(markerContent(ov._color,false));ov.setOffset(new AMap.Pixel(-8,-8));ov.setTitle(ov._name);
+        ov.setMap(map);
+        ov.on('click',()=>selectOv(ov));
+        overlays.push(ov);
+        updateUI();setTool('pointer');
+        toast('✅ 已添加: '+ov._name);
+        return;
+    }
     const cnt=overlays.filter(o=>o._type===type).length+1;
     ov._type=type;ov._name=(type==='area'?'区域 ':'路线 ')+cnt;
     ov._color=type==='area'?'#10b981':'#3b82f6';
@@ -293,8 +409,12 @@ function onDraw(e){
 function selectOv(ov){
     if(currentTool!=='pointer')return;
     deselectOv();selectedOv=ov;
-    const base=ov._stroke||(ov instanceof AMap.Polyline?3:2);
-    ov.setOptions({strokeWeight:base+3,strokeColor:'#fff'});
+    if(ov._type==='marker'){
+        ov.setContent(markerContent(ov._color,true));
+    }else{
+        const base=ov._stroke||(ov instanceof AMap.Polyline?3:2);
+        ov.setOptions({strokeWeight:base+3,strokeColor:'#ffd400'});
+    }
     document.getElementById('btn-delete').disabled=false;
     document.getElementById('btn-duplicate').disabled=false;
     document.getElementById('status-text').textContent='已选中: '+(ov._name||'');
@@ -303,8 +423,12 @@ function selectOv(ov){
 
 function deselectOv(){
     if(!selectedOv)return;
-    const base=selectedOv._stroke||(selectedOv instanceof AMap.Polyline?3:2);
-    selectedOv.setOptions({strokeWeight:base,strokeColor:selectedOv._color});
+    if(selectedOv._type==='marker'){
+        selectedOv.setContent(markerContent(selectedOv._color,false));
+    }else{
+        const base=selectedOv._stroke||(selectedOv instanceof AMap.Polyline?3:2);
+        selectedOv.setOptions({strokeWeight:base,strokeColor:selectedOv._color});
+    }
     selectedOv=null;
     document.getElementById('btn-delete').disabled=true;
     document.getElementById('btn-duplicate').disabled=true;
@@ -325,11 +449,18 @@ document.getElementById('btn-delete').addEventListener('click',()=>{
 document.getElementById('btn-duplicate').addEventListener('click',()=>{
     if(!selectedOv)return;
     saveSnapshot();
-    const path=selectedOv.getPath().map(p=>[p.lng,p.lat]),type=selectedOv._type;
+    const type=selectedOv._type;
     const sw=selectedOv._stroke||(type==='route'?3:2),op=selectedOv._opacity;
     let ov;
-    if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
-    else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+    if(type==='marker'){
+        const pos=selectedOv.getPosition();
+        ov=new AMap.Marker({map,position:[pos.lng,pos.lat],content:markerContent(selectedOv._color,false),offset:new AMap.Pixel(-8,-8),title:selectedOv._name+' 副本'});
+        ov._stroke=0;ov._opacity=1;
+    }else{
+        const path=selectedOv.getPath().map(p=>[p.lng,p.lat]);
+        if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
+        else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+    }
     ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;ov._stroke=sw;ov._opacity=op;
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);updateUI();toast('已复制');
@@ -365,30 +496,40 @@ function updateProps(){
     section.style.display='block';
     document.getElementById('prop-name').value=selectedOv._name||'';
     document.getElementById('prop-color').value=selectedOv._color||'#3b82f6';
+    const isMarker=selectedOv._type==='marker';
+    document.getElementById('prop-stroke').closest('.prop-row').style.display=isMarker?'none':'';
+    document.getElementById('prop-opacity').closest('.prop-row').style.display=isMarker?'none':'';
     const isLine=selectedOv instanceof AMap.Polyline;
     document.getElementById('prop-stroke').value=selectedOv._stroke||(isLine?3:2);
     document.getElementById('prop-opacity').value=Math.round((selectedOv._opacity??(isLine?0.9:0.2))*100);
-    document.getElementById('prop-points-info').textContent='顶点: '+(selectedOv.getPath?selectedOv.getPath().length:'-')+' 个';
+    if(isMarker){
+        const pos=selectedOv.getPosition();
+        document.getElementById('prop-points-info').textContent='坐标: '+pos.lng.toFixed(6)+', '+pos.lat.toFixed(6);
+    }else{
+        document.getElementById('prop-points-info').textContent='顶点: '+(selectedOv.getPath?selectedOv.getPath().length:'-')+' 个';
+    }
 }
 
 document.getElementById('prop-name').addEventListener('input',function(){
     if(!selectedOv)return;selectedOv._name=this.value;updateUI();saveSnapshot();
+    if(selectedOv._type==='marker')selectedOv.setTitle(this.value);
 });
 document.getElementById('prop-color').addEventListener('input',function(){
     if(!selectedOv)return;
     saveSnapshot();selectedOv._color=this.value;
-    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeColor:this.value});
+    if(selectedOv._type==='marker')selectedOv.setContent(markerContent(this.value,true));
+    else if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeColor:this.value});
     else selectedOv.setOptions({strokeColor:this.value,fillColor:this.value});
     updateUI();
 });
 document.getElementById('prop-stroke').addEventListener('input',function(){
-    if(!selectedOv)return;
+    if(!selectedOv||selectedOv._type==='marker')return;
     const v=Number(this.value);
     selectedOv._stroke=v;
     selectedOv.setOptions({strokeWeight:v});
 });
 document.getElementById('prop-opacity').addEventListener('input',function(){
-    if(!selectedOv)return;
+    if(!selectedOv||selectedOv._type==='marker')return;
     const v=Number(this.value)/100;selectedOv._opacity=v;
     if(selectedOv instanceof AMap.Polygon)selectedOv.setOptions({fillOpacity:v});
     else selectedOv.setOptions({strokeOpacity:v});
@@ -401,7 +542,8 @@ document.getElementById('color-presets').addEventListener('click',e=>{
     const c=p.dataset.color;
     saveSnapshot();selectedOv._color=c;
     document.getElementById('prop-color').value=c;
-    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeColor:c});
+    if(selectedOv._type==='marker')selectedOv.setContent(markerContent(c,true));
+    else if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeColor:c});
     else selectedOv.setOptions({strokeColor:c,fillColor:c});
     updateUI();
 });
@@ -420,19 +562,46 @@ document.getElementById('btn-save').addEventListener('click',()=>{
     showNameModal(t);
 });
 
+// 新建方案
+document.getElementById('btn-new-plan').addEventListener('click',()=>{
+    if(overlays.length>0&&!confirm('新建方案会清空当前画布（请先保存当前方案），继续？'))return;
+    clearOverlays();
+    currentPlanId=null;
+    document.getElementById('sb-name').textContent='未命名方案';
+    deselectOv();saveSnapshot();updateUI();renderPlanList();
+    toast('已新建空白方案');
+});
+
 async function doSave(token,name){
-    const routes={},areas={};
+    const routes={},areas={},markers={};
+    let skipped=0;
     overlays.forEach(o=>{
+        if(o._type==='marker'){
+            const pos=o.getPosition();
+            markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};
+            return;
+        }
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
-        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:0.9};
-        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2};
+        if(o._type==='route'){
+            if(pts.length<2){skipped++;return}
+            routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:0.9};
+        }else{
+            if(pts.length<3){skipped++;return}
+            areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2};
+        }
     });
-    config.routes=routes;config.areas=areas;
-    if(name)config.planName=name;
+    const data={kind:'map',routes,areas,markers};
+    const isNew=!currentPlanId;
+    const url='/api/editor/projects'+(isNew?'':'/'+currentPlanId);
     try{
-        const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(config)});
-        if(r.ok){toast('✅ 已保存「'+(name||'')+'」');document.getElementById('sb-name').textContent=config.planName||'未命名方案';}
-        else toast('❌ 保存失败');
+        const r=await fetch(url,{method:isNew?'POST':'PUT',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({name,data})});
+        const j=await r.json();
+        if(r.ok){
+            if(isNew&&j.id)currentPlanId=j.id;
+            document.getElementById('sb-name').textContent=name||'未命名方案';
+            await loadPlans();
+            toast('✅ 已保存「'+(name||'')+'」'+(skipped?('，跳过 '+skipped+' 个无效图形'):''));
+        }else toast('❌ 保存失败: '+(j.error||('HTTP '+r.status)));
     }catch(e){toast('❌ 网络错误')}
 }
 
@@ -454,7 +623,8 @@ document.getElementById('login-pwd').addEventListener('keydown',e=>{if(e.key==='
 // 保存前命名
 function showNameModal(token){
     saveToken=token;
-    document.getElementById('plan-name').value=config.planName||'';
+    const cur=plans.find(p=>String(p.id)===String(currentPlanId));
+    document.getElementById('plan-name').value=cur?cur.name:(config.planName||'');
     document.getElementById('name-modal').style.display='flex';
     setTimeout(()=>document.getElementById('plan-name').focus(),100);
 }
@@ -469,9 +639,14 @@ document.getElementById('name-modal').addEventListener('click',e=>{if(e.target==
 
 // Export
 document.getElementById('btn-export').addEventListener('click',()=>{
-    const routes={},areas={};
-    overlays.forEach(o=>{const pts=o.getPath().map(p=>[p.lng,p.lat]);if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3};else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2}});
-    const blob=new Blob([JSON.stringify({routes,areas},null,2)],{type:'application/json'});
+    const routes={},areas={},markers={};
+    overlays.forEach(o=>{
+        if(o._type==='marker'){const pos=o.getPosition();markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};return}
+        const pts=o.getPath().map(p=>[p.lng,p.lat]);
+        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3};
+        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2};
+    });
+    const blob=new Blob([JSON.stringify({routes,areas,markers},null,2)],{type:'application/json'});
     const a=document.createElement('a');a.download='map-data.json';a.href=URL.createObjectURL(blob);a.click();
     URL.revokeObjectURL(a.href);toast('✅ 已导出 JSON');
 });
@@ -522,9 +697,9 @@ function updateUI(){
             list.appendChild(row);
         });
     }
-    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length;
-    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a;
-    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a;
+    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length,m=overlays.filter(o=>o._type==='marker').length;
+    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a+' · 标记 '+m;
+    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a+' 标记:'+m;
     document.getElementById('sb-history').textContent=history.length>0?((historyIdx+1)+'/'+history.length):'0/0';
     document.getElementById('btn-undo').disabled=historyIdx<0;
     document.getElementById('btn-redo').disabled=historyIdx>=history.length-2;

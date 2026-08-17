@@ -125,6 +125,26 @@ a { color: #58a6ff; }
 }
 .btn-del:hover { background: #da3633; color: #fff; border-color: #da3633; }
 
+/* -- Logo uploader -- */
+.logo-uploader { display: flex; align-items: center; gap: 12px; }
+.logo-preview {
+    width: 52px; height: 52px; flex: none; border-radius: 8px;
+    background: #fff; border: 1px solid #30363d;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.logo-preview img { width: 100%; height: 100%; object-fit: contain; padding: 4px; box-sizing: border-box; }
+.logo-preview span { font-size: 1.6rem; }
+.logo-actions { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.logo-actions input[type="text"] { width: 100%; }
+.btn-file {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    padding: 7px 14px; border-radius: 6px; border: 1px dashed #30363d;
+    background: none; color: #58a6ff; font-size: 0.85rem; align-self: flex-start;
+}
+.btn-file:hover { border-color: #58a6ff; background: #1c2128; }
+.btn-file input[type="file"] { display: none; }
+.logo-clear { margin-top: 0; }
+
 /* -- Route points editor -- */
 .point-list { display: flex; flex-direction: column; gap: 6px; }
 .point-row { display: flex; gap: 8px; align-items: center; }
@@ -193,8 +213,6 @@ a { color: #58a6ff; }
     <button data-panel="routes">🛤️ 路线</button>
     <button data-panel="areas">🗺️ 区域</button>
     <button data-panel="camera">📷 相机</button>
-    <button data-panel="particles">✨ 粒子</button>
-    <button data-panel="parking">🅿️ 停车场</button>
     <button data-panel="geo">🌍 地理信息</button>
     <button data-panel="plans">📋 方案</button>
     <a href="admin-map.html" class="nav-link">🗺️ 地图绘制</a>
@@ -259,23 +277,11 @@ a { color: #58a6ff; }
         </div>
     </div>
 
-    <!-- ====== Particles Panel ====== -->
-    <div class="panel" id="panel-particles">
-        <div class="section"><h3>✨ 粒子参数</h3>
-            <div class="form-grid" id="form-particles"></div>
-        </div>
-    </div>
-
     <!-- ====== Geo Panel ====== -->
     <div class="panel" id="panel-geo">
         <div class="section"><h3>🌍 高德地图设置</h3>
             <div class="form-grid" id="form-geo"></div>
         </div>
-    </div>
-
-    <!-- ====== Parking Panel ====== -->
-    <div class="panel" id="panel-parking">
-        <div id="form-parking"></div>
     </div>
 
     <!-- ====== Plans Panel ====== -->
@@ -452,7 +458,7 @@ function addMarker() {
     config.markers[k] = { label: '新标记', icon: '📍', badge: '', color: '#4ea1ff', pos: [0, 0, 30], desc: '', features: [] };
     renderMarkers();
 }
-function delMarker(key) { if (confirm('删除标记「' + key + '」？')) { delete config.markers[key]; renderMarkers(); } }
+function delMarker(key) { if (confirm('删除标记「' + key + '」？')) { delete config.markers[key]; renderMarkers(); saveConfig(); } }
 
 function addRoute() {
     const k = prompt('新路线的 key（如 public / vip）');
@@ -462,7 +468,7 @@ function addRoute() {
     config.routes[k] = { color: '#4ea1ff', speed: 2, strokeWidth: 3, opacity: 1, pts: [[0, 0.6, 0]] };
     renderRoutes();
 }
-function delRoute(key) { if (confirm('删除路线「' + key + '」？')) { delete config.routes[key]; renderRoutes(); } }
+function delRoute(key) { if (confirm('删除路线「' + key + '」？')) { delete config.routes[key]; renderRoutes(); saveConfig(); } }
 
 function addArea() {
     const k = prompt('新区域的 key（英文）');
@@ -472,7 +478,7 @@ function addArea() {
     config.areas[k] = { color: '#10b981', strokeWidth: 2, opacity: 0.2, pts: [[104.14, 30.67], [104.141, 30.671]] };
     renderAreas();
 }
-function delArea(key) { if (confirm('删除区域「' + key + '」？')) { delete config.areas[key]; renderAreas(); } }
+function delArea(key) { if (confirm('删除区域「' + key + '」？')) { delete config.areas[key]; renderAreas(); saveConfig(); } }
 
 function addPreset() {
     const k = prompt('新视角预设的名称（如 overview）');
@@ -482,7 +488,7 @@ function addPreset() {
     config.camera.presets[k] = { pos: [70, 50, 80], target: [0, 4, 0] };
     renderCamera();
 }
-function delPreset(key) { if (confirm('删除预设「' + key + '」？')) { delete config.camera.presets[key]; renderCamera(); } }
+function delPreset(key) { if (confirm('删除预设「' + key + '」？')) { delete config.camera.presets[key]; renderCamera(); saveConfig(); } }
 
 function addSub() {
     config.building.subs = config.building.subs || [];
@@ -490,6 +496,12 @@ function addSub() {
     renderBuilding();
 }
 function delSub(i) { config.building.subs.splice(i, 1); renderBuilding(); }
+
+const DEFAULT_MAIN = { w: 10, d: 10, h: 10, color: '#1e2d5a', pos: [0, 0, 0] };
+function delMain() { if (confirm('删除主建筑？首页将不再显示。')) { config.building.main = null; renderBuilding(); saveConfig(); } }
+function restoreMain() { config.building.main = Object.assign({}, DEFAULT_MAIN); renderBuilding(); saveConfig(); }
+function delRoad() { if (confirm('删除道路？首页将不再显示道路/场地高亮。')) { config.building.roadVisible = false; renderBuilding(); saveConfig(); } }
+function restoreRoad() { config.building.roadVisible = true; renderBuilding(); saveConfig(); }
 
 // ---------- Render functions ----------
 function renderAll() {
@@ -500,27 +512,94 @@ function renderAll() {
     renderRoutes();
     renderAreas();
     renderCamera();
-    renderParticles();
     renderGeo();
-    renderParking();
     renderPlans();
 }
 
 
 function renderBrand() {
-    var b = config.brand || {name:'',subtitle:'',logo:''};
+    var b = config.brand || {name:'',subtitle:'',logo:'',logoText:''};
+    var logoImg = /^(data:image|https?:\/\/)/i.test(b.logo || '') ? b.logo : '';
+    var logoText = b.logoText || '';
     document.getElementById('form-brand').innerHTML =
         fld('brand.name', '项目名称', 'text', {value:b.name||''}) +
         fld('brand.subtitle', '副标题', 'text', {value:b.subtitle||''}) +
-        fld('brand.logo', 'Logo图标', 'text', {value:b.logo||''});
+        `<div class="form-group"><label>Logo 图片</label>
+            <div class="logo-uploader">
+                <div class="logo-preview">${logoImg ? `<img src="${escHtml(logoImg)}" alt="logo" onload="applyLogoBg(this)"/>` : `<span style="font-size:0.8rem;color:#8b949e;">未上传</span>`}</div>
+                <div class="logo-actions">
+                    <label class="btn-file">📁 上传图片<input type="file" accept="image/*" onchange="handleLogoUpload(this)"/></label>
+                    ${logoImg ? `<button class="btn-del logo-clear" onclick="config.brand.logo=''; renderBrand(); saveConfig();">✕ 清除图片</button>` : ''}
+                </div>
+            </div>
+        </div>` +
+        `<div class="form-group"><label>Logo 文字（和图片同时显示）</label>
+            <input type="text" placeholder="例如：70校庆，留空则不显示" value="${escHtml(logoText)}" onchange="config.brand.logoText = this.value; renderBrand(); saveConfig();"/>
+        </div>`;
+}
+
+function applyLogoBg(img) {
+    try {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) return;
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        var ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        var d = ctx.getImageData(0, 0, w, h).data;
+        var sum = 0, n = 0;
+        for (var i = 0; i < d.length; i += 4) {
+            if (d[i + 3] > 10) { sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n++; }
+        }
+        if (!n) return;
+        var preview = img.closest('.logo-preview');
+        if (preview) {
+            preview.style.background = (sum / n > 165) ? '#0b1220' : '#ffffff';
+        }
+    } catch (e) { /* 保持默认白底 */ }
+}
+
+function handleLogoUpload(input) {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { alert('请选择图片文件'); return; }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        var dataUrl = e.target.result;
+        if (file.type === 'image/svg+xml') { config.brand.logo = dataUrl; renderBrand(); saveConfig(); return; }
+        resizeLogo(dataUrl, 256, function(out) { config.brand.logo = out; renderBrand(); saveConfig(); });
+    };
+    reader.readAsDataURL(file);
+}
+
+function resizeLogo(dataUrl, maxSize, cb) {
+    var img = new Image();
+    img.onload = function() {
+        var scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        var w = Math.max(1, Math.round(img.width * scale));
+        var h = Math.max(1, Math.round(img.height * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        cb(canvas.toDataURL('image/png'));
+    };
+    img.onerror = function() { cb(dataUrl); };
+    img.src = dataUrl;
 }
 function renderBuilding() {
     const m = config.building.main;
-    document.getElementById('form-main-building').innerHTML =
-        fld('building.main.w', '宽度', 'number', { value: m.w, step: 1 }) +
-        fld('building.main.d', '深度', 'number', { value: m.d, step: 1 }) +
-        fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
-        fld('building.main.color', '颜色', 'color', { value: m.color });
+    if (m) {
+        document.getElementById('form-main-building').innerHTML =
+            fld('building.main.w', '宽度', 'number', { value: m.w, step: 1 }) +
+            fld('building.main.d', '深度', 'number', { value: m.d, step: 1 }) +
+            fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
+            fld('building.main.color', '颜色', 'color', { value: m.color }) +
+            `<button class="btn-del" style="margin-top:8px" onclick="delMain()">✕ 删除主建筑</button>`;
+    } else {
+        document.getElementById('form-main-building').innerHTML =
+            `<div style="color:#8b949e;font-size:0.85rem;margin-bottom:8px">主建筑已删除（首页不显示）</div>` +
+            `<button class="btn-add-feat" onclick="restoreMain()">➕ 恢复主建筑</button>`;
+    }
 
     document.getElementById('form-subs').innerHTML = config.building.subs.map((s, i) => {
         const base = `building.subs[${i}]`;
@@ -536,14 +615,21 @@ function renderBuilding() {
     }).join('') +
     `<button class="btn-add-feat" style="margin-top:12px" onclick="addSub()">+ 添加配楼</button>`;
 
+    const roadOff = config.building.roadVisible === false;
     document.getElementById('form-scene').innerHTML =
-        fld('building.roadWidth', '道路宽度', 'number', { value: config.building.roadWidth, step: 1 }) +
+        (roadOff ? '' : fld('building.roadWidth', '道路宽度', 'number', { value: config.building.roadWidth, step: 1 })) +
         fld('groundSize', '地面大小', 'number', { value: config.groundSize, step: 10 }) +
         fld('fogNear', '雾近端', 'number', { value: config.fogNear, step: 1 }) +
-        fld('fogFar', '雾远端', 'number', { value: config.fogFar, step: 1 });
+        fld('fogFar', '雾远端', 'number', { value: config.fogFar, step: 1 }) +
+        (roadOff
+            ? `<div style="color:#8b949e;font-size:0.85rem;margin-top:8px">道路已删除（首页不显示）</div><button class="btn-add-feat" onclick="restoreRoad()">➕ 恢复道路</button>`
+            : `<button class="btn-del" style="margin-top:8px" onclick="delRoad()">✕ 删除道路</button>`);
 }
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// 生成可安全嵌入 onclick/onchange 双引号 HTML 属性的 JS 字符串字面量：
+// JSON.stringify 会输出 "key"，直接内联会把属性撑断（表现为点按钮报 SyntaxError: Unexpected end of input）
+function jkey(v) { return escHtml(JSON.stringify(v)); }
 function renderMarkers() {
     document.getElementById('form-markers').innerHTML = Object.entries(config.markers).map(([key, m]) => {
         const base = `markers.${key}`;
@@ -566,13 +652,13 @@ function renderMarkers() {
                 <div class="feature-list" id="feat-${key}">
                     ${(m.features || []).map((f, fi) => `
                         <div class="feature-row">
-                            <input value="${f}" onchange="config.markers[${JSON.stringify(key)}].features[${fi}] = this.value" />
-                            <button onclick="config.markers[${JSON.stringify(key)}].features.splice(${fi},1);renderMarkers()">✕</button>
+                            <input value="${f}" onchange="config.markers[${jkey(key)}].features[${fi}] = this.value" />
+                            <button onclick="config.markers[${jkey(key)}].features.splice(${fi},1);renderMarkers()">✕</button>
                         </div>`).join('')}
                 </div>
-                <button class="btn-add-feat" onclick="config.markers[${JSON.stringify(key)}].features.push('新设施');renderMarkers()">+ 添加设施</button>
+                <button class="btn-add-feat" onclick="config.markers[${jkey(key)}].features.push('新设施');renderMarkers()">+ 添加设施</button>
             </div>
-            <button class="btn-del" onclick="delMarker(${JSON.stringify(key)})">✕ 删除标记</button>
+            <button class="btn-del" onclick="delMarker(${jkey(key)})">✕ 删除标记</button>
         </div>`;
     }).join('') +
     `<button class="btn-add-feat" style="margin-top:12px" onclick="addMarker()">+ 添加标记</button>`;
@@ -590,15 +676,15 @@ function renderRoutes() {
                 <div class="point-list" id="pts-${key}">
                     ${(r.pts || []).map((p, pi) => `
                         <div class="point-row">
-                            <input type="number" value="${p[0]}" step="1" onchange="config.routes[${JSON.stringify(key)}].pts[${pi}][0]=+this.value" />
-                            <input type="number" value="${p[1]}" step="0.1" onchange="config.routes[${JSON.stringify(key)}].pts[${pi}][1]=+this.value" />
-                            <input type="number" value="${p[2]}" step="1" onchange="config.routes[${JSON.stringify(key)}].pts[${pi}][2]=+this.value" />
-                            <button onclick="config.routes[${JSON.stringify(key)}].pts.splice(${pi},1);renderRoutes()" style="padding:4px 8px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;">✕</button>
+                            <input type="number" value="${p[0]}" step="1" onchange="config.routes[${jkey(key)}].pts[${pi}][0]=+this.value" />
+                            <input type="number" value="${p[1]}" step="0.1" onchange="config.routes[${jkey(key)}].pts[${pi}][1]=+this.value" />
+                            <input type="number" value="${p[2]}" step="1" onchange="config.routes[${jkey(key)}].pts[${pi}][2]=+this.value" />
+                            <button onclick="config.routes[${jkey(key)}].pts.splice(${pi},1);renderRoutes()" style="padding:4px 8px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;">✕</button>
                         </div>`).join('')}
                 </div>
-                <button class="btn-add-feat" onclick="config.routes[${JSON.stringify(key)}].pts.push([0,0.6,0]);renderRoutes()">+ 添加路径点</button>
+                <button class="btn-add-feat" onclick="config.routes[${jkey(key)}].pts.push([0,0.6,0]);renderRoutes()">+ 添加路径点</button>
             </div>
-            <button class="btn-del" onclick="delRoute(${JSON.stringify(key)})">✕ 删除路线</button>
+            <button class="btn-del" onclick="delRoute(${jkey(key)})">✕ 删除路线</button>
         </div>`;
     }).join('') +
     `<button class="btn-add-feat" style="margin-top:12px" onclick="addRoute()">+ 添加路线</button>`;
@@ -607,7 +693,7 @@ function renderRoutes() {
 function renderAreas() {
     var areas = config.areas || {};
     document.getElementById('form-areas').innerHTML = Object.entries(areas).map(function(e) {
-        var key = e[0], a = e[1], sk = JSON.stringify(key), ek = escHtml(key);
+        var key = e[0], a = e[1], sk = jkey(key), ek = escHtml(key);
         return '<div class="section"><h3>📐 ' + ek + '</h3>'
             + '<div class="form-grid">'
             + fld('areas.'+ek+'.color', '颜色', 'color', { value: a.color || '#10b981' })
@@ -648,25 +734,18 @@ function renderCamera() {
             fld(`camera.presets.${key}.target[0]`, '目标 X', 'number', { value: p.target[0], step: 1 }) +
             fld(`camera.presets.${key}.target[1]`, '目标 Y', 'number', { value: p.target[1], step: 1 }) +
             fld(`camera.presets.${key}.target[2]`, '目标 Z', 'number', { value: p.target[2], step: 1 }) +
-            `</div><button class="btn-del" onclick="delPreset(${JSON.stringify(key)})">✕ 删除预设</button></div>`;
+            `</div><button class="btn-del" onclick="delPreset(${jkey(key)})">✕ 删除预设</button></div>`;
     }).join('') +
     `<button class="btn-add-feat" style="margin-top:12px" onclick="addPreset()">+ 添加预设</button>`;
-}
-
-function renderParticles() {
-    const p = config.particles;
-    document.getElementById('form-particles').innerHTML =
-        fld('particles.count', '数量', 'number', { value: p.count, step: 10 }) +
-        fld('particles.spread', '扩散半径', 'number', { value: p.spread, step: 5 }) +
-        fld('particles.height', '高度范围', 'number', { value: p.height, step: 1 });
 }
 
 function renderGeo() {
     const g = config.geo || { amapKey: '', center: [116, 39], zoom: 17, pitch: 55, rotation: 20, mapStyle: 'amap://styles/dark' };
     if (!config.geo) config.geo = g;
     document.getElementById('form-geo').innerHTML =
-        fld('geo.amapKey', '高德 Key', 'text', { value: g.amapKey || '' }) +
-        fld('geo.amapSecurityCode', '安全密钥 (jscode)', 'text', { value: g.amapSecurityCode || '' }) +
+        `<div class="form-group" style="grid-column:1/-1"><label>高德 Key / 安全密钥</label>
+          <div style="font-size:0.78rem;color:rgba(255,255,255,0.55);line-height:1.6">由服务器 <code>.env</code> 管理（<code>AMAP_KEY</code> / <code>AMAP_SECURITY_CODE</code>），后台不再编辑，避免密钥泄露到仓库。</div>
+        </div>` +
         fld('geo.center[0]', '中心经度 (lng)', 'number', { value: g.center[0], step: 0.0001 }) +
         fld('geo.center[1]', '中心纬度 (lat)', 'number', { value: g.center[1], step: 0.0001 }) +
         fld('geo.zoom', '默认缩放', 'number', { value: g.zoom, step: 0.5 }) +
@@ -677,27 +756,6 @@ function renderGeo() {
             <option value="amap://styles/light" ${g.mapStyle === 'amap://styles/light' ? 'selected' : ''}>标准</option>
             <option value="amap://styles/whitesmoke" ${g.mapStyle === 'amap://styles/whitesmoke' ? 'selected' : ''}>浅色</option>
         </select></div>`;
-}
-
-function renderParking() {
-    config.parking = config.parking || [];
-    document.getElementById('form-parking').innerHTML = config.parking.map((p, i) => {
-        const base = `parking[${i}]`;
-        return `<div class="section"><h3>🅿️ ${p.name || '停车场 #' + (i+1)}</h3>
-            <div class="form-grid">
-                ${fld(`${base}.name`, '名称', 'text', { value: p.name })}
-                ${fld(`${base}.offset[0]`, '坐标 X', 'number', { value: p.offset[0], step: 1 })}
-                ${fld(`${base}.offset[1]`, '坐标 Y', 'number', { value: p.offset[1], step: 0.5 })}
-                ${fld(`${base}.offset[2]`, '坐标 Z', 'number', { value: p.offset[2], step: 1 })}
-                ${fld(`${base}.capacity`, '总车位', 'number', { value: p.capacity, step: 10 })}
-                ${fld(`${base}.available`, '可用车位', 'number', { value: p.available, step: 1 })}
-                ${fld(`${base}.color`, '颜色', 'color', { value: p.color || '#ffb347' })}
-            </div>
-            <button style="margin-top:8px;padding:4px 12px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;"
-                onclick="config.parking.splice(${i},1);renderParking()">✕ 删除</button>
-        </div>`;
-    }).join('') +
-    `<button class="btn-add-feat" style="margin-top:12px" onclick="config.parking.push({name:'新停车场',offset:[0,0,30],capacity:100,available:50,color:'#ffb347'});renderParking()">+ 添加停车场</button>`;
 }
 
 // ---------- 导览方案管理（数据来自 /api/editor/projects） ----------

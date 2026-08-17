@@ -4,3 +4,10 @@ data/
 .claude/
 .playwright-mcp/
 config.json.bak
+
+# 调试/截图产物
+server.log
+*.log
+mobile-check.*
+yx*.png
+yx*.jpeg

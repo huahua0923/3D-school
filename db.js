@@ -67,6 +67,8 @@ async function initDb(dbFile, cfgPath) {
 
   // 建表（幂等）
   createTables();
+  // 迁移：为旧库补充新增列（visible / road_visible）
+  migrateSchema();
 
   // 检查是否需要自动填充
   const versionRow = db.exec('SELECT version FROM schema_version');
@@ -120,7 +122,9 @@ function createTables() {
       pos_x REAL NOT NULL DEFAULT 0,
       pos_y REAL NOT NULL DEFAULT 0,
       pos_z REAL NOT NULL DEFAULT 0,
-      road_width REAL NOT NULL DEFAULT 8
+      road_width REAL NOT NULL DEFAULT 8,
+      visible INTEGER NOT NULL DEFAULT 1,
+      road_visible INTEGER NOT NULL DEFAULT 1
     )
   `);
 
@@ -255,6 +259,23 @@ function createTables() {
   `);
 }
 
+/** 迁移：为旧数据库补充新增列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列） */
+function migrateSchema() {
+  try {
+    const info = db.exec(`PRAGMA table_info(buildings_main)`);
+    if (info.length === 0) return;
+    const cols = info[0].values.map(v => v[1]);
+    if (!cols.includes('visible')) {
+      db.run(`ALTER TABLE buildings_main ADD COLUMN visible INTEGER NOT NULL DEFAULT 1`);
+    }
+    if (!cols.includes('road_visible')) {
+      db.run(`ALTER TABLE buildings_main ADD COLUMN road_visible INTEGER NOT NULL DEFAULT 1`);
+    }
+  } catch (err) {
+    console.error('⚠️ 迁移 buildings_main 失败:', err.message);
+  }
+}
+
 // ---------- 数据填充 ----------
 
 /** 从 config 对象填充所有表（清空后写入） */
@@ -286,13 +307,17 @@ function seedFromConfig(config) {
   );
 
   // --- Buildings Main ---
-  const bm = (config.building && config.building.main) || {};
+  const bm = (config.building && config.building.main) || null;
+  const bmVisible = bm ? 1 : 0;
+  const roadVisible = (config.building && config.building.roadVisible === false) ? 0 : 1;
   db.run(
-    `INSERT INTO buildings_main (id, w, d, h, color, pos_x, pos_y, pos_z, road_width)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [bm.w || 40, bm.d || 60, bm.h || 18, bm.color || '#1e2d5a',
-     (bm.pos || [0, 0, 0])[0], (bm.pos || [0, 0, 0])[1], (bm.pos || [0, 0, 0])[2],
-     (config.building && config.building.roadWidth) || 8]
+    `INSERT INTO buildings_main (id, w, d, h, color, pos_x, pos_y, pos_z, road_width, visible, road_visible)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [bm ? (bm.w || 40) : 40, bm ? (bm.d || 60) : 60, bm ? (bm.h || 18) : 18,
+     bm ? (bm.color || '#1e2d5a') : '#1e2d5a',
+     bm ? (bm.pos || [0, 0, 0])[0] : 0, bm ? (bm.pos || [0, 0, 0])[1] : 0, bm ? (bm.pos || [0, 0, 0])[2] : 0,
+     (config.building && config.building.roadWidth) || 8,
+     bmVisible, roadVisible]
   );
 
   // --- Buildings Subs ---
@@ -337,7 +362,8 @@ function seedFromConfig(config) {
     const res = insertRoute.run([key, r.color || '#4da6ff', r.speed || 0.9]);
     const routeId = Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
     (r.pts || []).forEach((pt, pi) => {
-      insertPoint.run([routeId, pt[0], pt[1], pt[2], pi]);
+      // 地图编辑器保存的是 [lng, lat]（2 元素），z 缺省为 0；undefined 会导致 sql.js 抛错
+      insertPoint.run([routeId, pt[0], pt[1], pt[2] || 0, pi]);
     });
   }
 
@@ -436,8 +462,8 @@ function getFullConfig() {
 
   const config = {
     geo: geoRow ? {
-      amapKey: geoRow.amap_key,
-      amapSecurityCode: geoRow.amap_security_code,
+      amapKey: '', // 高德 Key 已下沉到 .env（AMAP_KEY），不再经 config/数据库对外暴露
+      amapSecurityCode: '',
       center: [geoRow.center_lng, geoRow.center_lat],
       zoom: geoRow.zoom,
       pitch: geoRow.pitch,
@@ -451,16 +477,17 @@ function getFullConfig() {
     fogFar: sceneRow ? sceneRow.fog_far : 220,
 
     building: bmRow ? {
-      main: {
+      main: bmRow.visible === 1 ? {
         w: bmRow.w, d: bmRow.d, h: bmRow.h,
         color: bmRow.color,
         pos: [bmRow.pos_x, bmRow.pos_y, bmRow.pos_z]
-      },
+      } : null,
       subs: subRows.map(s => ({
         w: s.w, d: s.d, h: s.h, x: s.x, z: s.z, color: s.color
       })),
-      roadWidth: bmRow.road_width
-    } : { main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0] }, subs: [], roadWidth: 8 },
+      roadWidth: bmRow.road_width,
+      roadVisible: bmRow.road_visible !== 0
+    } : { main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0] }, subs: [], roadWidth: 8, roadVisible: true },
 
     markers: {},
     routes: {},
@@ -521,6 +548,9 @@ function getFullConfig() {
 
   // 透传字段：SQLite 未建模的 brand / areas / planName / 路线样式，从 config.json 补齐
   // （否则后台保存时这些字段会被抹掉，导致首页标题/Logo/区域叠加/线宽丢失）
+  // 先给默认值，确保 config.brand / config.areas 始终存在（否则后台无法设置品牌名）
+  config.brand = { name: '', subtitle: '', logo: '', logoText: '' };
+  config.areas = [];
   let fileCfg = null;
   try {
     if (configPath && fs.existsSync(configPath)) {
@@ -540,6 +570,12 @@ function getFullConfig() {
         }
       }
     }
+  }
+
+  // 迁移：老版本 logo 字段存的是文字/emoji，拆成 logo(图片) + logoText(文字)
+  if (config.brand && config.brand.logo && !/^(data:image|https?:\/\/)/i.test(config.brand.logo)) {
+    if (!config.brand.logoText) config.brand.logoText = config.brand.logo;
+    config.brand.logo = '';
   }
 
   return config;

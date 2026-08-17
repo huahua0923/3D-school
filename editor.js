@@ -702,6 +702,7 @@
   // ===================== 地理范围（供 3D 主地图展示） =====================
 
   let defaultCenter = [104.14141, 30.67133];
+  let geoConfig = null;
   const GEO_HALF_LNG = 0.002, GEO_HALF_LAT = 0.0014;
 
   function defaultGeoBounds() {
@@ -714,17 +715,128 @@
     return state.geoBounds;
   }
 
+  // —— 在地图上点选地理范围（自动获取经纬度） ——
+  let _amapPromise = null;
+  function loadAmap() {
+    if (_amapPromise) return _amapPromise;
+    _amapPromise = (async () => {
+      if (window.AMap) return window.AMap;
+      const cfg = geoConfig || {};
+      let key = cfg.amapKey || '';
+      let sec = cfg.amapSecurityCode || '';
+      // 优先用服务端 .env 注入的高德 Key/安全密钥（高德官方建议：key 不进仓库）
+      try {
+        const r = await fetch('/api/amap');
+        const d = await r.json();
+        if (d && d.key) key = d.key;
+        if (d && d.securityJsCode) sec = d.securityJsCode;
+      } catch (_) { /* 回退到 config.json */ }
+      if (sec) window._AMapSecurityConfig = { securityJsCode: sec };
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + key;
+        s.onload = () => window.AMap ? resolve() : reject(new Error('AMap 未加载'));
+        s.onerror = () => reject(new Error('地图 SDK 加载失败'));
+        document.head.appendChild(s);
+      });
+      return window.AMap;
+    })();
+    return _amapPromise;
+  }
+
+  function showGeoPicker(onPick) {
+    const center = (geoConfig && Array.isArray(geoConfig.center) && geoConfig.center.length >= 2) ? geoConfig.center : defaultCenter;
+    const zoom = (geoConfig && geoConfig.zoom) || 16;
+    const mapStyle = (geoConfig && geoConfig.mapStyle) || 'amap://styles/normal';
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="position:relative;width:min(94vw,1100px);height:min(88vh,720px);background:#0d1117;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+        <div style="padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.08);background:#111827;">
+          <span style="font-weight:700;color:#e0e0f0;font-size:0.9rem;">🖱️ 在地图上点选范围</span>
+          <span id="geo-pick-hint" style="font-size:0.8rem;color:#9aa;flex:1;"></span>
+          <button id="geo-pick-reset" class="toolbar-btn" style="font-size:0.75rem;">重新选点</button>
+          <button id="geo-pick-cancel" class="toolbar-btn" style="font-size:0.75rem;">取消</button>
+          <button id="geo-pick-ok" class="toolbar-btn primary" style="font-size:0.75rem;" disabled>确定</button>
+        </div>
+        <div id="geo-pick-map" style="flex:1;min-height:0;"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const hint = overlay.querySelector('#geo-pick-hint');
+    const okBtn = overlay.querySelector('#geo-pick-ok');
+    overlay.querySelector('#geo-pick-cancel').onclick = () => overlay.remove();
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    loadAmap().then(AMap => {
+      const map = new AMap.Map('geo-pick-map', { viewMode: '2D', center, zoom, mapStyle });
+      const pts = [];
+      const markers = [];
+      let rect = null;
+      hint.textContent = '点击地图上的第一个角点（例如左上角）';
+
+      map.on('click', e => {
+        if (pts.length >= 2) return;
+        pts.push([e.lnglat.getLng(), e.lnglat.getLat()]);
+        markers.push(new AMap.Marker({ position: e.lnglat, map }));
+        if (pts.length === 1) {
+          hint.textContent = '已选第一个角点，请点击第二个角点（例如右下角）';
+        } else {
+          hint.textContent = '已选两个角点，点「确定」使用此范围';
+          const lngs = [pts[0][0], pts[1][0]], lats = [pts[0][1], pts[1][1]];
+          const nw = [Math.min(...lngs), Math.max(...lats)];
+          const se = [Math.max(...lngs), Math.min(...lats)];
+          rect = new AMap.Polygon({ path: [nw, [se[0], nw[1]], se, [nw[0], se[1]]], strokeColor: '#ffd400', strokeWeight: 2, fillColor: '#ffd400', fillOpacity: 0.15, map });
+          okBtn.disabled = false;
+        }
+      });
+
+      overlay.querySelector('#geo-pick-reset').onclick = () => {
+        markers.forEach(m => m.setMap(null)); markers.length = 0;
+        pts.length = 0;
+        if (rect) { rect.setMap(null); rect = null; }
+        okBtn.disabled = true;
+        hint.textContent = '点击地图上的第一个角点（例如左上角）';
+      };
+      overlay.querySelector('#geo-pick-ok').onclick = () => {
+        if (pts.length < 2) return;
+        const lngs = [pts[0][0], pts[1][0]], lats = [pts[0][1], pts[1][1]];
+        onPick({ nw: [Math.min(...lngs), Math.max(...lats)], se: [Math.max(...lngs), Math.min(...lats)] });
+        overlay.remove();
+      };
+    }).catch(err => {
+      hint.textContent = '❌ ' + err.message;
+    });
+  }
+
   function showGeoBoundsModal() {
     const gb = ensureGeoBounds();
+    const imgW = state.imageWidth || 1200;
+    const imgH = state.imageHeight || 800;
+    const imgAr = imgW / imgH;
+    const midLng = (gb.nw[0] + gb.se[0]) / 2;
+    const midLat = (gb.nw[1] + gb.se[1]) / 2;
+
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal-box"><h2>🌐 地理范围</h2>
-      <p style="color:#8888aa;font-size:0.8rem;margin-bottom:12px;">设定本方案对应真实地图的经纬度范围，保存后 3D 主地图按此范围展示线/框/文字。</p>
+      <p style="color:#8888aa;font-size:0.8rem;margin-bottom:12px;">设定本方案对应真实地图的经纬度范围，保存后 3D 主地图按此范围展示线/框/文字。图片会被拉伸对齐到这两个角点。</p>
       <div class="geo-grid">
         <label>西北角 经度<input type="number" id="geo-nw-lng" step="0.00001" value="${gb.nw[0]}"></label>
         <label>西北角 纬度<input type="number" id="geo-nw-lat" step="0.00001" value="${gb.nw[1]}"></label>
         <label>东南角 经度<input type="number" id="geo-se-lng" step="0.00001" value="${gb.se[0]}"></label>
         <label>东南角 纬度<input type="number" id="geo-se-lat" step="0.00001" value="${gb.se[1]}"></label>
+      </div>
+      <button class="toolbar-btn" id="geo-pick" style="margin-top:12px;width:100%;justify-content:center;">🖱️ 在地图上点选范围（自动获取经纬度）</button>
+      <div id="geo-distort" style="margin-top:10px;font-size:0.78rem;color:#8888aa;line-height:1.5;"></div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-panel);">
+        <div style="font-size:0.78rem;color:#8888aa;margin-bottom:8px;">⚡ 按图片比例自动计算（图片 ${imgW}×${imgH}，比例 ${imgAr.toFixed(2)}:1）</div>
+        <div class="geo-grid">
+          <label>中心 经度<input type="number" id="geo-c-lng" step="0.00001" value="${midLng.toFixed(5)}"></label>
+          <label>中心 纬度<input type="number" id="geo-c-lat" step="0.00001" value="${midLat.toFixed(5)}"></label>
+          <label>实地宽度(米)<input type="number" id="geo-width" step="1" min="1" value="200"></label>
+        </div>
+        <button class="toolbar-btn" id="geo-auto-calc" style="margin-top:8px;">计算并填入</button>
       </div>
       <div class="actions">
         <button class="toolbar-btn" id="geo-default">恢复默认</button>
@@ -734,9 +846,56 @@
     document.body.appendChild(overlay);
     const nwLng = overlay.querySelector('#geo-nw-lng'), nwLat = overlay.querySelector('#geo-nw-lat');
     const seLng = overlay.querySelector('#geo-se-lng'), seLat = overlay.querySelector('#geo-se-lat');
+    const distortEl = overlay.querySelector('#geo-distort');
+
+    function readBounds() {
+      return {
+        nw: [Number(nwLng.value), Number(nwLat.value)],
+        se: [Number(seLng.value), Number(seLat.value)],
+      };
+    }
+    function updateDistortHint() {
+      const { nw, se } = readBounds();
+      if (nw.some(isNaN) || se.some(isNaN) || se[0] <= nw[0] || nw[1] <= se[1]) {
+        distortEl.innerHTML = '⚠️ 经纬度范围无效';
+        return;
+      }
+      const dLng = se[0] - nw[0], dLat = nw[1] - se[1];
+      const mid = (nw[1] + se[1]) / 2;
+      const groundAr = (dLng * Math.cos(mid * Math.PI / 180)) / dLat;
+      const ratio = groundAr / imgAr;
+      const pct = Math.abs(1 - ratio) * 100;
+      if (pct < 1) distortEl.innerHTML = '✅ 经纬度跨度比与图片宽高比一致，无变形';
+      else distortEl.innerHTML = `⚠️ 会拉伸变形约 <b>${pct.toFixed(0)}%</b>（地面宽高比 ${groundAr.toFixed(2)} vs 图片 ${imgAr.toFixed(2)}），建议点「计算并填入」`;
+    }
+
+    ['geo-nw-lng', 'geo-nw-lat', 'geo-se-lng', 'geo-se-lat'].forEach(id => {
+      overlay.querySelector('#' + id).addEventListener('input', updateDistortHint);
+    });
+
+    overlay.querySelector('#geo-pick').onclick = () => {
+      showGeoPicker(({ nw, se }) => {
+        nwLng.value = nw[0]; nwLat.value = nw[1]; seLng.value = se[0]; seLat.value = se[1];
+        updateDistortHint();
+      });
+    };
     overlay.querySelector('#geo-default').onclick = () => {
       const d = defaultGeoBounds();
       nwLng.value = d.nw[0]; nwLat.value = d.nw[1]; seLng.value = d.se[0]; seLat.value = d.se[1];
+      updateDistortHint();
+    };
+    overlay.querySelector('#geo-auto-calc').onclick = () => {
+      const clng = Number(overlay.querySelector('#geo-c-lng').value);
+      const clat = Number(overlay.querySelector('#geo-c-lat').value);
+      const widthM = Number(overlay.querySelector('#geo-width').value);
+      if ([clng, clat, widthM].some(isNaN) || widthM <= 0) { alert('请输入有效的中心和宽度'); return; }
+      const mPerDegLat = 111320;
+      const mPerDegLng = 111320 * Math.cos(clat * Math.PI / 180);
+      const dLat = (widthM / imgAr) / mPerDegLat;
+      const dLng = widthM / mPerDegLng;
+      nwLng.value = clng - dLng / 2; nwLat.value = clat + dLat / 2;
+      seLng.value = clng + dLng / 2; seLat.value = clat - dLat / 2;
+      updateDistortHint();
     };
     overlay.querySelector('#geo-cancel').onclick = () => overlay.remove();
     overlay.querySelector('#geo-save').onclick = () => {
@@ -748,6 +907,7 @@
       showToast('✅ 地理范围已设置');
     };
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    updateDistortHint();
   }
 
   // ===================== Save/Load =====================
@@ -805,7 +965,8 @@
   async function loadFromServer() {
     const res = await fetch('/api/editor/projects');
     const json = await res.json();
-    showProjectList(json.data || []);
+    // 过滤掉「地图绘制」方案（kind==='map'），避免与 2D 路线编辑器项目混在一起
+    showProjectList((json.data || []).filter(p => !(p.data && p.data.kind === 'map')));
   }
 
   function showProjectList(projects) {
@@ -1494,8 +1655,11 @@
 
   // 从配置读取地图中心，作为默认地理范围中心
   fetch('/config.json').then(r => r.ok ? r.json() : null).then(cfg => {
-    if (cfg && cfg.geo && Array.isArray(cfg.geo.center) && cfg.geo.center.length >= 2) {
-      defaultCenter = cfg.geo.center;
+    if (cfg && cfg.geo) {
+      geoConfig = cfg.geo;
+      if (Array.isArray(cfg.geo.center) && cfg.geo.center.length >= 2) {
+        defaultCenter = cfg.geo.center;
+      }
     }
   }).catch(() => {});
 

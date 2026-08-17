@@ -49,6 +49,14 @@ app.use((req, res, next) => {
     }
     next();
 });
+// 前端静态文件禁用缓存，避免编辑后浏览器仍用旧文件（表现为 SyntaxError: Unexpected end of input）
+app.use((req, res, next) => {
+    if (req.path.endsWith('.html') || req.path.endsWith('.js') || req.path.endsWith('.css') || req.path === '/') {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+    }
+    next();
+});
 app.use(express.static(__dirname));
 
 // ---------- 无状态 token 管理（HMAC 签名，服务器重启不丢失）----------
@@ -118,6 +126,15 @@ app.post('/api/logout', authMiddleware, (req, res) => {
 // 验证 token
 app.get('/api/check', authMiddleware, (req, res) => {
     res.json({ valid: true });
+});
+
+// 高德地图 JS API Key + 安全密钥（从 .env 注入，不进仓库、不进 config.json）
+// 高德官方建议：key 由服务端管理，前端加载 SDK 前通过此接口获取
+app.get('/api/amap', (_req, res) => {
+    res.json({
+        key: process.env.AMAP_KEY || '',
+        securityJsCode: process.env.AMAP_SECURITY_CODE || '',
+    });
 });
 
 // ==================== 配置读写（数据库驱动） ====================

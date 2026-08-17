@@ -42,6 +42,9 @@
             transition: opacity 0.6s ease, visibility 0.6s ease;
         }
         #loading-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        .loader-logo { width: 68px; height: 68px; margin: 0 auto 22px; display: flex; align-items: center; justify-content: center; }
+        .loader-logo:empty { display: none; }
+        .loader-logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; border-radius: 14px; padding: 8px; box-sizing: border-box; }
         .loader-brand { font-size: 2rem; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 8px; }
         .loader-brand span { color: var(--accent-main); }
         .loader-sub { font-size: 0.875rem; color: rgba(255,255,255,0.58); margin-bottom: 40px; letter-spacing: 0.06em; }
@@ -69,7 +72,9 @@
             display: flex; flex-direction: column;
         }
         .sb-brand { padding: 18px 20px 14px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-        .sb-logo { font-size: 2rem; margin-bottom: 4px; }
+        .sb-logo { display: flex; align-items: center; gap: 8px; font-size: 1.7rem; margin-bottom: 6px; color: #f0f6fc; }
+        .sb-logo img { flex: none; width: 40px; height: 40px; object-fit: contain; background: #fff; border-radius: 9px; padding: 4px; box-sizing: border-box; box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
+        .sb-logo span { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.02em; }
         .sb-title { font-size: 1.1rem; font-weight: 700; color: #f0f6fc; letter-spacing: 0.02em; }
         .sb-sub { font-size: 0.65rem; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
         .sb-section { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); }
@@ -114,13 +119,6 @@
         .sb-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
         .sb-btn.primary { background: var(--accent-main); border-color: var(--accent-main); color: #fff; font-weight: 600; }
         .sb-status { font-size: 0.7rem; color: rgba(255,255,255,0.35); text-align: center; }
-.parking-list { display: flex; flex-direction: column; gap: 8px; }
-.parking-row { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); }
-.parking-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.parking-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.parking-count { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.5); }
-.parking-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 4px; overflow: hidden; }
-.parking-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
 .plan-list { display: flex; flex-direction: column; gap: 6px; }
 .plan-item { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 0; }
 .plan-item input { accent-color: var(--accent-main); cursor: pointer; flex-shrink: 0; }
@@ -255,6 +253,7 @@
 
 <!-- Loading -->
 <div id="loading-screen">
+    <div class="loader-logo" id="loader-logo"></div>
     <div class="loader-brand" id="loader-brand"></div>
     <div class="loader-sub" id="loader-sub">3D SMART NAVIGATION</div>
     <div class="loader-track"><div class="loader-bar" id="loader-bar"></div></div>
@@ -264,7 +263,7 @@
 <!-- Setup hint (shown when no Amap key) -->
 <div id="setup-hint">
     <h2>🔑 请配置高德地图 API Key</h2>
-    <p>本系统使用高德地图提供真实地理信息（周边道路、建筑、停车场）。</p>
+    <p>本系统使用高德地图提供真实地理信息（周边道路、建筑）。</p>
     <p>1. 前往 <a href="https://console.amap.com/" target="_blank">高德开放平台</a> 注册并创建应用</p>
     <p>2. 获取 <code>Web端(JS API)</code> 的 Key</p>
     <p>3. 填入 <code>config.json</code> 的 <code>geo.amapKey</code> 字段</p>
@@ -300,19 +299,12 @@
         </div>
     </div>
 
-    <!-- Parking -->
-    <div class="sb-section">
-        <div class="sb-label">🅿️ 停车场</div>
-        <div class="parking-list" id="parking-list"></div>
-    </div>
-
     <!-- Plans (导览方案) -->
     <div class="sb-section">
         <div class="sb-label">🗂️ 导览方案</div>
         <div class="plan-list" id="plan-list"></div>
         <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="sb-btn" id="btn-clear-plan" style="font-size:0.72rem;padding:6px 8px;flex:1;">清除全部</button>
-            <button class="sb-btn" id="btn-edit-plan" style="font-size:0.72rem;padding:6px 8px;flex:1;">✏️ 编辑</button>
         </div>
     </div>
 
@@ -329,8 +321,6 @@
 
     <!-- Links -->
     <div class="sb-section sb-actions">
-        <a href="/admin-map.html" class="sb-btn primary" style="text-decoration:none;display:block;">🗺️ 地图绘制</a>
-        <a href="/editor.html" class="sb-btn" style="text-decoration:none;display:block;">✏️ 路线图编辑器</a>
         <a href="/admin.html" class="sb-btn" style="text-decoration:none;display:block;margin-top:4px;">⚙️ 系统配置</a>
     </div>
 </div>
@@ -392,6 +382,8 @@ let CONFIG = null;
 
 const DEFAULT_CONFIG = {
     geo: { amapKey: '', amapSecurityCode: '', center: [116.3894, 39.9976], zoom: 17, pitch: 55, rotation: 20, mapStyle: 'amap://styles/dark' },
+    brand: { name: '', subtitle: '', logo: '', logoText: '' },
+    areas: [],
     groundSize: 200, fogColor: '#0a0e17', fogNear: 60, fogFar: 220,
     building: {
         main: { w: 10, d: 10, h: 10, color: '#1e2d5a', pos: [0, 0, 0] },
@@ -412,7 +404,7 @@ const DEFAULT_CONFIG = {
 
 async function loadConfig() {
     try {
-        const resp = await fetch('/config.json');
+        const resp = await fetch('/config.json?t=' + Date.now());
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         CONFIG = await resp.json();
         if (CONFIG.camera.maxPolarFactor) {
@@ -421,13 +413,45 @@ async function loadConfig() {
         console.log('✅ 配置已加载');
         // 应用品牌配置
         if (CONFIG.brand) {
-            document.title = CONFIG.brand.name + ' · ' + (CONFIG.brand.subtitle || '');
+            document.title = (CONFIG.brand.name || '3D 智慧导览') + ' · ' + (CONFIG.brand.subtitle || '');
             document.getElementById('loader-sub').textContent = CONFIG.brand.subtitle || '';
+            const logoImgVal = CONFIG.brand.logo || '';
+            const logoTextVal = CONFIG.brand.logoText || '';
+            const isImgLogo = /^(data:image|https?:\/\/)/i.test(logoImgVal);
             const lb = document.getElementById('loader-brand');
-            if (lb) lb.textContent = (CONFIG.brand.logo ? CONFIG.brand.logo + ' ' : '') + (CONFIG.brand.name || '');
-            document.getElementById('sb-logo').textContent = CONFIG.brand.logo || '🏟️';
+            if (lb) lb.textContent = (logoTextVal ? logoTextVal + ' ' : '') + (CONFIG.brand.name || '');
+            const logoEl = document.getElementById('sb-logo');
+            logoEl.textContent = '';
+            if (isImgLogo) {
+                const img = document.createElement('img');
+                img.src = logoImgVal;
+                img.alt = 'logo';
+                img.onload = () => applyLogoBg(img);
+                if (img.complete) applyLogoBg(img);
+                logoEl.appendChild(img);
+            }
+            if (logoTextVal) {
+                const span = document.createElement('span');
+                span.textContent = logoTextVal;
+                logoEl.appendChild(span);
+            }
+            if (!isImgLogo && !logoTextVal) {
+                logoEl.textContent = '🏟️';
+            }
             document.getElementById('sb-title').textContent = CONFIG.brand.name || '';
             document.getElementById('sb-sub').textContent = CONFIG.brand.subtitle || '';
+            const loaderLogoEl = document.getElementById('loader-logo');
+            if (loaderLogoEl) {
+                loaderLogoEl.textContent = '';
+                if (isImgLogo) {
+                    const limg = document.createElement('img');
+                    limg.src = logoImgVal;
+                    limg.alt = 'logo';
+                    limg.onload = () => applyLogoBg(limg);
+                    if (limg.complete) applyLogoBg(limg);
+                    loaderLogoEl.appendChild(limg);
+                }
+            }
         }
     } catch (err) {
         console.warn('⚠️ 使用默认配置:', err.message);
@@ -443,6 +467,33 @@ async function loadConfig() {
     }
 }
 
+// 根据 logo 图片明暗自动选底色：浅色 logo → 深底，深色 logo → 白底
+function applyLogoBg(img) {
+    try {
+        const w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) return;
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, w, h).data;
+        let sum = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] > 10) {
+                sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+                n++;
+            }
+        }
+        if (!n) return;
+        if (sum / n > 165) {
+            img.style.background = '#0b1220';
+            img.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,0.12)';
+        } else {
+            img.style.background = '#ffffff';
+        }
+    } catch (e) { /* 保持默认白底 */ }
+}
+
 // ========================================================
 // SECTION B: UTILITIES
 // ========================================================
@@ -454,6 +505,12 @@ const METERS_PER_DEG_LAT = 111320;
 function localToLngLat(localX, localZ, center) {
     const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((center[1] * Math.PI) / 180);
     return [center[0] + localX / metersPerDegLng, center[1] + localZ / METERS_PER_DEG_LAT];
+}
+
+/** 经纬度 → 本地坐标 (meters from center)，localToLngLat 的逆运算 */
+function lngLatToLocal(lng, lat, center) {
+    const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((center[1] * Math.PI) / 180);
+    return [(lng - center[0]) * metersPerDegLng, (lat - center[1]) * METERS_PER_DEG_LAT];
 }
 
 /** 将 config 中的本地坐标转为经纬度 */
@@ -618,16 +675,20 @@ function buildVenue(scene, localToAmap) {
     const S = localToAmap(0, 1, 0).y - localToAmap(0, 0, 0).y; // scale: 1 meter in Amap units
     const clickables = [];
 
-    const { w, d, h, color, pos } = CONFIG.building.main;
-    const amap = localToAmap(pos[0], pos[2], 0);
-    const col = new THREE.Color(color);
+    const main = CONFIG.building.main;
+    let amap = null, col = null, w = 0, d = 0, h = 0;
+    if (main) {
+        w = main.w; d = main.d; h = main.h;
+        amap = localToAmap(main.pos[0], main.pos[2], 0);
+        col = new THREE.Color(main.color);
 
-    // 主建筑（实心）
-    const mainMat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, metalness: 0.2 });
-    const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
-    mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
-    mainMesh.castShadow = true; mainMesh.receiveShadow = true;
-    scene.add(mainMesh);
+        // 主建筑（实心）
+        const mainMat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, metalness: 0.2 });
+        const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
+        mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
+        mainMesh.castShadow = true; mainMesh.receiveShadow = true;
+        scene.add(mainMesh);
+    }
 
     // Sub buildings
     for (const sb of CONFIG.building.subs) {
@@ -639,15 +700,17 @@ function buildVenue(scene, localToAmap) {
         scene.add(mesh);
     }
 
-    // Venue ground highlight
-    const rw = CONFIG.building.roadWidth || 8;
-    const glowGeo = new THREE.PlaneGeometry((w + rw * 2 + 10) * S, (d + rw * 2 + 10) * S);
-    const glowMat = new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
-    });
-    const glowPlane = new THREE.Mesh(glowGeo, glowMat);
-    glowPlane.position.set(amap.x, amap.y, 0.02);
-    scene.add(glowPlane);
+    // Venue ground highlight（主建筑存在且未删除道路时才渲染）
+    if (main && CONFIG.building.roadVisible !== false) {
+        const rw = CONFIG.building.roadWidth || 8;
+        const glowGeo = new THREE.PlaneGeometry((w + rw * 2 + 10) * S, (d + rw * 2 + 10) * S);
+        const glowMat = new THREE.MeshBasicMaterial({
+            color: col, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
+        });
+        const glowPlane = new THREE.Mesh(glowGeo, glowMat);
+        glowPlane.position.set(amap.x, amap.y, 0.02);
+        scene.add(glowPlane);
+    }
 
     return { clickables };
 }
@@ -701,9 +764,10 @@ function createMarkers(scene, localToAmap) {
 function createRoutes(scene, localToAmap) {
     const routeObjs = [];
     for (const [key, r] of Object.entries(CONFIG.routes)) {
-        // Config pts: [x_east_m, y_base_m, z_north_m] → Amap coords
+        // Config pts 由「地图编辑器」存储为 [lng, lat]；先转本地米，再转 Amap 3D 坐标
         const pts = r.pts.map(p => {
-            const a = localToAmap(p[0], p[2], p[1]);
+            const [lx, lz] = lngLatToLocal(p[0], p[1], CONFIG.geo.center);
+            const a = localToAmap(lx, lz, 0);
             return new THREE.Vector3(a.x, a.y, a.z);
         });
         const curve = new THREE.CatmullRomCurve3(pts, false);
@@ -721,85 +785,6 @@ function createRoutes(scene, localToAmap) {
         routeObjs.push({ curve, sphere, speed: r.speed, t: Math.random() });
     }
     return routeObjs;
-}
-
-/** Create parking lot indicators */
-function createParkingLots(scene, localToAmap) {
-    const parkingData = [];
-    if (!CONFIG.parking) return parkingData;
-
-    for (const p of CONFIG.parking) {
-        const amap = localToAmap(p.offset[0], p.offset[2], 0); // (east,north) → Amap
-        const ratio = p.available / p.capacity;
-        const statusColor = ratio > 0.5 ? '#3fb950' : ratio > 0.2 ? '#ffb347' : '#f85149';
-        const col = new THREE.Color(statusColor);
-
-        // Parking area (flat on XY, Z is up)
-        const plane = new THREE.Mesh(
-            new THREE.PlaneGeometry(14, 10),
-            new THREE.MeshStandardMaterial({
-                color: col, emissive: col, emissiveIntensity: 0.3,
-                transparent: true, opacity: 0.3, side: THREE.DoubleSide,
-            }));
-        plane.position.set(amap.x, amap.y, amap.z + 0.08);
-        plane.userData = { parkingIndex: CONFIG.parking.indexOf(p) };
-        scene.add(plane);
-
-        // Border
-        const edgeGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(14, 10));
-        const border = new THREE.LineSegments(edgeGeo,
-            new THREE.LineBasicMaterial({ color: statusColor, transparent: true, opacity: 0.6 }));
-        border.position.set(amap.x, amap.y, amap.z + 0.1);
-        scene.add(border);
-
-        // Occupancy pillar
-        const pillarH = Math.max(0.8, ratio * 6);
-        const pillar = new THREE.Mesh(
-            new THREE.BoxGeometry(1.2, 1.2, pillarH),
-            new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.5, transparent: true, opacity: 0.7 }));
-        pillar.position.set(amap.x, amap.y, amap.z + pillarH / 2 + 0.1);
-        scene.add(pillar);
-
-        // Label
-        const div = document.createElement('div');
-        div.innerHTML = `<b>${p.name}</b><br><span style="font-size:11px">${p.available}/${p.capacity}</span>`;
-        div.style.cssText = `
-            color:#fff; font-size:11px; text-align:center;
-            background: rgba(10,14,23,0.8); padding: 4px 10px;
-            border-radius: 10px; border: 1px solid ${statusColor};
-            white-space: nowrap; line-height:1.3;
-        `;
-        const label = new CSS2DObject(div);
-        label.position.set(amap.x, amap.y, amap.z + pillarH + 1.5);
-        scene.add(label);
-
-        parkingData.push({ ...p, statusColor });
-    }
-    return parkingData;
-}
-
-/** Create ambient particles */
-function createParticles(scene, localPerMeter) {
-    const pCount = CONFIG.particles.count;
-    const pGeo = new THREE.BufferGeometry();
-    const positions = new Float32Array(pCount * 3);
-    // Scale spread/height by the coordinate scale factor
-    const spread = CONFIG.particles.spread * localPerMeter;
-    const pHeight = CONFIG.particles.height * localPerMeter;
-    for (let i = 0; i < pCount; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * spread * 2;     // X: east
-        positions[i * 3 + 1] = (Math.random() - 0.5) * spread * 2; // Y: north
-        positions[i * 3 + 2] = Math.random() * pHeight;            // Z: up
-    }
-    pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const pMat = new THREE.PointsMaterial({
-        color: 0x8899cc, size: 0.12, transparent: true, opacity: 0.55,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    const particles = new THREE.Points(pGeo, pMat);
-    particles.name = 'particles';
-    scene.add(particles);
-    return particles;
 }
 
 // ========================================================
@@ -858,24 +843,6 @@ class UIController {
         document.getElementById('info-btn-close').addEventListener('click', () => this.hideInfo());
     }
 
-    /** Update parking panel */
-    updateParkingPanel() {
-        const list = document.getElementById('parking-list');
-        if (!list) return;
-        if (!CONFIG.parking || !CONFIG.parking.length) { list.innerHTML = ''; return; }
-        list.innerHTML = CONFIG.parking.map(p => {
-            const ratio = p.available / p.capacity;
-            const barColor = ratio > 0.5 ? '#3fb950' : ratio > 0.2 ? '#ffb347' : '#f85149';
-            return `<div style="margin-bottom:6px">
-                <div class="parking-row">
-                    <span class="parking-dot" style="background:${barColor}"></span>
-                    <span class="parking-name">${p.name}</span>
-                    <span class="parking-count">${p.available}/${p.capacity}</span>
-                </div>
-                <div class="parking-bar"><div class="parking-bar-fill" style="width:${ratio*100}%;background:${barColor}"></div></div>
-            </div>`;
-        }).join('');
-    }
 }
 
 // ========================================================
@@ -893,7 +860,17 @@ function loadScript(url) {
 
 async function initAmap() {
     const geo = CONFIG.geo;
-    if (!geo || !geo.amapKey || geo.amapKey === 'YOUR_AMAP_KEY_HERE') {
+    // 优先用服务端 .env 注入的高德 Key/安全密钥（高德官方建议：key 不进仓库）
+    let amapKey = geo && geo.amapKey;
+    let amapSecurityCode = geo && geo.amapSecurityCode;
+    try {
+        const r = await fetch('/api/amap');
+        const d = await r.json();
+        if (d && d.key) amapKey = d.key;
+        if (d && d.securityJsCode) amapSecurityCode = d.securityJsCode;
+    } catch (_) { /* 回退到 config.json 中的值 */ }
+
+    if (!amapKey || amapKey === 'YOUR_AMAP_KEY_HERE') {
         // Show setup hint, fallback to classic
         document.getElementById('setup-hint').classList.add('show');
         document.getElementById('loading-screen').classList.add('hidden');
@@ -904,12 +881,12 @@ async function initAmap() {
     }
 
     // Set security code BEFORE loading Amap (required for keys created after 2021-12)
-    if (geo.amapSecurityCode) {
-        window._AMapSecurityConfig = { securityJsCode: geo.amapSecurityCode };
+    if (amapSecurityCode) {
+        window._AMapSecurityConfig = { securityJsCode: amapSecurityCode };
     }
 
     // Load Amap JS API
-    const amapUrl = `https://webapi.amap.com/maps?v=2.0&key=${geo.amapKey}`;
+    const amapUrl = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`;
     await loadScript(amapUrl);
 
     // Also load AMap helper plugins if needed
@@ -953,8 +930,8 @@ function displayRoutesAndAreas(map) {
     if (CONFIG.routes) {
         Object.entries(CONFIG.routes).forEach(([name, r]) => {
             if (!r.pts || r.pts.length < 2) return;
-            // 路线点存储为本地米 [x_east, y_height, z_north]，需换算为经纬度
-            const path = r.pts.map(p => new AMap.LngLat(...localToLngLat(p[0], p[2], center)));
+            // 路线点由「地图编辑器」存储为 [lng, lat]，直接用经纬度
+            const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
             map.add(new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 }));
             routeCount++;
         });
@@ -1004,6 +981,9 @@ function disposeOverlay(o, map) {
 function refreshLayerCounts() {
     let routeCount = 0, areaCount = 0;
     Object.values(planOverlayGroups).forEach(g => { routeCount += g.route; areaCount += g.area; });
+    // 加上「地图绘制」保存到 CONFIG.routes / CONFIG.areas 的数量（避免被方案叠加数量覆盖）
+    if (CONFIG && CONFIG.routes) routeCount += Object.keys(CONFIG.routes).length;
+    if (CONFIG && CONFIG.areas) areaCount += Array.isArray(CONFIG.areas) ? CONFIG.areas.length : Object.keys(CONFIG.areas).length;
     const rc = document.getElementById('layer-route-count');
     const ac = document.getElementById('layer-area-count');
     if (rc) rc.textContent = routeCount;
@@ -1025,6 +1005,30 @@ function applyPlan(map, plan) {
     planOverlayGroups[plan.id] = group;
 
     const data = plan.data || {};
+
+    // 「地图绘制」方案：routes/areas 直接存经纬度 [lng, lat]，无需底图对齐
+    if (data.kind === 'map') {
+        let added = 0;
+        if (data.routes) {
+            Object.entries(data.routes).forEach(([, r]) => {
+                if (!r.pts || r.pts.length < 2) return;
+                const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
+                const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: r.strokeWidth || 3, strokeOpacity: r.opacity ?? 0.9, zIndex: 10 });
+                map.add(o); overlays.push(o); group.route++; added++;
+            });
+        }
+        if (data.areas) {
+            Object.entries(data.areas).forEach(([, a]) => {
+                if (!a.pts || a.pts.length < 3) return;
+                const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
+                const o = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity ?? 0.2, zIndex: 5 });
+                map.add(o); overlays.push(o); group.area++; added++;
+            });
+        }
+        refreshLayerCounts();
+        return overlays.length;
+    }
+
     const els = Array.isArray(data.elements) ? data.elements : [];
     const bounds = data.geoBounds || defaultPlanBounds();
     const areaW = data.imageWidth || PLAN_DEFAULT_W;
@@ -1090,7 +1094,7 @@ function renderPlanList() {
     if (!box) return;
     box.innerHTML = '';
     if (planProjects.length === 0) {
-        box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案，点「✏️ 编辑」创建</div>';
+        box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案</div>';
         return;
     }
     const active = new Set(getActivePlanIds().map(String));
@@ -1158,13 +1162,11 @@ async function initPlanSelector(map) {
     renderPlanList();
 
     const btnClear = document.getElementById('btn-clear-plan');
-    const btnEdit = document.getElementById('btn-edit-plan');
     if (btnClear) btnClear.addEventListener('click', () => {
         getActivePlanIds().forEach(id => removePlanOverlay(map, Number(id)));
         saveActivePlanIds([]);
         renderPlanList();
     });
-    if (btnEdit) btnEdit.addEventListener('click', () => window.open('/editor.html', '_blank'));
 
     // 恢复上次勾选的方案（跨页面刷新记忆）
     getActivePlanIds().forEach(id => {
@@ -1174,6 +1176,18 @@ async function initPlanSelector(map) {
             console.log(`✅ 已恢复方案「${plan.name}」`);
         });
     });
+
+    // 无勾选方案时，自动激活最新保存的方案（保存后首页立即可见）
+    if (getActivePlanIds().length === 0 && planProjects.length > 0) {
+        const first = planProjects[0];
+        saveActivePlanIds([String(first.id)]);
+        renderPlanList();
+        fetchPlanData(first.id).then(plan => {
+            if (!plan) return;
+            applyPlan(map, plan);
+            console.log(`✅ 已自动激活最新方案「${plan.name}」`);
+        });
+    }
 }
 
 
@@ -1195,7 +1209,7 @@ async function boot() {
 
     // waitForInit returns a promise that resolves after GLCustomLayer.init runs
     ui.setProgress('等待图层就绪...', 50);
-    const { localToAmap, localPerMeter } = await waitForInit();
+    const { localToAmap } = await waitForInit();
 
     ui.setProgress('构建场馆模型...', 60);
     buildVenue(scene, localToAmap);
@@ -1206,22 +1220,13 @@ async function boot() {
     ui.setProgress('生成路线导航...', 80);
     const routeObjs = createRoutes(scene, localToAmap);
 
-    ui.setProgress('配置停车场...', 85);
-    const parkingData = createParkingLots(scene, localToAmap);
-
-    ui.setProgress('生成环境粒子...', 90);
-    const particleSystem = createParticles(scene, localPerMeter);
-    const pHeightScaled = (CONFIG.particles.height || 35) * localPerMeter;
-    const pSpreadScaled = (CONFIG.particles.spread || 90) * localPerMeter;
-    ui.updateParkingPanel();
-
     // Init drawing manager
     displayRoutesAndAreas(map);
 
     // 加载「导览方案」下拉并支持叠加渲染
     initPlanSelector(map);
 
-    // 搜索：优先匹配本地场馆标记/停车场，其次高德 POI
+    // 搜索：优先匹配本地场馆标记，其次高德 POI
     AMap.plugin('AMap.AutoComplete', () => {
         const auto = new AMap.AutoComplete({ city: '成都', citylimit: true });
         const searchInput = document.getElementById('search-input');
@@ -1241,16 +1246,6 @@ async function boot() {
                     searchResults.appendChild(div);
                 }
             }
-            // 2) 停车场
-            (CONFIG.parking || []).forEach((p, pi) => {
-                if ((p.name || '').toLowerCase().includes(q)) {
-                    const div = document.createElement('div');
-                    div.className = 'search-item';
-                    div.dataset.venueKey = '__parking__' + pi;
-                    div.textContent = '🅿️ ' + p.name;
-                    searchResults.appendChild(div);
-                }
-            });
             searchResults.style.display = searchResults.children.length ? 'block' : 'none';
             // 3) 高德 POI
             auto.search(val, (status, result) => {
@@ -1274,11 +1269,7 @@ async function boot() {
                 const vk = item.dataset.venueKey;
                 searchResults.style.display = 'none';
                 searchInput.value = item.textContent.replace(/^[^\s]+\s/, '');
-                if (vk.startsWith('__parking__')) {
-                    const pi = parseInt(vk.slice('__parking__'.length), 10);
-                    const p = CONFIG.parking && CONFIG.parking[pi];
-                    if (p) map.setZoomAndCenter(18, localToLngLat(p.offset[0], p.offset[2], CONFIG.geo.center));
-                } else {
+                {
                     const md = markerData.find(m => m.key === vk);
                     if (md) { map.setZoomAndCenter(18, md.lngLat); ui.showInfo(vk); }
                 }
@@ -1540,20 +1531,6 @@ async function boot() {
                 child.material.emissiveIntensity = base + 0.3 * Math.sin(elapsed * 2.5 + (child.userData.phase || 0));
             }
         });
-
-        // Animate particles (use scaled values)
-        if (particleSystem) {
-            const posArr = particleSystem.geometry.attributes.position.array;
-            for (let i = 0; i < posArr.length; i += 3) {
-                posArr[i + 2] += dt * 0.5 * localPerMeter; // rise in Z
-                if (posArr[i + 2] > pHeightScaled) {
-                    posArr[i + 2] = 0;
-                    posArr[i] = (Math.random() - 0.5) * pSpreadScaled * 2;
-                    posArr[i + 1] = (Math.random() - 0.5) * pSpreadScaled * 2;
-                }
-            }
-            particleSystem.geometry.attributes.position.needsUpdate = true;
-        }
 
         // Trigger Amap re-render → GLCustomLayer.render() → Three.js renders
         map.render();
