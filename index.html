@@ -836,7 +836,7 @@ function drawFlowLayer(map) {
         flowCtx.lineCap = 'round';
         flowCtx.lineJoin = 'round';
         flowCtx.setLineDash([FLOW_DASH, FLOW_GAP]);
-        flowCtx.lineDashOffset = -r.offset;   // 负值递增 → 虚线向前滚
+        flowCtx.lineDashOffset = r.offset;    // 正值递增 → 虚线沿路径反向滚（方向可调，改符号即反转）
         flowCtx.stroke();
     }
 }
