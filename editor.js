@@ -30,6 +30,7 @@
     projectId: null,
     projectName: '未命名项目',
     geoBounds: null,
+    geoBoundsExplicit: false,
     backgroundImage: null,
     imageWidth: 0,
     imageHeight: 0,
@@ -57,6 +58,7 @@
   function on(evt, fn) { (listeners[evt] = listeners[evt] || []).push(fn); }
   function emit(evt, data) { (listeners[evt] || []).forEach(fn => fn(data)); }
   function setState(updates) { Object.assign(state, updates); emit('change'); }
+  let lastSavedAt = null;   // 上次成功保存到服务器的时间
 
   // ===================== DOM 引用 =====================
   const canvas = document.getElementById('editor-canvas');
@@ -741,7 +743,7 @@
       const nw = [Number(nwLng.value), Number(nwLat.value)];
       const se = [Number(seLng.value), Number(seLat.value)];
       if (nw.some(isNaN) || se.some(isNaN)) { alert('请输入有效经纬度'); return; }
-      setState({ geoBounds: { nw, se } });
+      setState({ geoBounds: { nw, se }, geoBoundsExplicit: true });
       overlay.remove();
       showToast('✅ 地理范围已设置');
     };
@@ -767,11 +769,13 @@
       elements: Array.isArray(data.elements) ? data.elements : [],
       projectName: data.projectName || '未命名项目',
       geoBounds: data.geoBounds || null,
+      geoBoundsExplicit: !!(data.geoBounds),
       selectedElementId: null, selectedElementIds: [],
       isDrawing: false, drawingPoints: [], stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
     loadBgImage(data.backgroundImage, data.imageWidth, data.imageHeight);
     resetHistory();
+    lastSavedAt = null;
     $name.value = data.projectName || '未命名项目';
     updateUI();
   }
@@ -793,7 +797,9 @@
     }
     const json = await res.json();
     if (json.id) state.projectId = json.id;
+    lastSavedAt = Date.now();
     showToast('✅ 项目已保存到服务器');
+    updateSaveStatus();
   }
 
   async function loadFromServer() {
@@ -888,6 +894,18 @@
     setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 2000);
   }
 
+  function updateSaveStatus() {
+    const el = document.getElementById('stat-save');
+    if (!el) return;
+    if (lastSavedAt) {
+      el.textContent = '💾 已保存 ' + new Date(lastSavedAt).toLocaleTimeString();
+      el.style.color = '#10b981';
+    } else {
+      el.textContent = '● 未保存';
+      el.style.color = '#ffb347';
+    }
+  }
+
   function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]); }
 
   // ===================== UI =====================
@@ -899,6 +917,7 @@
     document.getElementById('btn-undo').disabled = state.historyIndex < 0;
     document.getElementById('btn-redo').disabled = state.historyIndex >= state.history.length - 2;
     document.getElementById('stat-project').textContent = state.projectName;
+    updateSaveStatus();
     document.getElementById('stat-elements').textContent =
       `路线:${state.elements.filter(e => e.type === 'route').length} 区域:${state.elements.filter(e => e.type === 'area').length} 文字:${state.elements.filter(e => e.type === 'text').length} | 共${state.elements.length}个`;
     document.getElementById('stat-zoom').textContent = '缩放 ' + Math.round(state.stageScale * 100) + '%';
@@ -1254,6 +1273,10 @@
   async function handleSave() {
     const token = getToken();
     if (!token) { showLoginPrompt(() => handleSave()); return; }
+    if (state.backgroundImage && !state.geoBoundsExplicit) {
+      const go = confirm('⚠️ 当前方案有底图，但还未设置「地理范围」。\n未设置时，方案会默认落在当前地图中心附近，可能与实际场地不对齐。\n\n点「确定」去设置地理范围；点「取消」仍直接保存。');
+      if (go) { showGeoBoundsModal(); return; }
+    }
     try { await saveToServer(); } catch (err) { showToast('❌ 保存失败: ' + err.message); }
   }
   document.getElementById('btn-save').addEventListener('click', handleSave);
@@ -1261,12 +1284,12 @@
   document.getElementById('btn-new').addEventListener('click', () => {
     if (state.elements.length > 0 && !confirm('确定新建？未保存更改将丢失。')) return;
     setState({
-      projectId: null, projectName: '未命名项目', geoBounds: null,
+      projectId: null, projectName: '未命名项目', geoBounds: null, geoBoundsExplicit: false,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
       stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
-    bgImageObj = null; $name.value = '未命名项目'; resetHistory(); updateUI();
+    bgImageObj = null; $name.value = '未命名项目'; lastSavedAt = null; resetHistory(); updateUI();
   });
   document.getElementById('btn-geo').addEventListener('click', showGeoBoundsModal);
 

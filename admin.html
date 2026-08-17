@@ -196,6 +196,7 @@ a { color: #58a6ff; }
     <button data-panel="particles">✨ 粒子</button>
     <button data-panel="parking">🅿️ 停车场</button>
     <button data-panel="geo">🌍 地理信息</button>
+    <button data-panel="plans">📋 方案</button>
     <a href="admin-map.html" class="nav-link">🗺️ 地图绘制</a>
     <a href="editor.html" class="nav-link">✏️ 路线图编辑器</a>
 </nav>
@@ -275,6 +276,11 @@ a { color: #58a6ff; }
     <!-- ====== Parking Panel ====== -->
     <div class="panel" id="panel-parking">
         <div id="form-parking"></div>
+    </div>
+
+    <!-- ====== Plans Panel ====== -->
+    <div class="panel" id="panel-plans">
+        <div id="form-plans"></div>
     </div>
 </div>
 
@@ -497,6 +503,7 @@ function renderAll() {
     renderParticles();
     renderGeo();
     renderParking();
+    renderPlans();
 }
 
 
@@ -691,6 +698,72 @@ function renderParking() {
         </div>`;
     }).join('') +
     `<button class="btn-add-feat" style="margin-top:12px" onclick="config.parking.push({name:'新停车场',offset:[0,0,30],capacity:100,available:50,color:'#ffb347'});renderParking()">+ 添加停车场</button>`;
+}
+
+// ---------- 导览方案管理（数据来自 /api/editor/projects） ----------
+async function renderPlans() {
+    const box = document.getElementById('form-plans');
+    if (!box) return;
+    let rows = [];
+    try {
+        const resp = await fetch('/api/editor/projects');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        rows = json.data || [];
+    } catch (e) {
+        box.innerHTML = `<div class="section"><p style="color:#f85149;">加载失败: ${escHtml(e.message)}</p></div>`;
+        return;
+    }
+    if (rows.length === 0) {
+        box.innerHTML = `<div class="section"><p style="color:#8b949e;">暂无方案，去 <a href="editor.html" style="color:#58a6ff;">✏️ 路线图编辑器</a> 创建</p></div>`;
+        return;
+    }
+    box.innerHTML = rows.map(p => {
+        const name = p.name || ('方案 ' + p.id);
+        return `<div class="section">
+            <h3>🗂️ ${escHtml(name)}</h3>
+            <div class="form-grid">
+                <div class="form-group"><label>名称</label><input id="plan-name-${p.id}" type="text" value="${escHtml(name)}" /></div>
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="font-size:0.78rem;color:#8b949e;">更新: ${escHtml(p.updated_at || '—')}</span>
+                <button class="btn-add-feat" onclick="renamePlan(${p.id})">💾 保存名称</button>
+                <a class="btn-add-feat" href="editor.html?project=${p.id}" style="text-decoration:none;">✏️ 编辑</a>
+                <button class="btn-del" onclick="deletePlan(${p.id})">✕ 删除</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+async function renamePlan(id) {
+    const input = document.getElementById('plan-name-' + id);
+    if (!input) return;
+    const name = input.value.trim();
+    if (!name) { showToast('名称不能为空', 'err'); return; }
+    try {
+        const resp = await fetch('/api/editor/projects/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ name }),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) { showToast('✅ 方案已改名', 'ok'); renderPlans(); }
+        else showToast('❌ ' + (data.error || '改名失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
+async function deletePlan(id) {
+    if (!confirm('确定删除该方案？删除后不可恢复')) return;
+    try {
+        const resp = await fetch('/api/editor/projects/' + id, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (resp.status === 401) { logout(); return; }
+        if (resp.ok) { showToast('✅ 方案已删除', 'ok'); renderPlans(); }
+        else { const d = await resp.json(); showToast('❌ ' + (d.error || '删除失败'), 'err'); }
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
 }
 
 function collectAll() {

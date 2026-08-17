@@ -121,6 +121,10 @@
 .parking-count { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.5); }
 .parking-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 4px; overflow: hidden; }
 .parking-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+.plan-list { display: flex; flex-direction: column; gap: 6px; }
+.plan-item { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 0; }
+.plan-item input { accent-color: var(--accent-main); cursor: pointer; flex-shrink: 0; }
+.plan-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* ====== Top-Right & Bottom-Right ====== */
         #btn-auto-rotate {
@@ -305,10 +309,11 @@
     <!-- Plans (导览方案) -->
     <div class="sb-section">
         <div class="sb-label">🗂️ 导览方案</div>
-        <select id="plan-select" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid #2a2a4e;background:#0f0f1a;color:#e0e0f0;font-size:0.78rem;margin-bottom:6px;">
-            <option value="">— 选择方案 —</option>
-        </select>
-        <button class="sb-btn" id="btn-clear-plan" style="font-size:0.72rem;padding:4px 8px;">清除方案叠加</button>
+        <div class="plan-list" id="plan-list"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;">
+            <button class="sb-btn" id="btn-clear-plan" style="font-size:0.72rem;padding:6px 8px;flex:1;">清除全部</button>
+            <button class="sb-btn" id="btn-edit-plan" style="font-size:0.72rem;padding:6px 8px;flex:1;">✏️ 编辑</button>
+        </div>
     </div>
 
     <!-- Location & Navigation -->
@@ -968,9 +973,14 @@ function displayRoutesAndAreas(map) {
 
 // ========================================================
 // 导览方案：把「路线图编辑器」保存的方案叠加到 3D 地图
-let planOverlays = [];
+// 支持多方案同时叠加、勾选记忆（localStorage）
 const PLAN_DEFAULT_W = 1200, PLAN_DEFAULT_H = 800;
 const PLAN_HALF_LNG = 0.002, PLAN_HALF_LAT = 0.0014;
+const PLAN_MEMORY_KEY = 'active_plans';
+let planMap = null;                     // 当前地图实例
+let planProjects = [];                  // 方案列表缓存 {id,name}
+let planOverlayGroups = {};             // planId -> { overlays:[], route:0, area:0 }
+let planFetching = {};                  // planId -> Promise（防重复 fetch）
 
 function defaultPlanBounds(center) {
     const [clng, clat] = center || (CONFIG.geo ? CONFIG.geo.center : [104.14141, 30.67133]);
@@ -983,81 +993,187 @@ function planPointToLngLat(x, y, bounds, areaW, areaH) {
     return [lng, lat];
 }
 
-function clearPlanOverlays(map) {
-    planOverlays.forEach(o => { try { map.remove(o); } catch (_) {} });
-    planOverlays = [];
-    document.getElementById('layer-route-count').textContent = 0;
-    document.getElementById('layer-area-count').textContent = 0;
+// 统一销毁图层/覆盖物：Layer 用 setMap(null)，Overlay 用 map.remove
+function disposeOverlay(o, map) {
+    try {
+        if (o && typeof o.setMap === 'function') o.setMap(null);
+        else if (o) map.remove(o);
+    } catch (_) {}
+}
+
+function refreshLayerCounts() {
+    let routeCount = 0, areaCount = 0;
+    Object.values(planOverlayGroups).forEach(g => { routeCount += g.route; areaCount += g.area; });
+    const rc = document.getElementById('layer-route-count');
+    const ac = document.getElementById('layer-area-count');
+    if (rc) rc.textContent = routeCount;
+    if (ac) ac.textContent = areaCount;
+}
+
+function removePlanOverlay(map, planId) {
+    const g = planOverlayGroups[planId];
+    if (!g) return;
+    g.overlays.forEach(o => disposeOverlay(o, map));
+    delete planOverlayGroups[planId];
+    refreshLayerCounts();
 }
 
 function applyPlan(map, plan) {
-    clearPlanOverlays(map);
+    removePlanOverlay(map, plan.id);
+    const overlays = [];
+    const group = { overlays, route: 0, area: 0 };
+    planOverlayGroups[plan.id] = group;
+
     const data = plan.data || {};
     const els = Array.isArray(data.elements) ? data.elements : [];
-    if (els.length === 0) { console.warn('⚠️ 方案无元素'); return 0; }
     const bounds = data.geoBounds || defaultPlanBounds();
     const areaW = data.imageWidth || PLAN_DEFAULT_W;
     const areaH = data.imageHeight || PLAN_DEFAULT_H;
-    let count = 0, routeCount = 0, areaCount = 0;
+
+    // 底图：场地平面图，按 geoBounds 对齐到地图
+    if (data.backgroundImage) {
+        try {
+            const imgLayer = new AMap.ImageLayer({
+                url: data.backgroundImage,
+                bounds: new AMap.Bounds(
+                    new AMap.LngLat(bounds.nw[0], bounds.nw[1]),
+                    new AMap.LngLat(bounds.se[0], bounds.se[1])
+                ),
+                opacity: data.bgOpacity ?? 1,
+                zooms: [3, 20],
+                zIndex: 1,
+            });
+            imgLayer.setMap(map);
+            overlays.push(imgLayer);
+        } catch (err) {
+            console.warn('⚠️ 底图叠加失败:', err.message);
+        }
+    }
+
     els.forEach(el => {
         if (el.visible === false) return;
         const pts = (el.points || []).map(p => planPointToLngLat(p.x, p.y, bounds, areaW, areaH));
         const path = pts.map(p => new AMap.LngLat(p[0], p[1]));
+        let o = null;
         if (el.type === 'route' && pts.length >= 2) {
-            map.add(new AMap.Polyline({ path, strokeColor: el.color || '#3b82f6', strokeWeight: el.strokeWidth || 3, strokeOpacity: el.opacity ?? 0.9, zIndex: 10 }));
-            count++; routeCount++;
+            o = new AMap.Polyline({ path, strokeColor: colorToHex(el.color, '#3b82f6'), strokeWeight: el.strokeWidth || 3, strokeOpacity: el.opacity ?? 0.9, zIndex: 10 });
+            group.route++;
         } else if (el.type === 'area' && pts.length >= 3) {
-            map.add(new AMap.Polygon({ path, strokeColor: el.color || '#10b981', strokeWeight: el.strokeWidth || 2, fillColor: el.color || '#10b981', fillOpacity: (el.opacity ?? 1) * 0.25, zIndex: 5 }));
-            count++; areaCount++;
+            o = new AMap.Polygon({ path, strokeColor: colorToHex(el.color, '#10b981'), strokeWeight: el.strokeWidth || 2, fillColor: colorToHex(el.color, '#10b981'), fillOpacity: (el.opacity ?? 1) * 0.25, zIndex: 5 });
+            group.area++;
         } else if (el.type === 'text' && pts.length >= 1) {
-            map.add(new AMap.Text({
+            o = new AMap.Text({
                 text: el.label || '', position: new AMap.LngLat(pts[0][0], pts[0][1]),
                 style: {
                     'background-color': el.backgroundColor || 'rgba(0,0,0,0.7)',
                     'color': el.color || '#ffffff', 'font-size': (el.fontSize || 16) + 'px',
                     'padding': '4px 8px', 'border-radius': '14px',
                 },
-            }));
-            count++;
+            });
         }
+        if (o) { map.add(o); overlays.push(o); }
     });
-    document.getElementById('layer-route-count').textContent = routeCount;
-    document.getElementById('layer-area-count').textContent = areaCount;
-    return count;
+    refreshLayerCounts();
+    return overlays.length;
+}
+
+function getActivePlanIds() {
+    try { return JSON.parse(localStorage.getItem(PLAN_MEMORY_KEY) || '[]'); }
+    catch (_) { return []; }
+}
+function saveActivePlanIds(ids) {
+    try { localStorage.setItem(PLAN_MEMORY_KEY, JSON.stringify(ids)); } catch (_) {}
+}
+
+function renderPlanList() {
+    const box = document.getElementById('plan-list');
+    if (!box) return;
+    box.innerHTML = '';
+    if (planProjects.length === 0) {
+        box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案，点「✏️ 编辑」创建</div>';
+        return;
+    }
+    const active = new Set(getActivePlanIds().map(String));
+    planProjects.forEach(p => {
+        const item = document.createElement('label');
+        item.className = 'plan-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = active.has(String(p.id));
+        cb.addEventListener('change', () => togglePlan(p.id, cb.checked));
+        const name = document.createElement('span');
+        name.className = 'plan-name';
+        name.textContent = p.name || ('方案 ' + p.id);
+        name.title = p.name || '';
+        item.appendChild(cb);
+        item.appendChild(name);
+        box.appendChild(item);
+    });
+}
+
+function togglePlan(planId, on) {
+    const active = getActivePlanIds().filter(id => String(id) !== String(planId));
+    if (on) {
+        active.push(String(planId));
+        saveActivePlanIds(active);
+        if (!planMap) return;
+        fetchPlanData(planId).then(plan => {
+            if (!plan) { console.warn('⚠️ 方案加载失败'); return; }
+            const n = applyPlan(planMap, plan);
+            console.log(`✅ 已叠加方案「${plan.name}」，${n} 个对象`);
+        });
+    } else {
+        saveActivePlanIds(active);
+        if (planMap) removePlanOverlay(planMap, planId);
+    }
+}
+
+async function fetchPlanData(id) {
+    if (planFetching[id]) return planFetching[id];
+    planFetching[id] = (async () => {
+        try {
+            const res = await fetch('/api/editor/projects/' + id);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const json = await res.json();
+            return json.data;
+        } catch (err) {
+            console.error('❌ 加载方案失败:', err.message);
+            return null;
+        } finally {
+            delete planFetching[id];
+        }
+    })();
+    return planFetching[id];
 }
 
 async function initPlanSelector(map) {
-    const sel = document.getElementById('plan-select');
-    const btn = document.getElementById('btn-clear-plan');
-    if (!sel || !btn) return;
-    let projects = [];
+    planMap = map;
     try {
         const res = await fetch('/api/editor/projects');
         const json = await res.json();
-        projects = json.data || [];
+        planProjects = json.data || [];
     } catch (err) {
         console.warn('⚠️ 加载方案列表失败:', err.message);
     }
-    sel.innerHTML = '<option value="">— 选择方案 —</option>';
-    projects.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.id; opt.textContent = p.name || ('方案 ' + p.id);
-        sel.appendChild(opt);
+    renderPlanList();
+
+    const btnClear = document.getElementById('btn-clear-plan');
+    const btnEdit = document.getElementById('btn-edit-plan');
+    if (btnClear) btnClear.addEventListener('click', () => {
+        getActivePlanIds().forEach(id => removePlanOverlay(map, Number(id)));
+        saveActivePlanIds([]);
+        renderPlanList();
     });
-    sel.addEventListener('change', async () => {
-        const id = sel.value;
-        if (!id) { clearPlanOverlays(map); return; }
-        try {
-            const res = await fetch('/api/editor/projects/' + id);
-            const json = await res.json();
-            const plan = json.data;
-            const n = applyPlan(map, plan);
-            console.log(`✅ 已加载方案「${plan.name}」，${n} 个元素`);
-        } catch (err) {
-            console.error('❌ 加载方案失败:', err.message);
-        }
+    if (btnEdit) btnEdit.addEventListener('click', () => window.open('/editor.html', '_blank'));
+
+    // 恢复上次勾选的方案（跨页面刷新记忆）
+    getActivePlanIds().forEach(id => {
+        fetchPlanData(id).then(plan => {
+            if (!plan) return;
+            applyPlan(map, plan);
+            console.log(`✅ 已恢复方案「${plan.name}」`);
+        });
     });
-    btn.addEventListener('click', () => { sel.value = ''; clearPlanOverlays(map); });
 }
 
 

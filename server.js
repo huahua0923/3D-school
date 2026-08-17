@@ -27,7 +27,7 @@ if (!ADMIN_PASSWORD) {
 
 // 中间件
 app.use(cors());
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '25mb' }));
 
 // 强制所有响应使用 UTF-8（解决 Windows 浏览器中文乱码）
 app.use((_req, res, next) => {
@@ -369,11 +369,15 @@ app.post('/api/editor/projects', authMiddleware, (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 更新项目
+// 更新项目（支持部分更新：只改名时保留已有 data）
 app.put('/api/editor/projects/:id', authMiddleware, (req, res) => {
     try {
         const { name, data } = req.body;
-        db.saveEditorProject(Number(req.params.id), name, data);
+        const existing = db.getEditorProject(Number(req.params.id));
+        if (!existing) return res.status(404).json({ error: '项目不存在' });
+        const nextName = name !== undefined ? name : existing.name;
+        const nextData = data !== undefined ? data : existing.data;
+        db.saveEditorProject(Number(req.params.id), nextName, nextData);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
