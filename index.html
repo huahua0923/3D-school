@@ -760,25 +760,55 @@ function createMarkers(scene, localToAmap) {
     return markerData;
 }
 
-/** 把一条路线（pts 为 [lng,lat]）渲染为 3D 动线：半透明 tube + 沿曲线移动的光球 */
+/** 流光管线材质：一条亮带沿管长度流动，头部最亮、向后拖尾渐隐（业界常用 flow-line 效果） */
+function createFlowMaterial(color) {
+    return new THREE.ShaderMaterial({
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        uniforms: {
+            uColor: { value: new THREE.Color(colorToHex(color)) },
+            uTime: { value: Math.random() * 40 },
+        },
+        vertexShader: `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec2 vUv;
+            uniform vec3 uColor;
+            uniform float uTime;
+            void main() {
+                float t = vUv.y;                          // 沿管长度 0..1
+                float head = fract(uTime * 0.25);         // 流动头部位置（循环）
+                float d = fract(head - t);                // 相对头部距离（含循环边界）
+                float tail = 1.0 - smoothstep(0.0, 0.55, d);    // 拖尾渐隐
+                float headGlow = 1.0 - smoothstep(0.0, 0.10, d); // 头部锐利亮斑
+                float glow = max(tail, headGlow);
+                vec3 col = uColor * (0.3 + 2.6 * glow);
+                float alpha = 0.16 + 0.8 * glow;
+                gl_FragColor = vec4(col, alpha);
+            }
+        `,
+    });
+}
+
+/** 把一条路线（pts 为 [lng,lat]）渲染为 3D 动态流光管 */
 function addAnimatedRoute(pts, color, speed) {
     if (!pts || pts.length < 2) return null;
-    const colorStr = colorToHex(color);
     const vecs = pts.map(p => {
         const [lx, lz] = lngLatToLocal(p[0], p[1], CONFIG.geo.center);
         const a = amapLocal(lx, lz, 0);
         return new THREE.Vector3(a.x, a.y, a.z);
     });
     const curve = new THREE.CatmullRomCurve3(vecs, false);
-    const tube = new THREE.Mesh(
-        new THREE.TubeGeometry(curve, 64, 0.22, 8, false),
-        new THREE.MeshStandardMaterial({ color: colorStr, emissive: colorStr, emissiveIntensity: 0.15, transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+    const material = createFlowMaterial(color);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.26, 8, false), material);
     threeScene.add(tube);
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 12),
-        new THREE.MeshStandardMaterial({ color: colorStr, emissive: colorStr, emissiveIntensity: 1.4 }));
-    sphere.castShadow = true;
-    threeScene.add(sphere);
-    const obj = { curve, tube, sphere, speed: (speed ?? 0.9), t: Math.random() };
+    const obj = { tube, material, speed: (speed ?? 0.9) };
     animatedRoutes.push(obj);
     return obj;
 }
@@ -1030,7 +1060,6 @@ function removePlanOverlay(map, planId) {
     // 移除该方案的 3D 动线对象并注销动画
     (g.animated || []).forEach(o => {
         if (o.tube && threeScene) threeScene.remove(o.tube);
-        if (o.sphere && threeScene) threeScene.remove(o.sphere);
         const i = animatedRoutes.indexOf(o);
         if (i >= 0) animatedRoutes.splice(i, 1);
     });
@@ -1563,11 +1592,9 @@ async function boot() {
             map.setRotation(rotationAngle % 360);
         }
 
-        // Update route spheres（含 CONFIG.routes 与方案里的动线）
+        // 更新动线流光（含 CONFIG.routes 与方案里的路线）
         for (const ro of animatedRoutes) {
-            ro.t += dt * 0.12 * ro.speed;
-            if (ro.t > 1) ro.t -= 1;
-            ro.sphere.position.copy(ro.curve.getPoint(ro.t));
+            ro.material.uniforms.uTime.value += dt * ro.speed;
         }
 
         // Pulse marker rings & cones
