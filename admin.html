@@ -305,6 +305,7 @@ a { color: #58a6ff; }
 // ============================================================
 
 let config = null;
+let mapPlans = [];   // 地图方案（kind='map'）数据，供「标记点/路线/区域」面板显示真实数据
 let token = localStorage.getItem('admin_token') || '';
 
 // ---------- Auth ----------
@@ -361,6 +362,7 @@ async function loadConfig() {
         if (resp.status === 401) { logout(); return; }
         config = await resp.json();
         renderAll();
+        loadMapPlans();   // 异步拉取地图方案，刷新「标记点/路线/区域」面板
     } catch (e) {
         showToast('加载配置失败: ' + e.message, 'err');
     }
@@ -630,89 +632,87 @@ function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 // 生成可安全嵌入 onclick/onchange 双引号 HTML 属性的 JS 字符串字面量：
 // JSON.stringify 会输出 "key"，直接内联会把属性撑断（表现为点按钮报 SyntaxError: Unexpected end of input）
 function jkey(v) { return escHtml(JSON.stringify(v)); }
+// 从地图方案（kind='map'）聚合标记点/路线/区域，供面板显示真实数据
+async function loadMapPlans() {
+    try {
+        const resp = await fetch('/api/editor/projects');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        mapPlans = (json.data || []).filter(p => p && p.data && p.data.kind === 'map');
+    } catch (e) {
+        mapPlans = [];
+    }
+    renderMarkers();
+    renderRoutes();
+    renderAreas();
+}
+
 function renderMarkers() {
-    document.getElementById('form-markers').innerHTML = Object.entries(config.markers).map(([key, m]) => {
-        const base = `markers.${key}`;
-        return `<div class="section"><h3>${m.icon} ${m.label} <span style="font-size:0.7rem;color:#8b949e;">(${key})</span></h3>
-            <div class="form-grid">
-                ${fld(`${base}.label`, '名称', 'text', { value: m.label })}
-                ${fld(`${base}.icon`, '图标', 'text', { value: m.icon })}
-                ${fld(`${base}.badge`, '徽章文字', 'text', { value: m.badge })}
-                ${fld(`${base}.color`, '颜色', 'color', { value: m.color })}
-                ${fld(`${base}.pos[0]`, '坐标 X', 'number', { value: m.pos[0], step: 1 })}
-                ${fld(`${base}.pos[1]`, '坐标 Y', 'number', { value: m.pos[1], step: 0.5 })}
-                ${fld(`${base}.pos[2]`, '坐标 Z', 'number', { value: m.pos[2], step: 1 })}
+    const box = document.getElementById('form-markers');
+    const items = [];
+    mapPlans.forEach(p => {
+        Object.entries(p.data.markers || {}).forEach(([name, m]) => {
+            items.push({ plan: p, name, color: m.color || '#f59e0b' });
+        });
+    });
+    if (items.length === 0) {
+        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无标记点。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 添加。</p></div>';
+        return;
+    }
+    box.innerHTML = items.map(m => `
+        <div class="section">
+            <h3>📍 ${escHtml(m.name)} <span style="font-size:0.7rem;color:#8b949e;">(${escHtml(m.plan.name)})</span></h3>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${escHtml(m.color)};"></span>
+                <a class="btn-add-feat" href="admin-map.html?project=${m.plan.id}" style="text-decoration:none;">✏️ 编辑</a>
             </div>
-            <div class="form-group" style="margin-top:12px">
-                <label>描述</label>
-                <textarea onchange="updateNested(config, '${base}.desc', this.value)">${m.desc || ''}</textarea>
-            </div>
-            <div style="margin-top:12px">
-                <label style="font-size:0.78rem;color:#8b949e;text-transform:uppercase">设施列表</label>
-                <div class="feature-list" id="feat-${key}">
-                    ${(m.features || []).map((f, fi) => `
-                        <div class="feature-row">
-                            <input value="${f}" onchange="config.markers[${jkey(key)}].features[${fi}] = this.value" />
-                            <button onclick="config.markers[${jkey(key)}].features.splice(${fi},1);renderMarkers()">✕</button>
-                        </div>`).join('')}
-                </div>
-                <button class="btn-add-feat" onclick="config.markers[${jkey(key)}].features.push('新设施');renderMarkers()">+ 添加设施</button>
-            </div>
-            <button class="btn-del" onclick="delMarker(${jkey(key)})">✕ 删除标记</button>
-        </div>`;
-    }).join('') +
-    `<button class="btn-add-feat" style="margin-top:12px" onclick="addMarker()">+ 添加标记</button>`;
+        </div>`).join('');
 }
 
 function renderRoutes() {
-    document.getElementById('form-routes').innerHTML = Object.entries(config.routes).map(([key, r]) => {
-        return `<div class="section"><h3>${key === 'public' ? '🔵 普通观众路线' : '🟣 VIP 路线'}</h3>
-            <div class="form-grid">
-                ${fld(`routes.${key}.color`, '颜色', 'color', { value: r.color })}
-                ${fld(`routes.${key}.speed`, '速度', 'number', { value: r.speed, step: 0.1 })}
+    const box = document.getElementById('form-routes');
+    const items = [];
+    mapPlans.forEach(p => {
+        Object.entries(p.data.routes || {}).forEach(([name, r]) => {
+            items.push({ plan: p, name, color: r.color || '#3b82f6', count: (r.pts || []).length });
+        });
+    });
+    if (items.length === 0) {
+        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无路线。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 画路线。</p></div>';
+        return;
+    }
+    box.innerHTML = items.map(r => `
+        <div class="section">
+            <h3>🛤️ ${escHtml(r.name)} <span style="font-size:0.7rem;color:#8b949e;">(${escHtml(r.plan.name)})</span></h3>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${escHtml(r.color)};"></span>
+                <span style="font-size:0.78rem;color:#8b949e;">${r.count} 个点</span>
+                <a class="btn-add-feat" href="admin-map.html?project=${r.plan.id}" style="text-decoration:none;">✏️ 编辑</a>
             </div>
-            <div style="margin-top:12px">
-                <label style="font-size:0.78rem;color:#8b949e;text-transform:uppercase">路径点 (X, Y, Z)</label>
-                <div class="point-list" id="pts-${key}">
-                    ${(r.pts || []).map((p, pi) => `
-                        <div class="point-row">
-                            <input type="number" value="${p[0]}" step="1" onchange="config.routes[${jkey(key)}].pts[${pi}][0]=+this.value" />
-                            <input type="number" value="${p[1]}" step="0.1" onchange="config.routes[${jkey(key)}].pts[${pi}][1]=+this.value" />
-                            <input type="number" value="${p[2]}" step="1" onchange="config.routes[${jkey(key)}].pts[${pi}][2]=+this.value" />
-                            <button onclick="config.routes[${jkey(key)}].pts.splice(${pi},1);renderRoutes()" style="padding:4px 8px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;">✕</button>
-                        </div>`).join('')}
-                </div>
-                <button class="btn-add-feat" onclick="config.routes[${jkey(key)}].pts.push([0,0.6,0]);renderRoutes()">+ 添加路径点</button>
-            </div>
-            <button class="btn-del" onclick="delRoute(${jkey(key)})">✕ 删除路线</button>
-        </div>`;
-    }).join('') +
-    `<button class="btn-add-feat" style="margin-top:12px" onclick="addRoute()">+ 添加路线</button>`;
+        </div>`).join('');
 }
 
 function renderAreas() {
-    var areas = config.areas || {};
-    document.getElementById('form-areas').innerHTML = Object.entries(areas).map(function(e) {
-        var key = e[0], a = e[1], sk = jkey(key), ek = escHtml(key);
-        return '<div class="section"><h3>📐 ' + ek + '</h3>'
-            + '<div class="form-grid">'
-            + fld('areas.'+ek+'.color', '颜色', 'color', { value: a.color || '#10b981' })
-            + fld('areas.'+ek+'.strokeWidth', '线宽', 'number', { value: a.strokeWidth || 2, step: 1, min: 1 })
-            + fld('areas.'+ek+'.opacity', '透明度', 'number', { value: a.opacity || 0.2, step: 0.1, min: 0, max: 1 })
-            + '</div>'
-            + '<div style="margin-top:12px">'
-            + '<label style="font-size:0.78rem;color:#8b949e;text-transform:uppercase">顶点坐标 (lng, lat)</label>'
-            + '<div class="point-list" id="pts-area-'+ek+'">'
-            + (a.pts || []).map(function(p, pi) { return '<div class="point-row">'
-                + '<input type="number" value="'+p[0]+'" step="0.0001" onchange="config.areas['+sk+'].pts['+pi+'][0]=+this.value" />'
-                + '<input type="number" value="'+p[1]+'" step="0.0001" onchange="config.areas['+sk+'].pts['+pi+'][1]=+this.value" />'
-                + '<button onclick="config.areas['+sk+'].pts.splice('+pi+',1);renderAreas()" style="padding:4px 8px;border:1px solid #30363d;background:#21262d;color:#f85149;cursor:pointer;border-radius:4px;">✕</button>'
-                + '</div>'; }).join('')
-            + '</div>'
-            + '<button class="btn-add-feat" onclick="config.areas['+sk+'].pts.push([104.14,30.67]);renderAreas()">+ 添加顶点</button>'
-            + '<button class="btn-del" onclick="delArea('+sk+')">✕ 删除区域</button>'
-            + '</div></div>';
-    }).join('') + '<button class="btn-add-feat" style="margin-top:12px" onclick="addArea()">+ 添加区域</button>';
+    const box = document.getElementById('form-areas');
+    const items = [];
+    mapPlans.forEach(p => {
+        Object.entries(p.data.areas || {}).forEach(([name, a]) => {
+            items.push({ plan: p, name, color: a.color || '#10b981', count: (a.pts || []).length });
+        });
+    });
+    if (items.length === 0) {
+        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无区域。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 画区域。</p></div>';
+        return;
+    }
+    box.innerHTML = items.map(a => `
+        <div class="section">
+            <h3>🗺️ ${escHtml(a.name)} <span style="font-size:0.7rem;color:#8b949e;">(${escHtml(a.plan.name)})</span></h3>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:${escHtml(a.color)};"></span>
+                <span style="font-size:0.78rem;color:#8b949e;">${a.count} 个顶点</span>
+                <a class="btn-add-feat" href="admin-map.html?project=${a.plan.id}" style="text-decoration:none;">✏️ 编辑</a>
+            </div>
+        </div>`).join('');
 }
 
 function renderCamera() {
