@@ -160,7 +160,7 @@ async function loadConfig(){
 }
 
 function saveSnapshot(){
-    const snap=JSON.parse(JSON.stringify(overlays.map(o=>({_type:o._type,_name:o._name,_color:o._color,path:o.getPath().map(p=>[p.lng,p.lat])}))));
+    const snap=JSON.parse(JSON.stringify(overlays.map(o=>({_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,path:o.getPath().map(p=>[p.lng,p.lat])}))));
     history=history.slice(0,historyIdx+1);history.push(snap);
     if(history.length>MAX_HISTORY)history.shift();
     historyIdx=history.length-1;
@@ -192,12 +192,12 @@ function restoreSnapshot(snap){
     snap.forEach(d=>{
         let ov;
         if(d._type==='route'){
-            ov=new AMap.Polyline({strokeColor:d._color,strokeWeight:3,strokeOpacity:0.9,zIndex:10,path:d.path.map(p=>[p[0],p[1]])});
+            ov=new AMap.Polyline({strokeColor:d._color,strokeWeight:d._stroke||3,strokeOpacity:d._opacity??0.9,zIndex:10,path:d.path.map(p=>[p[0],p[1]])});
         }else{
-            ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:2,fillColor:d._color,fillOpacity:0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
+            ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
         }
         ov.setMap(map);
-        ov._type=d._type;ov._name=d._name;ov._color=d._color;
+        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;
         ov.on('click',()=>selectOv(ov));
         overlays.push(ov);
     });
@@ -224,13 +224,13 @@ async function initMap(){
 function loadOverlays(){
     if(config.routes)Object.entries(config.routes).forEach(([n,r])=>{
         if(!r.pts||r.pts.length<2)return;
-        const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:3,strokeOpacity:0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov.on('click',()=>selectOv(ov));overlays.push(ov);
+        const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:r.strokeWidth||3,strokeOpacity:r.opacity??0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
+        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
     if(config.areas)Object.entries(config.areas).forEach(([n,a])=>{
         if(!a.pts||a.pts.length<3)return;
-        const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity||0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov.on('click',()=>selectOv(ov));overlays.push(ov);
+        const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity??0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
+        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
     updateUI();
 }
@@ -254,6 +254,8 @@ function onDraw(e){
     const cnt=overlays.filter(o=>o._type===type).length+1;
     ov._type=type;ov._name=(type==='area'?'区域 ':'路线 ')+cnt;
     ov._color=type==='area'?'#10b981':'#3b82f6';
+    ov._stroke=type==='area'?2:3;
+    ov._opacity=type==='area'?0.2:0.9;
     ov.setMap(map);  // 确保图形在地图上显示
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);
@@ -264,8 +266,8 @@ function onDraw(e){
 function selectOv(ov){
     if(currentTool!=='pointer')return;
     deselectOv();selectedOv=ov;
-    if(ov instanceof AMap.Polyline)ov.setOptions({strokeWeight:6,strokeColor:'#fff'});
-    else ov.setOptions({strokeWeight:4,strokeColor:'#fff'});
+    const base=ov._stroke||(ov instanceof AMap.Polyline?3:2);
+    ov.setOptions({strokeWeight:base+3,strokeColor:'#fff'});
     document.getElementById('btn-delete').disabled=false;
     document.getElementById('btn-duplicate').disabled=false;
     document.getElementById('status-text').textContent='已选中: '+(ov._name||'');
@@ -274,8 +276,8 @@ function selectOv(ov){
 
 function deselectOv(){
     if(!selectedOv)return;
-    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeWeight:3,strokeColor:selectedOv._color});
-    else selectedOv.setOptions({strokeWeight:2,strokeColor:selectedOv._color});
+    const base=selectedOv._stroke||(selectedOv instanceof AMap.Polyline?3:2);
+    selectedOv.setOptions({strokeWeight:base,strokeColor:selectedOv._color});
     selectedOv=null;
     document.getElementById('btn-delete').disabled=true;
     document.getElementById('btn-duplicate').disabled=true;
@@ -297,10 +299,11 @@ document.getElementById('btn-duplicate').addEventListener('click',()=>{
     if(!selectedOv)return;
     saveSnapshot();
     const path=selectedOv.getPath().map(p=>[p.lng,p.lat]),type=selectedOv._type;
+    const sw=selectedOv._stroke||(type==='route'?3:2),op=selectedOv._opacity;
     let ov;
-    if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:3,strokeOpacity:0.9,zIndex:10});
-    else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:2,fillColor:selectedOv._color,fillOpacity:0.2,zIndex:5});
-    ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;
+    if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
+    else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+    ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;ov._stroke=sw;ov._opacity=op;
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);updateUI();toast('已复制');
 });
@@ -335,9 +338,9 @@ function updateProps(){
     section.style.display='block';
     document.getElementById('prop-name').value=selectedOv._name||'';
     document.getElementById('prop-color').value=selectedOv._color||'#3b82f6';
-    document.getElementById('prop-opacity').value=Math.round((selectedOv._opacity||1)*100);
-    if(selectedOv instanceof AMap.Polyline)document.getElementById('prop-stroke').value=3;
-    else document.getElementById('prop-stroke').value=2;
+    const isLine=selectedOv instanceof AMap.Polyline;
+    document.getElementById('prop-stroke').value=selectedOv._stroke||(isLine?3:2);
+    document.getElementById('prop-opacity').value=Math.round((selectedOv._opacity??(isLine?0.9:0.2))*100);
     document.getElementById('prop-points-info').textContent='顶点: '+(selectedOv.getPath?selectedOv.getPath().length:'-')+' 个';
 }
 
@@ -354,13 +357,14 @@ document.getElementById('prop-color').addEventListener('input',function(){
 document.getElementById('prop-stroke').addEventListener('input',function(){
     if(!selectedOv)return;
     const v=Number(this.value);
-    if(selectedOv instanceof AMap.Polyline)selectedOv.setOptions({strokeWeight:v});
-    else selectedOv.setOptions({strokeWeight:v});
+    selectedOv._stroke=v;
+    selectedOv.setOptions({strokeWeight:v});
 });
 document.getElementById('prop-opacity').addEventListener('input',function(){
     if(!selectedOv)return;
     const v=Number(this.value)/100;selectedOv._opacity=v;
     if(selectedOv instanceof AMap.Polygon)selectedOv.setOptions({fillOpacity:v});
+    else selectedOv.setOptions({strokeOpacity:v});
 });
 
 // Color presets
@@ -392,8 +396,8 @@ async function doSave(token){
     const routes={},areas={};
     overlays.forEach(o=>{
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
-        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',speed:0.9};
-        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:2,opacity:typeof o._opacity==='number'?o._opacity:0.2};
+        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:0.9};
+        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2};
     });
     config.routes=routes;config.areas=areas;
     try{
@@ -420,7 +424,7 @@ document.getElementById('login-pwd').addEventListener('keydown',e=>{if(e.key==='
 // Export
 document.getElementById('btn-export').addEventListener('click',()=>{
     const routes={},areas={};
-    overlays.forEach(o=>{const pts=o.getPath().map(p=>[p.lng,p.lat]);if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6'};else areas[o._name]={pts,color:o._color||'#10b981'}});
+    overlays.forEach(o=>{const pts=o.getPath().map(p=>[p.lng,p.lat]);if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3};else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2}});
     const blob=new Blob([JSON.stringify({routes,areas},null,2)],{type:'application/json'});
     const a=document.createElement('a');a.download='map-data.json';a.href=URL.createObjectURL(blob);a.click();
     URL.revokeObjectURL(a.href);toast('✅ 已导出 JSON');
