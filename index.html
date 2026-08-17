@@ -760,31 +760,34 @@ function createMarkers(scene, localToAmap) {
     return markerData;
 }
 
-/** Create dynamic routes */
-function createRoutes(scene, localToAmap) {
-    const routeObjs = [];
+/** 把一条路线（pts 为 [lng,lat]）渲染为 3D 动线：半透明 tube + 沿曲线移动的光球 */
+function addAnimatedRoute(pts, color, speed) {
+    if (!pts || pts.length < 2) return null;
+    const colorStr = colorToHex(color);
+    const vecs = pts.map(p => {
+        const [lx, lz] = lngLatToLocal(p[0], p[1], CONFIG.geo.center);
+        const a = amapLocal(lx, lz, 0);
+        return new THREE.Vector3(a.x, a.y, a.z);
+    });
+    const curve = new THREE.CatmullRomCurve3(vecs, false);
+    const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 64, 0.22, 8, false),
+        new THREE.MeshStandardMaterial({ color: colorStr, emissive: colorStr, emissiveIntensity: 0.15, transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+    threeScene.add(tube);
+    const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 12),
+        new THREE.MeshStandardMaterial({ color: colorStr, emissive: colorStr, emissiveIntensity: 1.4 }));
+    sphere.castShadow = true;
+    threeScene.add(sphere);
+    const obj = { curve, tube, sphere, speed: (speed ?? 0.9), t: Math.random() };
+    animatedRoutes.push(obj);
+    return obj;
+}
+
+/** Create dynamic routes（CONFIG.routes 的动线） */
+function createRoutes(_scene, _localToAmap) {
     for (const [key, r] of Object.entries(CONFIG.routes)) {
-        // Config pts 由「地图编辑器」存储为 [lng, lat]；先转本地米，再转 Amap 3D 坐标
-        const pts = r.pts.map(p => {
-            const [lx, lz] = lngLatToLocal(p[0], p[1], CONFIG.geo.center);
-            const a = localToAmap(lx, lz, 0);
-            return new THREE.Vector3(a.x, a.y, a.z);
-        });
-        const curve = new THREE.CatmullRomCurve3(pts, false);
-
-        const tube = new THREE.Mesh(
-            new THREE.TubeGeometry(curve, 64, 0.22, 8, false),
-            new THREE.MeshStandardMaterial({ color: r.color, emissive: r.color, emissiveIntensity: 0.15, transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
-        scene.add(tube);
-
-        const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 12),
-            new THREE.MeshStandardMaterial({ color: r.color, emissive: r.color, emissiveIntensity: 1.4 }));
-        sphere.castShadow = true;
-        scene.add(sphere);
-
-        routeObjs.push({ curve, sphere, speed: r.speed, t: Math.random() });
+        addAnimatedRoute(r.pts, r.color, r.speed);
     }
-    return routeObjs;
 }
 
 // ========================================================
@@ -818,10 +821,25 @@ class UIController {
         document.getElementById('info-desc').textContent = m.desc;
         const featEl = document.getElementById('info-features');
         featEl.innerHTML = (m.features || []).map(f => `<span class="info-feature">${f}</span>`).join('');
+        document.getElementById('info-btn-nav').style.display = '';
         document.getElementById('info-btn-nav').onclick = () => {
             this._onNavigate && this._onNavigate(key);
             this.hideInfo();
         };
+        this.infoCard.classList.add('show');
+        this.infoBackdrop.classList.add('show');
+    }
+
+    /** 显示路线/区域的名称/介绍（复用信息卡，隐藏导航按钮与特征列表） */
+    showFeature({ icon, title, badge, desc }) {
+        document.getElementById('info-icon').textContent = icon || '📍';
+        document.getElementById('info-title-text').textContent = title || '';
+        const badgeEl = document.getElementById('info-badge');
+        if (badge) { badgeEl.textContent = badge; badgeEl.className = 'badge'; badgeEl.style.display = ''; }
+        else badgeEl.style.display = 'none';
+        document.getElementById('info-desc').textContent = desc || '';
+        document.getElementById('info-features').innerHTML = '';
+        document.getElementById('info-btn-nav').style.display = 'none';
         this.infoCard.classList.add('show');
         this.infoBackdrop.classList.add('show');
     }
@@ -922,17 +940,25 @@ function colorToHex(c, fallback = '#3b82f6') {
     return fallback;
 }
 
+/** 覆盖物点击：阻止冒泡并短暂屏蔽 map click 的 hideInfo，再执行展示逻辑 */
+function onFeatureClick(e, fn) {
+    if (e && e.originalEvent && e.originalEvent.stopPropagation) e.originalEvent.stopPropagation();
+    suppressMapClickUntil = performance.now() + 300;
+    fn();
+}
+
 // ========================================================
 // 路线和区域展示（纯展示，无编辑功能）
 function displayRoutesAndAreas(map) {
     let routeCount = 0, areaCount = 0;
-    const center = CONFIG.geo ? CONFIG.geo.center : [104.14141, 30.67133];
     if (CONFIG.routes) {
         Object.entries(CONFIG.routes).forEach(([name, r]) => {
             if (!r.pts || r.pts.length < 2) return;
             // 路线点由「地图编辑器」存储为 [lng, lat]，直接用经纬度
             const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
-            map.add(new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 }));
+            const line = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 });
+            line.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
+            map.add(line);
             routeCount++;
         });
     }
@@ -940,7 +966,9 @@ function displayRoutesAndAreas(map) {
         Object.entries(CONFIG.areas).forEach(([name, a]) => {
             if (!a.pts || a.pts.length < 3) return;
             const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
-            map.add(new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity || 0.2, zIndex: 5 }));
+            const poly = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity || 0.2, zIndex: 5 });
+            poly.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '' })));
+            map.add(poly);
             areaCount++;
         });
     }
@@ -958,6 +986,11 @@ let planMap = null;                     // 当前地图实例
 let planProjects = [];                  // 方案列表缓存 {id,name}
 let planOverlayGroups = {};             // planId -> { overlays:[], route:0, area:0 }
 let planFetching = {};                  // planId -> Promise（防重复 fetch）
+let ui = null;                          // UI 控制器引用（供 applyPlan / displayRoutesAndAreas 显示名称）
+let threeScene = null;                  // Three.js 场景（供 applyPlan 添加动线）
+let amapLocal = null;                   // localToAmap 转换函数（供 applyPlan 转本地坐标）
+let animatedRoutes = [];                // 动线对象 {curve, tube, sphere, speed, t}（animate 循环更新）
+let suppressMapClickUntil = 0;          // 覆盖物点击后短暂屏蔽 map click 的 hideInfo
 
 function defaultPlanBounds(center) {
     const [clng, clat] = center || (CONFIG.geo ? CONFIG.geo.center : [104.14141, 30.67133]);
@@ -994,6 +1027,13 @@ function removePlanOverlay(map, planId) {
     const g = planOverlayGroups[planId];
     if (!g) return;
     g.overlays.forEach(o => disposeOverlay(o, map));
+    // 移除该方案的 3D 动线对象并注销动画
+    (g.animated || []).forEach(o => {
+        if (o.tube && threeScene) threeScene.remove(o.tube);
+        if (o.sphere && threeScene) threeScene.remove(o.sphere);
+        const i = animatedRoutes.indexOf(o);
+        if (i >= 0) animatedRoutes.splice(i, 1);
+    });
     delete planOverlayGroups[planId];
     refreshLayerCounts();
 }
@@ -1001,7 +1041,7 @@ function removePlanOverlay(map, planId) {
 function applyPlan(map, plan) {
     removePlanOverlay(map, plan.id);
     const overlays = [];
-    const group = { overlays, route: 0, area: 0 };
+    const group = { overlays, route: 0, area: 0, animated: [] };
     planOverlayGroups[plan.id] = group;
 
     const data = plan.data || {};
@@ -1010,18 +1050,25 @@ function applyPlan(map, plan) {
     if (data.kind === 'map') {
         let added = 0;
         if (data.routes) {
-            Object.entries(data.routes).forEach(([, r]) => {
+            Object.entries(data.routes).forEach(([name, r]) => {
                 if (!r.pts || r.pts.length < 2) return;
                 const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: r.strokeWidth || 3, strokeOpacity: r.opacity ?? 0.9, zIndex: 10 });
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
                 map.add(o); overlays.push(o); group.route++; added++;
+                // 叠加 3D 动线（光球沿路线流动）
+                if (threeScene && amapLocal) {
+                    const anim = addAnimatedRoute(r.pts, r.color, r.speed);
+                    if (anim) group.animated.push(anim);
+                }
             });
         }
         if (data.areas) {
-            Object.entries(data.areas).forEach(([, a]) => {
+            Object.entries(data.areas).forEach(([name, a]) => {
                 if (!a.pts || a.pts.length < 3) return;
                 const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity ?? 0.2, zIndex: 5 });
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '' })));
                 map.add(o); overlays.push(o); group.area++; added++;
             });
         }
@@ -1192,7 +1239,7 @@ async function initPlanSelector(map) {
 
 
 async function boot() {
-    const ui = new UIController();
+    ui = new UIController();
     ui.setProgress('加载配置...', 5);
 
     // Load config
@@ -1206,10 +1253,12 @@ async function boot() {
     // Setup Three.js — wait for GLCustomLayer init, then create objects
     ui.setProgress('初始化 3D 引擎...', 40);
     const { scene, camera, renderer, labelRenderer, waitForInit } = setupThreeScene(map);
+    threeScene = scene;
 
     // waitForInit returns a promise that resolves after GLCustomLayer.init runs
     ui.setProgress('等待图层就绪...', 50);
     const { localToAmap } = await waitForInit();
+    amapLocal = localToAmap;
 
     ui.setProgress('构建场馆模型...', 60);
     buildVenue(scene, localToAmap);
@@ -1218,7 +1267,7 @@ async function boot() {
     const markerData = createMarkers(scene, localToAmap);
 
     ui.setProgress('生成路线导航...', 80);
-    const routeObjs = createRoutes(scene, localToAmap);
+    createRoutes(scene, localToAmap);
 
     // Init drawing manager
     displayRoutesAndAreas(map);
@@ -1372,6 +1421,8 @@ async function boot() {
         if (myLocation) navigateTo(key);
     };
     map.on('click', (e) => {
+        // 刚点击了路线/区域覆盖物时，不触发这里的 hideInfo（避免信息卡闪退）
+        if (performance.now() < suppressMapClickUntil) return;
         const clicked = e.lnglat;
         for (const md of markerData) {
             const dist = AMap.GeometryUtil.distance(
@@ -1512,8 +1563,8 @@ async function boot() {
             map.setRotation(rotationAngle % 360);
         }
 
-        // Update route spheres
-        for (const ro of routeObjs) {
+        // Update route spheres（含 CONFIG.routes 与方案里的动线）
+        for (const ro of animatedRoutes) {
             ro.t += dt * 0.12 * ro.speed;
             if (ro.t > 1) ro.t -= 1;
             ro.sphere.position.copy(ro.curve.getPoint(ro.t));

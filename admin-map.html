@@ -129,10 +129,12 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
         <div class="ps" id="props-section" style="display:none">
             <div class="pl">属性</div>
             <div class="prop-row"><label>名称</label><input type="text" id="prop-name" /></div>
+            <div class="prop-row"><label>介绍</label><input type="text" id="prop-desc" placeholder="可选，首页点击时显示" /></div>
             <div class="prop-row"><label>颜色</label><input type="color" id="prop-color" /></div>
             <div class="color-presets" id="color-presets"></div>
             <div class="prop-row"><label>线宽</label><input type="range" id="prop-stroke" min="1" max="12" value="3" style="flex:1" /></div>
             <div class="prop-row"><label>透明度</label><input type="range" id="prop-opacity" min="5" max="100" value="100" style="flex:1" /></div>
+            <div class="prop-row"><label>速度</label><input type="range" id="prop-speed" min="1" max="50" value="9" style="flex:1" /><span id="prop-speed-val" style="font-size:0.7rem;color:rgba(255,255,255,0.5);min-width:34px;text-align:right">0.9</span></div>
             <div id="prop-points-info" style="font-size:0.7rem;color:rgba(255,255,255,0.35);margin-top:4px"></div>
             <div style="display:flex;gap:4px;margin-top:8px">
                 <button class="btn" id="btn-bring-front">⬆ 置顶</button>
@@ -189,7 +191,7 @@ async function loadConfig(){
 function saveSnapshot(){
     const snap=JSON.parse(JSON.stringify(overlays.map(o=>{
         const path=o._type==='marker'?[[o.getPosition().lng,o.getPosition().lat]]:o.getPath().map(p=>[p.lng,p.lat]);
-        return {_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,path};
+        return {_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,_speed:o._speed,_desc:o._desc,path};
     })));
     history=history.slice(0,historyIdx+1);history.push(snap);
     if(history.length>MAX_HISTORY)history.shift();
@@ -229,7 +231,7 @@ function restoreSnapshot(snap){
             ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
         }
         ov.setMap(map);
-        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;
+        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._desc=d._desc;
         ov.on('click',()=>selectOv(ov));
         overlays.push(ov);
     });
@@ -284,12 +286,12 @@ function addRoutesAreas(routes,areas){
     if(routes)Object.entries(routes).forEach(([n,r])=>{
         if(!r.pts||r.pts.length<2)return;
         const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:r.strokeWidth||3,strokeOpacity:r.opacity??0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov.on('click',()=>selectOv(ov));overlays.push(ov);
+        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov._speed=r.speed??0.9;ov._desc=r.desc||'';ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
     if(areas)Object.entries(areas).forEach(([n,a])=>{
         if(!a.pts||a.pts.length<3)return;
         const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity??0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov.on('click',()=>selectOv(ov));overlays.push(ov);
+        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
 }
 
@@ -404,6 +406,8 @@ function onDraw(e){
     ov._color=type==='area'?'#10b981':'#3b82f6';
     ov._stroke=type==='area'?2:3;
     ov._opacity=type==='area'?0.2:0.9;
+    ov._speed=0.9;
+    ov._desc='';
     ov.setMap(map);  // 确保图形在地图上显示
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);
@@ -466,7 +470,7 @@ document.getElementById('btn-duplicate').addEventListener('click',()=>{
         if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
         else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
     }
-    ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;ov._stroke=sw;ov._opacity=op;
+    ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;ov._stroke=sw;ov._opacity=op;ov._speed=selectedOv._speed;ov._desc=selectedOv._desc;
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);updateUI();toast('已复制');
 });
@@ -502,11 +506,18 @@ function updateProps(){
     document.getElementById('prop-name').value=selectedOv._name||'';
     document.getElementById('prop-color').value=selectedOv._color||'#3b82f6';
     const isMarker=selectedOv._type==='marker';
+    const isRoute=selectedOv._type==='route';
     document.getElementById('prop-stroke').closest('.prop-row').style.display=isMarker?'none':'';
     document.getElementById('prop-opacity').closest('.prop-row').style.display=isMarker?'none':'';
+    document.getElementById('prop-speed').closest('.prop-row').style.display=isRoute?'':'none';
+    document.getElementById('prop-desc').closest('.prop-row').style.display=isMarker?'none':'';
     const isLine=selectedOv instanceof AMap.Polyline;
     document.getElementById('prop-stroke').value=selectedOv._stroke||(isLine?3:2);
     document.getElementById('prop-opacity').value=Math.round((selectedOv._opacity??(isLine?0.9:0.2))*100);
+    const spd=selectedOv._speed??0.9;
+    document.getElementById('prop-speed').value=Math.round(spd*10);
+    document.getElementById('prop-speed-val').textContent=spd.toFixed(1);
+    document.getElementById('prop-desc').value=selectedOv._desc||'';
     if(isMarker){
         const pos=selectedOv.getPosition();
         document.getElementById('prop-points-info').textContent='坐标: '+pos.lng.toFixed(6)+', '+pos.lat.toFixed(6);
@@ -538,6 +549,16 @@ document.getElementById('prop-opacity').addEventListener('input',function(){
     const v=Number(this.value)/100;selectedOv._opacity=v;
     if(selectedOv instanceof AMap.Polygon)selectedOv.setOptions({fillOpacity:v});
     else selectedOv.setOptions({strokeOpacity:v});
+});
+document.getElementById('prop-speed').addEventListener('input',function(){
+    if(!selectedOv||selectedOv._type!=='route')return;
+    const v=Number(this.value)/10;
+    selectedOv._speed=v;
+    document.getElementById('prop-speed-val').textContent=v.toFixed(1);
+});
+document.getElementById('prop-desc').addEventListener('input',function(){
+    if(!selectedOv||selectedOv._type==='marker')return;
+    selectedOv._desc=this.value;
 });
 
 // Color presets
@@ -589,10 +610,10 @@ async function doSave(token,name){
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
         if(o._type==='route'){
             if(pts.length<2){skipped++;return}
-            routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:0.9};
+            routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:o._speed??0.9,desc:o._desc||''};
         }else{
             if(pts.length<3){skipped++;return}
-            areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2};
+            areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
         }
     });
     const data={kind:'map',routes,areas,markers};
@@ -648,8 +669,8 @@ document.getElementById('btn-export').addEventListener('click',()=>{
     overlays.forEach(o=>{
         if(o._type==='marker'){const pos=o.getPosition();markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};return}
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
-        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3};
-        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2};
+        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,speed:o._speed??0.9,desc:o._desc||''};
+        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,desc:o._desc||''};
     });
     const blob=new Blob([JSON.stringify({routes,areas,markers},null,2)],{type:'application/json'});
     const a=document.createElement('a');a.download='map-data.json';a.href=URL.createObjectURL(blob);a.click();
