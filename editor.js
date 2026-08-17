@@ -60,7 +60,7 @@
 
   // ===================== DOM 引用 =====================
   const canvas = document.getElementById('editor-canvas');
-  const ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d'); // let — exportPNG 需要临时切换为离屏上下文
   const canvasWrap = document.getElementById('canvas-wrap');
   const $name = document.getElementById('project-name');
   const $layerList = document.getElementById('layer-list');
@@ -382,43 +382,47 @@
   function getSelEl() { return state.elements.find(e => e.id === state.selectedElementId) || null; }
 
   // ===================== History =====================
+  // 标准「变更后快照」模型：saveHistory 在 setState 之后调用，
+  // historyIndex 始终指向当前已提交快照；undo/redo 在快照间移动。
 
-  function saveHistory() {
-    const sp = {
+  function snapshotState() {
+    return {
       elements: JSON.parse(JSON.stringify(state.elements)),
       backgroundImage: state.backgroundImage,
       imageWidth: state.imageWidth, imageHeight: state.imageHeight,
       bgOpacity: state.bgOpacity,
     };
+  }
+
+  function saveHistory() {
     const nh = state.history.slice(0, state.historyIndex + 1);
-    nh.push(sp);
+    nh.push(snapshotState());
     if (nh.length > MAX_HISTORY) nh.shift();
     setState({ history: nh, historyIndex: nh.length - 1 });
   }
 
-  function undo() {
-    if (state.historyIndex < 0) return;
-    const sp = state.history[state.historyIndex];
-    setState({
-      elements: JSON.parse(JSON.stringify(sp.elements)),
-      backgroundImage: sp.backgroundImage, imageWidth: sp.imageWidth, imageHeight: sp.imageHeight,
-      bgOpacity: sp.bgOpacity, historyIndex: state.historyIndex - 1,
-      selectedElementId: null, isDrawing: false, drawingPoints: [],
-    });
-    loadBgImage(sp.backgroundImage, sp.imageWidth, sp.imageHeight);
+  function resetHistory() {
+    setState({ history: [snapshotState()], historyIndex: 0 });
   }
 
-  function redo() {
-    if (state.historyIndex >= state.history.length - 2) return;
-    const ni = state.historyIndex + 2;
-    const sp = state.history[ni];
+  function applySnapshot(sp, ni) {
     setState({
       elements: JSON.parse(JSON.stringify(sp.elements)),
       backgroundImage: sp.backgroundImage, imageWidth: sp.imageWidth, imageHeight: sp.imageHeight,
       bgOpacity: sp.bgOpacity, historyIndex: ni,
-      selectedElementId: null, isDrawing: false, drawingPoints: [],
+      selectedElementId: null, selectedElementIds: [], isDrawing: false, drawingPoints: [],
     });
     loadBgImage(sp.backgroundImage, sp.imageWidth, sp.imageHeight);
+  }
+
+  function undo() {
+    if (state.historyIndex <= 0) return;
+    applySnapshot(state.history[state.historyIndex - 1], state.historyIndex - 1);
+  }
+
+  function redo() {
+    if (state.historyIndex >= state.history.length - 1) return;
+    applySnapshot(state.history[state.historyIndex + 1], state.historyIndex + 1);
   }
 
   // ===================== Element Operations =====================
@@ -431,34 +435,34 @@
   function deleteSelected() {
     const ids = state.selectedElementIds.length > 0 ? state.selectedElementIds : (state.selectedElementId ? [state.selectedElementId] : []);
     if (ids.length === 0) return;
-    saveHistory();
     setState({ elements: state.elements.filter(e => !ids.includes(e.id)), selectedElementId: null, selectedElementIds: [] });
+    saveHistory();
   }
 
   function duplicateSelected() {
     const el = getSelEl(); if (!el) return;
-    saveHistory();
     const newEl = { ...JSON.parse(JSON.stringify(el)), id: genId(), name: el.name + ' 副本',
       points: el.points.map(p => ({ x: p.x + 20, y: p.y + 20 })) };
     setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id });
+    saveHistory();
   }
 
   function bringToFront(id) {
     const idx = state.elements.findIndex(e => e.id === id);
     if (idx < 0 || idx === state.elements.length - 1) return;
-    saveHistory();
     const els = [...state.elements];
     els.push(els.splice(idx, 1)[0]);
     setState({ elements: els });
+    saveHistory();
   }
 
   function sendToBack(id) {
     const idx = state.elements.findIndex(e => e.id === id);
     if (idx <= 0) return;
-    saveHistory();
     const els = [...state.elements];
     els.unshift(els.splice(idx, 1)[0]);
     setState({ elements: els });
+    saveHistory();
   }
 
   function alignElements(ids, type) {
@@ -470,7 +474,6 @@
       if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
     }));
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    saveHistory();
     const newEls = state.elements.map(e => {
       if (!ids.includes(e.id)) return e;
       const ecx = e.points.reduce((s, p) => s + p.x, 0) / e.points.length;
@@ -487,6 +490,7 @@
       return { ...e, points: e.points.map(p => ({ x: p.x + ox, y: p.y + oy })) };
     });
     setState({ elements: newEls });
+    saveHistory();
   }
 
   function startDrawing(point) {
@@ -505,7 +509,6 @@
     const isArea = state.currentTool === 'draw-area';
     const bn = isArea ? '区域' : '路线';
     const cnt = state.elements.filter(e => e.name.startsWith(bn)).length + 1;
-    saveHistory();
     const newEl = {
       id: genId(), type: isArea ? 'area' : 'route', name: `${bn} ${cnt}`,
       visible: true, locked: false, points: [...state.drawingPoints],
@@ -513,12 +516,12 @@
       strokeWidth: isArea ? 2 : 3, opacity: isArea ? 0.3 : 1,
     };
     setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id, isDrawing: false, drawingPoints: [] });
+    saveHistory();
   }
 
   function addTextAnnotation(point) {
     const text = prompt('输入文字:', '标注');
     if (!text) return;
-    saveHistory();
     const cnt = state.elements.filter(e => e.type === 'text').length + 1;
     const newEl = {
       id: genId(), type: 'text', name: `文字 ${cnt}`, visible: true, locked: false,
@@ -526,24 +529,45 @@
       label: text, fontSize: 16, backgroundColor: DEFAULT_TEXT_BG,
     };
     setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id });
+    saveHistory();
   }
 
   function updateSelEl(updates) {
     const id = state.selectedElementId; if (!id) return;
-    saveHistory();
     setState({ elements: state.elements.map(e => e.id === id ? { ...e, ...updates } : e) });
+    saveHistory();
   }
 
   function updateSelPoints(points) {
     const id = state.selectedElementId; if (!id) return;
-    saveHistory();
     setState({ elements: state.elements.map(e => e.id === id ? { ...e, points } : e) });
+    saveHistory();
   }
 
-  function setBackgroundImage(dataUrl, w, h) {
+  async function setBackgroundImage(dataUrl, w, h) {
+    const optimized = await optimizeImage(dataUrl);
+    setState({ backgroundImage: optimized, imageWidth: w, imageHeight: h });
     saveHistory();
-    setState({ backgroundImage: dataUrl, imageWidth: w, imageHeight: h });
-    loadBgImage(dataUrl, w, h);
+    loadBgImage(optimized, w, h);
+  }
+
+  // 背景图过大时按最大边长压缩，避免 base64 撑爆数据库/JSON
+  function optimizeImage(dataUrl, maxDim = 1600) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        if (scale >= 1) { resolve(dataUrl); return; }
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
   }
 
   function loadBgImage(dataUrl, w, h) {
@@ -556,28 +580,69 @@
   // ===================== Export =====================
 
   function exportPNG() {
-    render(); // ensure latest render
-    // Draw legend overlay
-    const legendEls = state.elements.filter(el => el.visible && (el.type === 'route' || el.type === 'area'));
-    if (legendEls.length > 0) {
-      const lx = 20, ly = 20, lw = 180;
-      const lh = 20 + legendEls.length * 24;
-      ctx.save();
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      ctx.beginPath(); roundRectCtx(ctx, lx, ly, lw, Math.max(lh, 40), 8); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('图例', lx + 12, ly + 18);
-      legendEls.forEach((el, i) => {
-        const y = ly + 34 + i * 24;
-        ctx.beginPath(); ctx.arc(lx + 16, y, 5, 0, Math.PI * 2); ctx.fillStyle = el.color; ctx.fill();
-        ctx.fillStyle = '#ddd'; ctx.font = '11px sans-serif';
-        ctx.fillText(el.name, lx + 30, y + 4);
-      });
-      ctx.textAlign = 'start'; ctx.restore();
+    // 计算全部内容（背景图 + 元素）的包围盒，导出完整场景而非仅视口
+    let minX = 0, minY = 0, maxX = state.imageWidth || 0, maxY = state.imageHeight || 0;
+    state.elements.forEach(el => el.points && el.points.forEach(p => {
+      if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+    }));
+    if (maxX <= minX) { maxX = 800; maxY = 600; } // 空场景回退
+    const pad = 40;
+    const w = Math.round(maxX - minX + pad * 2);
+    const h = Math.round(maxY - minY + pad * 2);
+
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d');
+    const savedCtx = ctx;
+    ctx = octx; // 复用 drawRoute/drawArea/drawText 等模块级 ctx 引用
+
+    try {
+      octx.fillStyle = '#f8f9fa';
+      octx.fillRect(0, 0, w, h);
+      octx.save();
+      octx.translate(-minX + pad, -minY + pad);
+      if (bgImageObj && state.bgOpacity > 0) {
+        octx.globalAlpha = state.bgOpacity;
+        octx.drawImage(bgImageObj, 0, 0, state.imageWidth || bgImageObj.width, state.imageHeight || bgImageObj.height);
+        octx.globalAlpha = 1;
+      }
+      for (const el of state.elements) {
+        if (!el.visible) continue;
+        octx.save();
+        octx.globalAlpha = el.opacity;
+        if (el.type === 'route') drawRoute(el);
+        else if (el.type === 'area') drawArea(el);
+        else if (el.type === 'text') drawText(el);
+        octx.restore();
+      }
+      octx.restore();
+
+      // 图例（左下角）
+      const legendEls = state.elements.filter(el => el.visible && (el.type === 'route' || el.type === 'area'));
+      if (legendEls.length > 0) {
+        const lx = 20, ly = 20, lw = 180;
+        const lh = 20 + legendEls.length * 24;
+        octx.save();
+        octx.fillStyle = 'rgba(0,0,0,0.7)';
+        octx.beginPath(); roundRectCtx(octx, lx, ly, lw, Math.max(lh, 40), 8); octx.fill();
+        octx.fillStyle = '#fff'; octx.font = 'bold 12px sans-serif'; octx.textAlign = 'left';
+        octx.fillText('图例', lx + 12, ly + 18);
+        legendEls.forEach((el, i) => {
+          const y = ly + 34 + i * 24;
+          octx.beginPath(); octx.arc(lx + 16, y, 5, 0, Math.PI * 2); octx.fillStyle = el.color; octx.fill();
+          octx.fillStyle = '#ddd'; octx.font = '11px sans-serif';
+          octx.fillText(el.name, lx + 30, y + 4);
+        });
+        octx.textAlign = 'start'; octx.restore();
+      }
+    } finally {
+      ctx = savedCtx; // 恢复主画布上下文
     }
+
     const link = document.createElement('a');
     link.download = (state.projectName || '场地路线图') + '.png';
-    link.href = canvas.toDataURL('image/png');
+    link.href = off.toDataURL('image/png');
     link.click();
     showToast('✅ PNG 已导出');
   }
@@ -702,10 +767,11 @@
       elements: Array.isArray(data.elements) ? data.elements : [],
       projectName: data.projectName || '未命名项目',
       geoBounds: data.geoBounds || null,
-      history: [], historyIndex: -1, selectedElementId: null, selectedElementIds: [],
+      selectedElementId: null, selectedElementIds: [],
       isDrawing: false, drawingPoints: [], stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
     loadBgImage(data.backgroundImage, data.imageWidth, data.imageHeight);
+    resetHistory();
     $name.value = data.projectName || '未命名项目';
     updateUI();
   }
@@ -775,7 +841,7 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
-  function getToken() { return localStorage.getItem('editor_token') || null; }
+  function getToken() { return localStorage.getItem('admin_token') || null; }
 
   function showLoginPrompt(onSuccess) {
     const overlay = document.createElement('div');
@@ -795,7 +861,7 @@
         const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
         const json = await res.json();
         if (json.token) {
-          localStorage.setItem('editor_token', json.token);
+          localStorage.setItem('admin_token', json.token);
           overlay.remove();
           showToast('✅ 登录成功');
           if (onSuccess) setTimeout(onSuccess, 300);
@@ -992,7 +1058,8 @@
     if (dragState && dragState.type === 'vertex') {
       const el = state.elements.find(e => e.id === dragState.eid); if (!el) return;
       const np = [...el.points]; np[dragState.nidx] = { x: snap(world.x), y: snap(world.y) };
-      updateSelPoints(np);
+      // 直接 setState，避免每次 pointermove 都写入历史（历史刷爆）
+      setState({ elements: state.elements.map(e => e.id === dragState.eid ? { ...e, points: np } : e) });
       return;
     }
     if (dragState && dragState.type === 'element') {
@@ -1128,7 +1195,7 @@
   document.getElementById('btn-reset-view').addEventListener('click', () => setState({ stageScale: 1, stagePosition: { x: 0, y: 0 } }));
 
   document.getElementById('bg-opacity').addEventListener('input', function () {
-    const o = Number(this.value) / 100; saveHistory(); setState({ bgOpacity: o });
+    const o = Number(this.value) / 100; setState({ bgOpacity: o }); saveHistory();
   });
 
   // Export
@@ -1197,9 +1264,9 @@
       projectId: null, projectName: '未命名项目', geoBounds: null,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
-      history: [], historyIndex: -1, stageScale: 1, stagePosition: { x: 0, y: 0 },
+      stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
-    bgImageObj = null; $name.value = '未命名项目'; updateUI();
+    bgImageObj = null; $name.value = '未命名项目'; resetHistory(); updateUI();
   });
   document.getElementById('btn-geo').addEventListener('click', showGeoBoundsModal);
 
@@ -1252,8 +1319,8 @@
     const id = item.dataset.id;
     const action = e.target.dataset.action;
     if (action === 'toggle-vis') {
-      saveHistory();
       setState({ elements: state.elements.map(el => el.id === id ? { ...el, visible: !el.visible } : el) });
+      saveHistory();
     } else if (action === 'toggle-lock') {
       setState({ elements: state.elements.map(el => el.id === id ? { ...el, locked: !el.locked } : el) });
     } else {
@@ -1387,6 +1454,7 @@
   function init() {
     updateColorPresets();
     loadBgImage(state.backgroundImage, state.imageWidth, state.imageHeight);
+    resetHistory();
     updateUI(); updateToolBtns(); render(); renderRulers();
   }
 

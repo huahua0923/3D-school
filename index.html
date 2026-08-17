@@ -114,6 +114,13 @@
         .sb-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
         .sb-btn.primary { background: var(--accent-main); border-color: var(--accent-main); color: #fff; font-weight: 600; }
         .sb-status { font-size: 0.7rem; color: rgba(255,255,255,0.35); text-align: center; }
+.parking-list { display: flex; flex-direction: column; gap: 8px; }
+.parking-row { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); }
+.parking-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.parking-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parking-count { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.5); }
+.parking-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); margin-top: 4px; overflow: hidden; }
+.parking-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
 
         /* ====== Top-Right & Bottom-Right ====== */
         #btn-auto-rotate {
@@ -244,7 +251,7 @@
 
 <!-- Loading -->
 <div id="loading-screen">
-    <div class="loader-brand">城东<span>体育馆</span></div>
+    <div class="loader-brand" id="loader-brand">城东<span>体育馆</span></div>
     <div class="loader-sub" id="loader-sub">3D SMART NAVIGATION</div>
     <div class="loader-track"><div class="loader-bar" id="loader-bar"></div></div>
     <div class="loader-pct" id="loader-pct">正在加载地图...</div>
@@ -289,6 +296,12 @@
         </div>
     </div>
 
+    <!-- Parking -->
+    <div class="sb-section">
+        <div class="sb-label">🅿️ 停车场</div>
+        <div class="parking-list" id="parking-list"></div>
+    </div>
+
     <!-- Plans (导览方案) -->
     <div class="sb-section">
         <div class="sb-label">🗂️ 导览方案</div>
@@ -326,13 +339,11 @@
         <button data-mode="3d" class="active">3D</button>
         <button data-mode="2d">2D</button>
     </div>
+    <div class="ctrl-group" id="camera-presets" style="display:none;"></div>
     <div class="ctrl-group">
         <button data-layer="dark" class="active">暗黑</button>
         <button data-layer="normal">标准</button>
         <button data-layer="satellite">卫星</button>
-    </div>
-</div>
-
     </div>
 </div>
 
@@ -407,6 +418,8 @@ async function loadConfig() {
         if (CONFIG.brand) {
             document.title = CONFIG.brand.name + ' · ' + (CONFIG.brand.subtitle || '');
             document.getElementById('loader-sub').textContent = CONFIG.brand.subtitle || '';
+            const lb = document.getElementById('loader-brand');
+            if (lb) lb.textContent = (CONFIG.brand.logo ? CONFIG.brand.logo + ' ' : '') + (CONFIG.brand.name || '');
             document.getElementById('sb-logo').textContent = CONFIG.brand.logo || '🏟️';
             document.getElementById('sb-title').textContent = CONFIG.brand.name || '';
             document.getElementById('sb-sub').textContent = CONFIG.brand.subtitle || '';
@@ -600,9 +613,16 @@ function buildVenue(scene, localToAmap) {
     const S = localToAmap(0, 1, 0).y - localToAmap(0, 0, 0).y; // scale: 1 meter in Amap units
     const clickables = [];
 
-    const { w, d, color, pos } = CONFIG.building.main;
+    const { w, d, h, color, pos } = CONFIG.building.main;
     const amap = localToAmap(pos[0], pos[2], 0);
     const col = new THREE.Color(color);
+
+    // 主建筑（实心）
+    const mainMat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, metalness: 0.2 });
+    const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
+    mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
+    mainMesh.castShadow = true; mainMesh.receiveShadow = true;
+    scene.add(mainMesh);
 
     // Sub buildings
     for (const sb of CONFIG.building.subs) {
@@ -912,15 +932,25 @@ async function initAmap() {
     return map;
 }
 
+/** 颜色统一转为 #hex 字符串（config 中路线颜色已被 loadConfig 转为 int） */
+function colorToHex(c, fallback = '#3b82f6') {
+    if (c == null) return fallback;
+    if (typeof c === 'string') return c.startsWith('#') ? c : '#' + c;
+    if (typeof c === 'number') return '#' + c.toString(16).padStart(6, '0');
+    return fallback;
+}
+
 // ========================================================
 // 路线和区域展示（纯展示，无编辑功能）
 function displayRoutesAndAreas(map) {
     let routeCount = 0, areaCount = 0;
+    const center = CONFIG.geo ? CONFIG.geo.center : [104.14141, 30.67133];
     if (CONFIG.routes) {
         Object.entries(CONFIG.routes).forEach(([name, r]) => {
             if (!r.pts || r.pts.length < 2) return;
-            const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
-            map.add(new AMap.Polyline({ path, strokeColor: typeof r.color === 'string' ? r.color : '#3b82f6', strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 }));
+            // 路线点存储为本地米 [x_east, y_height, z_north]，需换算为经纬度
+            const path = r.pts.map(p => new AMap.LngLat(...localToLngLat(p[0], p[2], center)));
+            map.add(new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 3, strokeOpacity: 0.9, zIndex: 10 }));
             routeCount++;
         });
     }
@@ -928,7 +958,7 @@ function displayRoutesAndAreas(map) {
         Object.entries(CONFIG.areas).forEach(([name, a]) => {
             if (!a.pts || a.pts.length < 3) return;
             const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
-            map.add(new AMap.Polygon({ path, strokeColor: a.color || '#10b981', strokeWeight: a.strokeWidth || 2, fillColor: a.color || '#10b981', fillOpacity: a.opacity || 0.2, zIndex: 5 }));
+            map.add(new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity || 0.2, zIndex: 5 }));
             areaCount++;
         });
     }
@@ -1075,7 +1105,7 @@ async function boot() {
     // 加载「导览方案」下拉并支持叠加渲染
     initPlanSelector(map);
 
-    // AMap search autocomplete
+    // 搜索：优先匹配本地场馆标记/停车场，其次高德 POI
     AMap.plugin('AMap.AutoComplete', () => {
         const auto = new AMap.AutoComplete({ city: '成都', citylimit: true });
         const searchInput = document.getElementById('search-input');
@@ -1083,9 +1113,32 @@ async function boot() {
         searchInput.addEventListener('input', () => {
             const val = searchInput.value.trim();
             if (!val) { searchResults.style.display = 'none'; return; }
+            searchResults.innerHTML = '';
+            const q = val.toLowerCase();
+            // 1) 本地场馆标记
+            for (const [key, m] of Object.entries(CONFIG.markers || {})) {
+                if ((m.label || key).toLowerCase().includes(q)) {
+                    const div = document.createElement('div');
+                    div.className = 'search-item';
+                    div.dataset.venueKey = key;
+                    div.textContent = (m.icon || '📍') + ' ' + (m.label || key);
+                    searchResults.appendChild(div);
+                }
+            }
+            // 2) 停车场
+            (CONFIG.parking || []).forEach((p, pi) => {
+                if ((p.name || '').toLowerCase().includes(q)) {
+                    const div = document.createElement('div');
+                    div.className = 'search-item';
+                    div.dataset.venueKey = '__parking__' + pi;
+                    div.textContent = '🅿️ ' + p.name;
+                    searchResults.appendChild(div);
+                }
+            });
+            searchResults.style.display = searchResults.children.length ? 'block' : 'none';
+            // 3) 高德 POI
             auto.search(val, (status, result) => {
                 if (status === 'complete' && result.tips) {
-                    searchResults.innerHTML = '';
                     result.tips.slice(0, 6).forEach(t => {
                         const div = document.createElement('div');
                         div.className = 'search-item';
@@ -1101,6 +1154,20 @@ async function boot() {
         searchResults.addEventListener('click', (e) => {
             const item = e.target.closest('.search-item');
             if (!item) return;
+            if (item.dataset.venueKey) {
+                const vk = item.dataset.venueKey;
+                searchResults.style.display = 'none';
+                searchInput.value = item.textContent.replace(/^[^\s]+\s/, '');
+                if (vk.startsWith('__parking__')) {
+                    const pi = parseInt(vk.slice('__parking__'.length), 10);
+                    const p = CONFIG.parking && CONFIG.parking[pi];
+                    if (p) map.setZoomAndCenter(18, localToLngLat(p.offset[0], p.offset[2], CONFIG.geo.center));
+                } else {
+                    const md = markerData.find(m => m.key === vk);
+                    if (md) { map.setZoomAndCenter(18, md.lngLat); ui.showInfo(vk); }
+                }
+                return;
+            }
             const lng = parseFloat(item.dataset.lng), lat = parseFloat(item.dataset.lat);
             if (lng && lat) {
                 map.setZoomAndCenter(18, [lng, lat]);
@@ -1159,11 +1226,14 @@ async function boot() {
         }
     });
 
-    // Extend marker info click to show navigation
-    const origShowInfo = ui.showInfo;
-    ui.showInfo = function(key) {
-        origShowInfo.call(this, key);
-        if (!myLocation) return;
+    // 导航到指定标记：绘制步行路线并计算距离/时间
+    function navigateTo(key) {
+        const info = document.getElementById('nav-info');
+        if (!myLocation) {
+            info.style.display = 'block';
+            info.textContent = '⚠️ 请先点击「设置我的位置」';
+            return;
+        }
         const md = markerData.find(m => m.key === key);
         if (!md || !md.lngLat) return;
 
@@ -1183,9 +1253,16 @@ async function boot() {
             [md.lngLat[0], md.lngLat[1]]
         );
         const walkTime = Math.ceil(dist / 80); // 80m/min walking speed
-        const info = document.getElementById('nav-info');
         info.style.display = 'block';
         info.textContent = '📍 ' + dist.toFixed(0) + 'm · 步行约 ' + (walkTime < 1 ? '<1' : walkTime) + ' 分钟';
+    }
+    ui._onNavigate = navigateTo;
+
+    // 打开信息卡时若已定位，自动绘制路线
+    const origShowInfo = ui.showInfo;
+    ui.showInfo = function(key) {
+        origShowInfo.call(this, key);
+        if (myLocation) navigateTo(key);
     };
     map.on('click', (e) => {
         const clicked = e.lnglat;
@@ -1255,19 +1332,55 @@ async function boot() {
 
     // 2D/3D toggle (bottom-right controls)
     let savedPitch = CONFIG.geo.pitch || 55;
+    let savedRotation = CONFIG.geo.rotation || 20;
     document.querySelectorAll('#bottom-controls button[data-mode]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('#bottom-controls button[data-mode]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             if (btn.dataset.mode === '2d') {
-                savedPitch = map.getPitch();
+                savedPitch = map.getPitch() || savedPitch;
+                savedRotation = map.getRotation() || 0;
                 map.setPitch(0);
                 map.setRotation(0);
             } else {
                 map.setPitch(savedPitch);
+                map.setRotation(savedRotation);
             }
         });
     });
+
+    // 视角预设：飞至后台配置的相机视角
+    function applyPreset(name) {
+        const p = CONFIG.camera.presets && CONFIG.camera.presets[name];
+        if (!p) return;
+        const target = localToLngLat(p.target[0], p.target[2], CONFIG.geo.center);
+        const dx = p.pos[0] - p.target[0];
+        const dy = p.pos[1] - p.target[1];
+        const dz = p.pos[2] - p.target[2];
+        const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy + dz * dz));
+        const pitch = Math.round(Math.atan2(dy, Math.hypot(dx, dz)) * 180 / Math.PI);
+        const zoom = Math.max(14, Math.min(20, 19 - Math.log2(dist)));
+        map.setZoomAndCenter(zoom, target);
+        map.setPitch(Math.max(0, Math.min(80, pitch)));
+        map.setRotation(CONFIG.geo.rotation || 20);
+        document.querySelectorAll('#camera-presets button').forEach(b => b.classList.toggle('active', b.dataset.preset === name));
+    }
+    function renderCameraPresets() {
+        const container = document.getElementById('camera-presets');
+        if (!container) return;
+        const presets = Object.entries(CONFIG.camera.presets || {});
+        container.innerHTML = '';
+        if (!presets.length) { container.style.display = 'none'; return; }
+        container.style.display = 'flex';
+        for (const [name] of presets) {
+            const btn = document.createElement('button');
+            btn.textContent = name;
+            btn.dataset.preset = name;
+            btn.addEventListener('click', () => applyPreset(name));
+            container.appendChild(btn);
+        }
+    }
+    renderCameraPresets();
 
     // Auto-rotate (orbit the Amap camera)
     let autoRotate = false;

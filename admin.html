@@ -118,6 +118,12 @@ a { color: #58a6ff; }
     align-self: flex-start; margin-top: 4px;
 }
 .btn-add-feat:hover { border-color: #58a6ff; color: #58a6ff; }
+.btn-del {
+    padding: 6px 14px; border-radius: 6px; border: 1px solid #30363d;
+    background: #21262d; color: #f85149; cursor: pointer; font-size: 0.82rem;
+    margin-top: 12px;
+}
+.btn-del:hover { background: #da3633; color: #fff; border-color: #da3633; }
 
 /* -- Route points editor -- */
 .point-list { display: flex; flex-direction: column; gap: 6px; }
@@ -182,6 +188,13 @@ a { color: #58a6ff; }
     <div class="logo">🏛️ 导览配置</div>
     <nav>
     <button class="active" data-panel="brand">⚙️ 系统配置</button>
+    <button data-panel="building">🏢 建筑 & 场景</button>
+    <button data-panel="markers">📍 标记点</button>
+    <button data-panel="routes">🛤️ 路线</button>
+    <button data-panel="areas">🗺️ 区域</button>
+    <button data-panel="camera">📷 相机</button>
+    <button data-panel="particles">✨ 粒子</button>
+    <button data-panel="parking">🅿️ 停车场</button>
     <button data-panel="geo">🌍 地理信息</button>
     <a href="admin-map.html" class="nav-link">🗺️ 地图绘制</a>
     <a href="editor.html" class="nav-link">✏️ 路线图编辑器</a>
@@ -384,7 +397,7 @@ function fld(key, label, type = 'text', opts = {}) {
     } else if (type === 'textarea') {
         inputHtml = `<textarea onchange="updateNested(config, '${key}', this.value)">${opts.value || ''}</textarea>`;
     } else {
-        inputHtml = `<input type="${type}" value="${opts.value || ''}" step="${opts.step || 'any'}" onchange="updateNested(config, '${key}', this.type === 'number' ? +this.value : this.value)" />`;
+        inputHtml = `<input type="${type}" value="${opts.value || ''}" step="${opts.step || 'any'}"${opts.min !== undefined ? ` min="${opts.min}"` : ''}${opts.max !== undefined ? ` max="${opts.max}"` : ''} onchange="updateNested(config, '${key}', this.type === 'number' ? +this.value : this.value)" />`;
     }
     return `<div class="form-group"><label>${label}</label>${inputHtml}</div>`;
 }
@@ -401,7 +414,12 @@ function updateNested(obj, path, value) {
         }
     }
     const lastKey = keys[keys.length - 1];
-    cur[lastKey] = value;
+    if (lastKey.includes('[')) {
+        const [name, idx] = lastKey.split('[');
+        cur[name][parseInt(idx)] = value;
+    } else {
+        cur[lastKey] = value;
+    }
 }
 
 function getNested(obj, path) {
@@ -418,6 +436,54 @@ function getNested(obj, path) {
     }
     return cur;
 }
+
+// ---------- Add / Delete helpers ----------
+function addMarker() {
+    const k = prompt('新标记的 key（英文，如 entrance）');
+    if (!k || !k.trim()) return;
+    config.markers = config.markers || {};
+    if (config.markers[k]) { alert('该 key 已存在'); return; }
+    config.markers[k] = { label: '新标记', icon: '📍', badge: '', color: '#4ea1ff', pos: [0, 0, 30], desc: '', features: [] };
+    renderMarkers();
+}
+function delMarker(key) { if (confirm('删除标记「' + key + '」？')) { delete config.markers[key]; renderMarkers(); } }
+
+function addRoute() {
+    const k = prompt('新路线的 key（如 public / vip）');
+    if (!k || !k.trim()) return;
+    config.routes = config.routes || {};
+    if (config.routes[k]) { alert('该 key 已存在'); return; }
+    config.routes[k] = { color: '#4ea1ff', speed: 2, strokeWidth: 3, opacity: 1, pts: [[0, 0.6, 0]] };
+    renderRoutes();
+}
+function delRoute(key) { if (confirm('删除路线「' + key + '」？')) { delete config.routes[key]; renderRoutes(); } }
+
+function addArea() {
+    const k = prompt('新区域的 key（英文）');
+    if (!k || !k.trim()) return;
+    config.areas = config.areas || {};
+    if (config.areas[k]) { alert('该 key 已存在'); return; }
+    config.areas[k] = { color: '#10b981', strokeWidth: 2, opacity: 0.2, pts: [[104.14, 30.67], [104.141, 30.671]] };
+    renderAreas();
+}
+function delArea(key) { if (confirm('删除区域「' + key + '」？')) { delete config.areas[key]; renderAreas(); } }
+
+function addPreset() {
+    const k = prompt('新视角预设的名称（如 overview）');
+    if (!k || !k.trim()) return;
+    config.camera.presets = config.camera.presets || {};
+    if (config.camera.presets[k]) { alert('该预设已存在'); return; }
+    config.camera.presets[k] = { pos: [70, 50, 80], target: [0, 4, 0] };
+    renderCamera();
+}
+function delPreset(key) { if (confirm('删除预设「' + key + '」？')) { delete config.camera.presets[key]; renderCamera(); } }
+
+function addSub() {
+    config.building.subs = config.building.subs || [];
+    config.building.subs.push({ w: 4, d: 4, h: 4, x: 15, z: 0, color: '#2a3f7a' });
+    renderBuilding();
+}
+function delSub(i) { config.building.subs.splice(i, 1); renderBuilding(); }
 
 // ---------- Render functions ----------
 function renderAll() {
@@ -458,8 +524,10 @@ function renderBuilding() {
             fld(`${base}.x`, 'X', 'number', { value: s.x, step: 1 }) +
             fld(`${base}.z`, 'Z', 'number', { value: s.z, step: 1 }) +
             fld(`${base}.color`, '颜色', 'color', { value: s.color }) +
-            `</div></div>`;
-    }).join('');
+            `</div>` +
+            `<button class="btn-del" onclick="delSub(${i})">✕ 删除配楼</button></div>`;
+    }).join('') +
+    `<button class="btn-add-feat" style="margin-top:12px" onclick="addSub()">+ 添加配楼</button>`;
 
     document.getElementById('form-scene').innerHTML =
         fld('building.roadWidth', '道路宽度', 'number', { value: config.building.roadWidth, step: 1 }) +
@@ -497,8 +565,10 @@ function renderMarkers() {
                 </div>
                 <button class="btn-add-feat" onclick="config.markers[${JSON.stringify(key)}].features.push('新设施');renderMarkers()">+ 添加设施</button>
             </div>
+            <button class="btn-del" onclick="delMarker(${JSON.stringify(key)})">✕ 删除标记</button>
         </div>`;
-    }).join('');
+    }).join('') +
+    `<button class="btn-add-feat" style="margin-top:12px" onclick="addMarker()">+ 添加标记</button>`;
 }
 
 function renderRoutes() {
@@ -521,8 +591,10 @@ function renderRoutes() {
                 </div>
                 <button class="btn-add-feat" onclick="config.routes[${JSON.stringify(key)}].pts.push([0,0.6,0]);renderRoutes()">+ 添加路径点</button>
             </div>
+            <button class="btn-del" onclick="delRoute(${JSON.stringify(key)})">✕ 删除路线</button>
         </div>`;
-    }).join('');
+    }).join('') +
+    `<button class="btn-add-feat" style="margin-top:12px" onclick="addRoute()">+ 添加路线</button>`;
 }
 
 function renderAreas() {
@@ -545,8 +617,9 @@ function renderAreas() {
                 + '</div>'; }).join('')
             + '</div>'
             + '<button class="btn-add-feat" onclick="config.areas['+sk+'].pts.push([104.14,30.67]);renderAreas()">+ 添加顶点</button>'
+            + '<button class="btn-del" onclick="delArea('+sk+')">✕ 删除区域</button>'
             + '</div></div>';
-    }).join('');
+    }).join('') + '<button class="btn-add-feat" style="margin-top:12px" onclick="addArea()">+ 添加区域</button>';
 }
 
 function renderCamera() {
@@ -568,8 +641,9 @@ function renderCamera() {
             fld(`camera.presets.${key}.target[0]`, '目标 X', 'number', { value: p.target[0], step: 1 }) +
             fld(`camera.presets.${key}.target[1]`, '目标 Y', 'number', { value: p.target[1], step: 1 }) +
             fld(`camera.presets.${key}.target[2]`, '目标 Z', 'number', { value: p.target[2], step: 1 }) +
-            '</div></div>';
-    }).join('');
+            `</div><button class="btn-del" onclick="delPreset(${JSON.stringify(key)})">✕ 删除预设</button></div>`;
+    }).join('') +
+    `<button class="btn-add-feat" style="margin-top:12px" onclick="addPreset()">+ 添加预设</button>`;
 }
 
 function renderParticles() {

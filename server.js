@@ -35,7 +35,20 @@ app.use((_req, res, next) => {
     next();
 });
 
-// 开发模式：直接提供静态文件（生产环境由 Nginx 处理）
+// 静态文件白名单：只暴露前端所需文件，避免 .db 数据库、config.json.bak、源码、
+// node_modules、projects 等被公开下载。生产环境由 Nginx 处理时此段同样生效。
+const PUBLIC_PATHS = new Set([
+    '/index.html', '/index-classic.html', '/admin.html', '/admin-map.html',
+    '/editor.html', '/editor.css', '/editor.js', '/favicon.svg', '/config.json'
+]);
+app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    const p = req.path === '/' ? '/index.html' : req.path;
+    if (!PUBLIC_PATHS.has(p)) {
+        return res.status(404).type('text/plain').send('Not Found');
+    }
+    next();
+});
 app.use(express.static(__dirname));
 
 // ---------- 无状态 token 管理（HMAC 签名，服务器重启不丢失）----------

@@ -519,6 +519,29 @@ function getFullConfig() {
     }
   }
 
+  // 透传字段：SQLite 未建模的 brand / areas / planName / 路线样式，从 config.json 补齐
+  // （否则后台保存时这些字段会被抹掉，导致首页标题/Logo/区域叠加/线宽丢失）
+  let fileCfg = null;
+  try {
+    if (configPath && fs.existsSync(configPath)) {
+      fileCfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    }
+  } catch (e) {}
+  if (fileCfg) {
+    if (fileCfg.brand) config.brand = fileCfg.brand;
+    if (fileCfg.areas) config.areas = fileCfg.areas;
+    if (fileCfg.planName !== undefined) config.planName = fileCfg.planName;
+    if (fileCfg.routes) {
+      for (const key of Object.keys(config.routes)) {
+        const fr = fileCfg.routes[key];
+        if (fr) {
+          if (fr.strokeWidth !== undefined) config.routes[key].strokeWidth = fr.strokeWidth;
+          if (fr.opacity !== undefined) config.routes[key].opacity = fr.opacity;
+        }
+      }
+    }
+  }
+
   return config;
 }
 
