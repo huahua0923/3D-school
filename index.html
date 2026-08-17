@@ -788,8 +788,8 @@ function createFlowMaterial(color) {
                 float tail = 1.0 - smoothstep(0.0, 0.65, d);    // 拖尾渐隐
                 float headGlow = 1.0 - smoothstep(0.0, 0.12, d); // 头部锐利亮斑
                 float glow = max(tail, headGlow);
-                vec3 col = uColor * (0.35 + 2.8 * glow);
-                float alpha = 0.2 + 0.8 * glow;
+                vec3 col = uColor * (0.55 + 2.6 * glow);
+                float alpha = 0.5 + 0.5 * glow;
                 gl_FragColor = vec4(col, alpha);
             }
         `,
@@ -806,7 +806,7 @@ function addAnimatedRoute(pts, color, speed) {
     });
     const curve = new THREE.CatmullRomCurve3(vecs, false);
     const material = createFlowMaterial(color);
-    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.26, 8, false), material);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 2.0, 8, false), material);
     threeScene.add(tube);
     const obj = { tube, material, speed: (speed ?? 0.9) };
     animatedRoutes.push(obj);
