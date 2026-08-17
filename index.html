@@ -591,26 +591,9 @@ function buildVenue(scene, localToAmap) {
     const S = localToAmap(0, 1, 0).y - localToAmap(0, 0, 0).y; // scale: 1 meter in Amap units
     const clickables = [];
 
-    const { w, d, h, color, pos } = CONFIG.building.main;
-    const [bw, bd, bh] = [w * S, d * S, h * S]; // scale dimensions
+    const { w, d, color, pos } = CONFIG.building.main;
     const amap = localToAmap(pos[0], pos[2], 0);
     const col = new THREE.Color(color);
-    const bMat = new THREE.MeshStandardMaterial({
-        color: col, roughness: 0.2, metalness: 0.35,
-        transparent: true, opacity: 0.9,
-        emissive: col, emissiveIntensity: 0.25,
-    });
-    const mainBld = new THREE.Mesh(new THREE.BoxGeometry(bw, bd, bh), bMat);
-    mainBld.position.set(amap.x, amap.y, amap.z + bh / 2);
-    mainBld.castShadow = true; mainBld.receiveShadow = true;
-    scene.add(mainBld);
-
-    // Glowing outline
-    const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(bw + 1, bd + 1, bh + 1));
-    const edgeLine = new THREE.LineSegments(edgeGeo,
-        new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.5 }));
-    edgeLine.position.copy(mainBld.position);
-    scene.add(edgeLine);
 
     // Sub buildings
     for (const sb of CONFIG.building.subs) {
