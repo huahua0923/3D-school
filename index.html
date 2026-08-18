@@ -290,19 +290,6 @@
         </div>
     </div>
 
-    <!-- Layers -->
-    <div class="sb-section">
-        <div class="sb-label">图层信息</div>
-        <div class="sb-layers">
-            <div class="sb-layer-item"><span class="layer-dot" style="background:#3b82f6"></span> 路线 <span id="layer-route-count">0</span></div>
-            <div class="sb-layer-item"><span class="layer-dot" style="background:#10b981"></span> 区域 <span id="layer-area-count">0</span></div>
-            <div class="sb-layer-item"><span class="layer-dot" style="background:#8b5cf6"></span> 画框 <span id="layer-rect-count">0</span></div>
-            <div class="sb-layer-item"><span class="layer-dot" style="background:#ec4899"></span> 画圆 <span id="layer-circle-count">0</span></div>
-            <div class="sb-layer-item"><span class="layer-dot" style="background:#06b6d4"></span> 椭圆 <span id="layer-ellipse-count">0</span></div>
-            <div class="sb-layer-item"><span class="layer-dot" style="background:#ffffff"></span> 文字 <span id="layer-text-count">0</span></div>
-        </div>
-    </div>
-
     <!-- Plans (导览方案) -->
     <div class="sb-section">
         <div class="sb-label">🗂️ 导览方案</div>
@@ -1019,7 +1006,6 @@ function onFeatureClick(e, fn) {
 // ========================================================
 // 路线和区域展示（纯展示，无编辑功能）
 function displayRoutesAndAreas(map) {
-    let routeCount = 0, areaCount = 0;
     initFlowLayer(map);
     if (CONFIG.routes) {
         Object.entries(CONFIG.routes).forEach(([name, r]) => {
@@ -1033,7 +1019,6 @@ function displayRoutesAndAreas(map) {
             addFlowRoute('config:' + name, r.pts, r.color, 3, r.speed);
             const mid = r.pts[Math.floor(r.pts.length / 2)];
             addNameLabel(map, name, mid, 'center');
-            routeCount++;
         });
     }
     if (CONFIG.areas) {
@@ -1047,11 +1032,8 @@ function displayRoutesAndAreas(map) {
             a.pts.forEach(p => { cx += p[0]; cy += p[1]; });
             cx /= a.pts.length; cy /= a.pts.length;
             addNameLabel(map, name, [cx, cy], 'center');
-            areaCount++;
         });
     }
-    document.getElementById('layer-route-count').textContent = routeCount;
-    document.getElementById('layer-area-count').textContent = areaCount;
 }
 
 // ========================================================
@@ -1109,30 +1091,6 @@ function addNameLabel(map, text, lngLat, anchor, offsetPx) {
     return t;
 }
 
-function refreshLayerCounts() {
-    let routeCount = 0, areaCount = 0, rectCount = 0, circleCount = 0, ellipseCount = 0, textCount = 0;
-    Object.values(planOverlayGroups).forEach(g => { routeCount += g.route || 0; areaCount += g.area || 0; rectCount += g.rect || 0; circleCount += g.circle || 0; ellipseCount += g.ellipse || 0; textCount += g.text || 0; });
-    // 加上「地图绘制」保存到 CONFIG.routes / CONFIG.areas 的数量（避免被方案叠加数量覆盖）
-    if (CONFIG && CONFIG.routes) routeCount += Object.keys(CONFIG.routes).length;
-    if (CONFIG && CONFIG.areas) areaCount += Array.isArray(CONFIG.areas) ? CONFIG.areas.length : Object.keys(CONFIG.areas).length;
-    if (CONFIG && CONFIG.rects) rectCount += Object.keys(CONFIG.rects).length;
-    if (CONFIG && CONFIG.circles) circleCount += Object.keys(CONFIG.circles).length;
-    if (CONFIG && CONFIG.ellipses) ellipseCount += Object.keys(CONFIG.ellipses).length;
-    if (CONFIG && CONFIG.texts) textCount += Object.keys(CONFIG.texts).length;
-    const rc = document.getElementById('layer-route-count');
-    const ac = document.getElementById('layer-area-count');
-    const xc = document.getElementById('layer-rect-count');
-    const yc = document.getElementById('layer-circle-count');
-    const ec = document.getElementById('layer-ellipse-count');
-    const tc = document.getElementById('layer-text-count');
-    if (rc) rc.textContent = routeCount;
-    if (ac) ac.textContent = areaCount;
-    if (xc) xc.textContent = rectCount;
-    if (yc) yc.textContent = circleCount;
-    if (ec) ec.textContent = ellipseCount;
-    if (tc) tc.textContent = textCount;
-}
-
 function removePlanOverlay(map, planId) {
     const g = planOverlayGroups[planId];
     if (!g) return;
@@ -1140,7 +1098,6 @@ function removePlanOverlay(map, planId) {
     // 移除该方案的流动虚线
     (g.flowIds || []).forEach(id => removeFlowRoute(id));
     delete planOverlayGroups[planId];
-    refreshLayerCounts();
 }
 
 function applyPlan(map, plan) {
@@ -1236,7 +1193,6 @@ function applyPlan(map, plan) {
                 map.add(o); overlays.push(o); group.text++; added++;
             });
         }
-        refreshLayerCounts();
         return overlays.length;
     }
 
@@ -1288,7 +1244,6 @@ function applyPlan(map, plan) {
         }
         if (o) { map.add(o); overlays.push(o); }
     });
-    refreshLayerCounts();
     return overlays.length;
 }
 
