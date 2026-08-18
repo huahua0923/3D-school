@@ -1089,15 +1089,23 @@
   }
 
   async function saveToServer() {
-    const data = getProjectData();
     const token = getToken();
     if (!token) throw new Error('未登录');
+    // 新建项目且名字仍是默认名时，自动追加时间戳，避免多个「未命名项目」混淆
+    let name = state.projectName;
+    if (!state.projectId && (!name || name === '未命名项目')) {
+      const d = new Date();
+      const p = n => String(n).padStart(2, '0');
+      name = '未命名项目 ' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+      setState({ projectName: name });
+    }
+    const data = getProjectData();
     const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
     let res;
     if (state.projectId) {
-      res = await fetch(`/api/editor/projects/${state.projectId}`, { method: 'PUT', headers, body: JSON.stringify({ name: state.projectName, data }) });
+      res = await fetch(`/api/editor/projects/${state.projectId}`, { method: 'PUT', headers, body: JSON.stringify({ name, data }) });
     } else {
-      res = await fetch('/api/editor/projects', { method: 'POST', headers, body: JSON.stringify({ name: state.projectName, data }) });
+      res = await fetch('/api/editor/projects', { method: 'POST', headers, body: JSON.stringify({ name, data }) });
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
