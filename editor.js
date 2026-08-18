@@ -1818,6 +1818,19 @@
 
   init();
 
+  // 从 URL ?project=<id> 跳转时自动加载对应项目（供首页「编辑」按钮跳转）
+  (function autoLoadProjectFromUrl() {
+    const id = Number(new URLSearchParams(location.search).get('project'));
+    if (!id) return;
+    fetch('/api/editor/projects/' + id).then(r => r.ok ? r.json() : null).then(json => {
+      if (json && json.data) {
+        state.projectId = id;
+        loadProjectData(json.data.data || json.data);
+        showToast('✅ 已加载项目：' + (state.projectName || ('方案 ' + id)));
+      }
+    }).catch(() => {});
+  })();
+
   // ===================== API =====================
   window.editorAPI = { getState: () => state, loadProject: loadProjectData, getProject: getProjectData, render };
 })();

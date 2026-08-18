@@ -1349,8 +1349,9 @@ function renderOnePlanList(box, plans, active) {
         box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案</div>';
         return;
     }
+    const btnStyle = 'background:none;border:none;cursor:pointer;font-size:0.8rem;padding:0 2px;opacity:0.7;flex-shrink:0;';
     plans.forEach(p => {
-        const item = document.createElement('label');
+        const item = document.createElement('div');
         item.className = 'plan-item';
         const cb = document.createElement('input');
         cb.type = 'checkbox';
@@ -1360,10 +1361,60 @@ function renderOnePlanList(box, plans, active) {
         name.className = 'plan-name';
         name.textContent = p.name || ('方案 ' + p.id);
         name.title = p.name || '';
+        name.addEventListener('click', () => { cb.checked = !cb.checked; togglePlan(p.id, cb.checked); });
+        const edit = document.createElement('button');
+        edit.textContent = '✏️'; edit.title = '编辑此方案';
+        edit.style.cssText = btnStyle;
+        edit.addEventListener('click', e => { e.stopPropagation(); openPlanEditor(p); });
+        const del = document.createElement('button');
+        del.textContent = '🗑'; del.title = '删除此方案';
+        del.style.cssText = btnStyle;
+        del.addEventListener('click', e => { e.stopPropagation(); deletePlanFromHome(p); });
         item.appendChild(cb);
         item.appendChild(name);
+        item.appendChild(edit);
+        item.appendChild(del);
         box.appendChild(item);
     });
+}
+
+function openPlanEditor(p) {
+    const editor = (p.data && p.data.kind === 'map') ? 'admin-map.html' : 'editor.html';
+    location.href = editor + '?project=' + encodeURIComponent(p.id);
+}
+
+async function deletePlanFromHome(p) {
+    if (!confirm('确定删除方案「' + (p.name || ('方案 ' + p.id)) + '」？')) return;
+    let token = localStorage.getItem('admin_token');
+    if (!token) {
+        const pwd = prompt('删除需要管理员权限，请输入密码：');
+        if (pwd == null) return;
+        if (!pwd) { alert('密码不能为空'); return; }
+        try {
+            const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+            const j = await r.json();
+            if (!r.ok) { alert('登录失败：' + (j.error || ('HTTP ' + r.status))); return; }
+            token = j.token;
+            localStorage.setItem('admin_token', token);
+        } catch (e) { alert('登录失败：' + e.message); return; }
+    }
+    try {
+        const r = await fetch('/api/editor/projects/' + p.id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); alert('删除失败：' + (j.error || ('HTTP ' + r.status))); return; }
+        const ids = getActivePlanIds().filter(id => String(id) !== String(p.id));
+        saveActivePlanIds(ids);
+        if (planMap) removePlanOverlay(planMap, p.id);
+        await refreshPlanList();
+    } catch (e) { alert('删除失败：' + e.message); }
+}
+
+async function refreshPlanList() {
+    try {
+        const res = await fetch('/api/editor/projects');
+        const json = await res.json();
+        planProjects = json.data || [];
+    } catch (e) {}
+    renderPlanList();
 }
 
 function togglePlan(planId, on) {
