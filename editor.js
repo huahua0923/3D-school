@@ -828,14 +828,14 @@
       <div style="position:relative;width:min(96vw,1200px);height:min(92vh,780px);background:#0d1117;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 60px rgba(0,0,0,0.5);">
         <div style="padding:10px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.08);background:#111827;flex-wrap:wrap;">
           <span style="font-weight:700;color:#e0e0f0;font-size:0.9rem;">🎯 地图对位</span>
-          <span id="geo-align-hint" style="font-size:0.76rem;color:#9aa;flex:1;min-width:220px;">点击地图 → 移动中心；拖 🟡 手柄 → 微调；缩放/旋转滑块 → 对齐</span>
+          <span id="geo-align-hint" style="font-size:0.76rem;color:#9aa;flex:1;min-width:220px;">点击地图 → 移动中心；拖 🟡 手柄 → 微调；缩放/旋转可拖动或直接输入数值</span>
           <label style="font-size:0.75rem;color:#9aa;display:flex;align-items:center;gap:6px;">底图缩放
-            <input id="geo-align-scale" type="range" min="20" max="500" value="100" style="width:130px;accent-color:#3b82f6;" />
-            <span id="geo-align-scale-val" style="min-width:40px;">100%</span>
+            <input id="geo-align-scale" type="range" min="20" max="500" value="100" style="width:100px;accent-color:#3b82f6;" />
+            <input id="geo-align-scale-val" type="number" min="20" max="500" value="100" style="width:58px;background:#1f2937;border:1px solid rgba(255,255,255,0.15);color:#e0e0f0;border-radius:4px;padding:2px 4px;font-size:0.72rem;" />%
           </label>
           <label style="font-size:0.75rem;color:#9aa;display:flex;align-items:center;gap:6px;">旋转
-            <input id="geo-align-rotate" type="range" min="-180" max="180" value="0" step="0.5" style="width:110px;accent-color:#f59e0b;" />
-            <span id="geo-align-rotate-val" style="min-width:40px;">0°</span>
+            <input id="geo-align-rotate" type="range" min="-180" max="180" value="0" step="0.5" style="width:90px;accent-color:#f59e0b;" />
+            <input id="geo-align-rotate-val" type="number" min="-180" max="180" step="0.5" value="0" style="width:58px;background:#1f2937;border:1px solid rgba(255,255,255,0.15);color:#e0e0f0;border-radius:4px;padding:2px 4px;font-size:0.72rem;" />°
           </label>
           <button id="geo-align-reset" class="toolbar-btn" style="font-size:0.75rem;">重置</button>
           <button id="geo-align-cancel" class="toolbar-btn" style="font-size:0.75rem;">取消</button>
@@ -865,7 +865,7 @@
       let center = [...center0];
       let widthDeg = width0;
       let rotation = gb.rotation || 0;
-      rotateEl.value = rotation; rotateVal.textContent = rotation + '°';
+      rotateEl.value = rotation; rotateVal.value = rotation;
 
       // 纬度跨度按图片宽高比 + 墨卡托 cos 修正，保证底图在地图上显示为正确宽高比、不变形
       function heightDeg() {
@@ -905,24 +905,20 @@
         positionImg();
       });
 
-      // 底图缩放滑块（等比缩放）
-      scaleEl.addEventListener('input', () => {
-        widthDeg = width0 * (Number(scaleEl.value) / 100);
-        scaleVal.textContent = scaleEl.value + '%';
-        positionImg();
-      });
+      // 底图缩放（滑块拖动 / 数字框输入，双向同步）
+      const applyScale = v => { widthDeg = width0 * (v / 100); scaleEl.value = v; scaleVal.value = v; positionImg(); };
+      scaleEl.addEventListener('input', () => applyScale(Number(scaleEl.value)));
+      scaleVal.addEventListener('input', () => applyScale(Math.min(500, Math.max(20, Number(scaleVal.value) || 100))));
 
-      // 底图旋转滑块（绕中心旋转，用于对齐非正北朝向的平面图）
-      rotateEl.addEventListener('input', () => {
-        rotation = Number(rotateEl.value);
-        rotateVal.textContent = rotation + '°';
-        positionImg();
-      });
+      // 底图旋转（滑块拖动 / 数字框输入，双向同步；用于对齐非正北朝向的平面图）
+      const applyRotation = v => { rotation = v; rotateEl.value = v; rotateVal.value = v; positionImg(); };
+      rotateEl.addEventListener('input', () => applyRotation(Number(rotateEl.value)));
+      rotateVal.addEventListener('input', () => applyRotation(Math.min(180, Math.max(-180, Number(rotateVal.value) || 0))));
 
       overlay.querySelector('#geo-align-reset').onclick = () => {
         center = [...center0]; widthDeg = width0; rotation = gb.rotation || 0;
-        scaleEl.value = 100; scaleVal.textContent = '100%';
-        rotateEl.value = rotation; rotateVal.textContent = rotation + '°';
+        scaleEl.value = 100; scaleVal.value = 100;
+        rotateEl.value = rotation; rotateVal.value = rotation;
         centerMarker.setPosition([center[0], center[1]]);
         positionImg();
       };

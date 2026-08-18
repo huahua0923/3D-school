@@ -215,8 +215,8 @@ a { color: #58a6ff; }
     <button data-panel="camera">📷 相机</button>
     <button data-panel="geo">🌍 地理信息</button>
     <button data-panel="plans">📋 方案</button>
-    <a href="admin-map.html" class="nav-link">🗺️ 地图绘制</a>
-    <a href="editor.html" class="nav-link">✏️ 路线图编辑器</a>
+    <a href="admin-map.html" class="nav-link">🗺️ 路线图编辑</a>
+    <a href="editor.html" class="nav-link">✏️ 室内编辑</a>
 </nav>
 </div>
 
@@ -656,7 +656,7 @@ function renderMarkers() {
         });
     });
     if (items.length === 0) {
-        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无标记点。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 添加。</p></div>';
+        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无标记点。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 路线图编辑</a> 添加。</p></div>';
         return;
     }
     box.innerHTML = items.map(m => `
@@ -678,7 +678,7 @@ function renderRoutes() {
         });
     });
     if (items.length === 0) {
-        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无路线。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 画路线。</p></div>';
+        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无路线。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 路线图编辑</a> 画路线。</p></div>';
         return;
     }
     box.innerHTML = items.map(r => `
@@ -701,7 +701,7 @@ function renderAreas() {
         });
     });
     if (items.length === 0) {
-        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无区域。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 画区域。</p></div>';
+        box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无区域。去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 路线图编辑</a> 画区域。</p></div>';
         return;
     }
     box.innerHTML = items.map(a => `
@@ -773,7 +773,7 @@ async function renderPlans() {
         return;
     }
     if (rows.length === 0) {
-        box.innerHTML = `<div class="section"><p style="color:#8b949e;">暂无方案，去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 地图绘制</a> 创建</p></div>`;
+        box.innerHTML = `<div class="section"><p style="color:#8b949e;">暂无方案，去 <a href="admin-map.html" style="color:#58a6ff;">🗺️ 路线图编辑</a> 创建</p></div>`;
         return;
     }
     box.innerHTML = rows.map(p => {

@@ -290,10 +290,16 @@
         </div>
     </div>
 
-    <!-- Plans (导览方案) -->
+    <!-- Plans (路线图方案) -->
     <div class="sb-section">
-        <div class="sb-label">🗂️ 导览方案</div>
-        <div class="plan-list" id="plan-list"></div>
+        <div class="sb-label">🗺️ 路线图方案</div>
+        <div class="plan-list" id="plan-list-map"></div>
+    </div>
+
+    <!-- Indoor Plans (室内方案) -->
+    <div class="sb-section">
+        <div class="sb-label">🏢 室内方案</div>
+        <div class="plan-list" id="plan-list-indoor"></div>
         <div style="display:flex;gap:6px;margin-top:8px;">
             <button class="sb-btn" id="btn-clear-plan" style="font-size:0.72rem;padding:6px 8px;flex:1;">清除全部</button>
         </div>
@@ -1329,15 +1335,21 @@ function saveActivePlanIds(ids) {
 }
 
 function renderPlanList() {
-    const box = document.getElementById('plan-list');
+    const active = new Set(getActivePlanIds().map(String));
+    const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map');
+    const indoorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map'));
+    renderOnePlanList(document.getElementById('plan-list-map'), mapPlans, active);
+    renderOnePlanList(document.getElementById('plan-list-indoor'), indoorPlans, active);
+}
+
+function renderOnePlanList(box, plans, active) {
     if (!box) return;
     box.innerHTML = '';
-    if (planProjects.length === 0) {
+    if (plans.length === 0) {
         box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案</div>';
         return;
     }
-    const active = new Set(getActivePlanIds().map(String));
-    planProjects.forEach(p => {
+    plans.forEach(p => {
         const item = document.createElement('label');
         item.className = 'plan-item';
         const cb = document.createElement('input');
