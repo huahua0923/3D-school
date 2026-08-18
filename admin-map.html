@@ -88,8 +88,11 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
     <button class="btn" data-tool="polygon">⬡ 区域</button>
     <button class="btn" data-tool="rectangle">▭ 画框</button>
     <button class="btn" data-tool="circle">◯ 画圆</button>
+    <button class="btn" data-tool="ellipse">⬭ 椭圆</button>
     <button class="btn" data-tool="ranging">📐 测距</button>
+    <button class="btn" data-tool="measure-area">🧮 测面积</button>
     <button class="btn" data-tool="marker">📍 标记点</button>
+    <button class="btn" data-tool="text">🅰 文字</button>
     <div class="sep"></div>
     <button class="btn" id="btn-undo" disabled title="撤销 Ctrl+Z">↩</button>
     <button class="btn" id="btn-redo" disabled title="重做 Ctrl+Y">↪</button>
@@ -182,6 +185,7 @@ const COLOR_PRESETS = ['#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec489
 const MAX_HISTORY = 50;
 
 let map, mouseTool, rangingTool=null, currentTool='pointer', overlays=[], selectedOv=null;
+let activeEditor=null, preEditSnapshot=null;
 let satelliteLayer=null, roadNetLayer=null, saveToken=null;
 let history=[], historyIdx=-1;
 let currentPlanId=null, plans=[];
@@ -191,14 +195,18 @@ async function loadConfig(){
     try{const r=await fetch('/config.json');if(r.ok)config=await r.json()}catch(e){}
 }
 
-function saveSnapshot(){
-    const snap=JSON.parse(JSON.stringify(overlays.map(o=>{
+function captureOverlays(){
+    return JSON.parse(JSON.stringify(overlays.map(o=>{
         const base={_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,_speed:o._speed,_direction:o._direction,_desc:o._desc};
-        if(o._type==='marker')return {...base,path:[[o.getPosition().lng,o.getPosition().lat]]};
+        if(o._type==='marker'||o._type==='text')return {...base,path:[[o.getPosition().lng,o.getPosition().lat]]};
         if(o._type==='rect'){const b=o.getBounds();return {...base,bounds:[[b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]]};}
         if(o._type==='circle'){const c=o.getCenter();return {...base,center:[c.lng,c.lat],radius:o.getRadius()};}
+        if(o._type==='ellipse'){const c=o.getCenter();return {...base,center:[c.lng,c.lat],radius:o.getRadius()};}
         return {...base,path:o.getPath().map(p=>[p.lng,p.lat])};
     })));
+}
+function saveSnapshot(){
+    const snap=captureOverlays();
     history=history.slice(0,historyIdx+1);history.push(snap);
     if(history.length>MAX_HISTORY)history.shift();
     historyIdx=history.length-1;
@@ -231,18 +239,24 @@ function restoreSnapshot(snap){
         let ov;
         if(d._type==='marker'){
             ov=new AMap.Marker({position:d.path[0],content:markerContent(d._color,false),offset:new AMap.Pixel(-8,-8),title:d._name});
+        }else if(d._type==='text'){
+            ov=new AMap.Text({text:d._name,position:d.path[0],anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
         }else if(d._type==='route'){
             ov=new AMap.Polyline({strokeColor:d._color,strokeWeight:d._stroke||3,strokeOpacity:d._opacity??0.9,zIndex:10,path:d.path.map(p=>[p[0],p[1]])});
         }else if(d._type==='rect'){
             ov=new AMap.Rectangle({bounds:new AMap.Bounds(d.bounds[0],d.bounds[1]),strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
         }else if(d._type==='circle'){
             ov=new AMap.Circle({center:d.center,radius:d.radius,strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
+        }else if(d._type==='ellipse'){
+            const rr=Array.isArray(d.radius)?d.radius:[d.radius||80,d.radius||80];
+            ov=new AMap.Ellipse({center:d.center,radius:rr,strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
         }else{
             ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
         }
         ov.setMap(map);
         ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._direction=d._direction;ov._desc=d._desc;
         ov.on('click',()=>selectOv(ov));
+        if(d._type==='marker')bindMarkerDrag(ov);
         overlays.push(ov);
     });
 }
@@ -273,6 +287,8 @@ async function initMap(){
         loadPlan(target||plans[0]);
     }
     AMap.plugin('AMap.MouseTool',()=>{mouseTool=new AMap.MouseTool(map);mouseTool.on('draw',onDraw)});
+    // 图形编辑器（拖动顶点/整体移动/缩放）——按需加载，失败不影响其它功能
+    AMap.plugin(['AMap.PolygonEditor','AMap.CircleEditor','AMap.RectangleEditor','AMap.EllipseEditor'],()=>{});
     AMap.plugin('AMap.RangingTool',()=>{
         // 与高德官方测距一致：起点/中间点/终点用官方图标，实线 + 虚线预览
         const mkIcon=(n)=>new AMap.Icon({size:new AMap.Size(19,31),imageSize:new AMap.Size(19,31),image:'https://webapi.amap.com/theme/v1.3/markers/b/'+n+'.png'});
@@ -287,7 +303,7 @@ async function initMap(){
         rangingTool.on('end',e=>{if(e&&typeof e.distance==='number')toast('📐 测距: '+e.distance.toFixed(1)+' 米');setTool('pointer')});
     });
     map.on('zoom',updateZoomLabel);
-    map.on('click',()=>{if(currentTool==='pointer')deselectOv()});
+    map.on('click',e=>{if(currentTool==='pointer'){deselectOv();return}if(currentTool==='text'){placeText(e.lnglat)}});
     updateZoomLabel();
     if(plans.length===0)document.getElementById('sb-name').textContent=config.planName||'未命名方案';
 }
@@ -310,7 +326,7 @@ function addMarkers(markers){
     Object.entries(markers).forEach(([n,m])=>{
         const ov=new AMap.Marker({position:[m.lng,m.lat],content:markerContent(m.color||'#f59e0b',false),offset:new AMap.Pixel(-8,-8),title:n});
         ov.setMap(map);ov._type='marker';ov._name=n;ov._color=m.color||'#f59e0b';ov._stroke=0;ov._opacity=1;
-        ov.on('click',()=>selectOv(ov));overlays.push(ov);
+        ov.on('click',()=>selectOv(ov));bindMarkerDrag(ov);overlays.push(ov);
     });
 }
 
@@ -324,6 +340,20 @@ function addRectsCircles(rects,circles){
         if(!c.center||c.radius==null)return;
         const ov=new AMap.Circle({center:c.center,radius:c.radius,strokeColor:c.color||'#ec4899',strokeWeight:c.strokeWidth||2,fillColor:c.color||'#ec4899',fillOpacity:c.opacity??0.2,zIndex:5});
         ov.setMap(map);ov._type='circle';ov._name=n;ov._color=c.color||'#ec4899';ov._stroke=c.strokeWidth||2;ov._opacity=c.opacity??0.2;ov._desc=c.desc||'';ov.on('click',()=>selectOv(ov));overlays.push(ov);
+    });
+}
+
+function addEllipsesTexts(ellipses,texts){
+    if(ellipses)Object.entries(ellipses).forEach(([n,e])=>{
+        if(!e.center)return;
+        const rr=Array.isArray(e.radius)?e.radius:[e.radius||80,e.radius||80];
+        const ov=new AMap.Ellipse({center:e.center,radius:rr,strokeColor:e.color||'#06b6d4',strokeWeight:e.strokeWidth||2,fillColor:e.color||'#06b6d4',fillOpacity:e.opacity??0.2,zIndex:5});
+        ov.setMap(map);ov._type='ellipse';ov._name=n;ov._color=e.color||'#06b6d4';ov._stroke=e.strokeWidth||2;ov._opacity=e.opacity??0.2;ov._desc=e.desc||'';ov.on('click',()=>selectOv(ov));overlays.push(ov);
+    });
+    if(texts)Object.entries(texts).forEach(([n,t])=>{
+        if(t.lng==null||t.lat==null)return;
+        const ov=new AMap.Text({text:n,position:[t.lng,t.lat],anchor:'center',style:{'color':t.color||'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
+        ov.setMap(map);ov._type='text';ov._name=n;ov._color=t.color||'#ffffff';ov._stroke=0;ov._opacity=1;ov._speed=0;ov._direction=1;ov._desc='';ov.on('click',()=>selectOv(ov));overlays.push(ov);
     });
 }
 
@@ -371,6 +401,7 @@ function loadPlan(p){
     addRoutesAreas(data.routes,data.areas);
     addMarkers(data.markers);
     addRectsCircles(data.rects,data.circles);
+    addEllipsesTexts(data.ellipses,data.texts);
     currentPlanId=p.id;
     document.getElementById('sb-name').textContent=p.name||'未命名方案';
     deselectOv();saveSnapshot();updateUI();renderPlanList();
@@ -403,8 +434,11 @@ function setTool(tool){
     else if(tool==='polygon'){mouseTool.polygon({strokeColor:'#10b981',strokeWeight:2,strokeOpacity:0.8,fillColor:'#10b981',fillOpacity:0.2});st.textContent='⬡ 画区域 — 点击加顶点，双击完成'}
     else if(tool==='rectangle'){mouseTool.rectangle({strokeColor:'#8b5cf6',strokeWeight:2,strokeOpacity:0.8,fillColor:'#8b5cf6',fillOpacity:0.2});st.textContent='▭ 画框 — 按住拖拽拉出矩形'}
     else if(tool==='circle'){mouseTool.circle({strokeColor:'#ec4899',strokeWeight:2,strokeOpacity:0.8,fillColor:'#ec4899',fillOpacity:0.2});st.textContent='◯ 画圆 — 点击圆心，拖拽设定半径'}
+    else if(tool==='ellipse'){mouseTool.circle({strokeColor:'#06b6d4',strokeWeight:2,strokeOpacity:0.8,fillColor:'#06b6d4',fillOpacity:0.2});st.textContent='⬭ 画椭圆 — 先画圆，松手后变成椭圆（可用选择工具拖动调整）'}
     else if(tool==='ranging'){if(rangingTool)rangingTool.turnOn();st.textContent='📐 测距 — 点击加测量点，双击结束'}
+    else if(tool==='measure-area'){mouseTool.polygon({strokeColor:'#f59e0b',strokeWeight:2,strokeOpacity:0.8,fillColor:'#f59e0b',fillOpacity:0.2});st.textContent='🧮 测面积 — 点击加顶点，双击出面积'}
     else if(tool==='marker'){mouseTool.marker();st.textContent='📍 标记点 — 点击地图放置一个标记点'}
+    else if(tool==='text'){st.textContent='🅰 文字 — 点击地图放置文字标注'}
 }
 
 function markerContent(color,selected){
@@ -412,27 +446,43 @@ function markerContent(color,selected){
     return '<div style="width:12px;height:12px;background:'+color+';border:2px solid #fff;border-radius:50%;'+ring+';cursor:pointer"></div>';
 }
 
-const TOOL_TYPE={polyline:'route',polygon:'area',marker:'marker',rectangle:'rect',circle:'circle'};
-const TYPE_NAME={route:'路线',area:'区域',rect:'画框',circle:'画圆'};
-const TYPE_COLOR={route:'#3b82f6',area:'#10b981',rect:'#8b5cf6',circle:'#ec4899'};
+const TOOL_TYPE={polyline:'route',polygon:'area',marker:'marker',rectangle:'rect',circle:'circle',ellipse:'ellipse'};
+const TYPE_NAME={route:'路线',area:'区域',rect:'画框',circle:'画圆',ellipse:'椭圆'};
+const TYPE_COLOR={route:'#3b82f6',area:'#10b981',rect:'#8b5cf6',circle:'#ec4899',ellipse:'#06b6d4'};
 
 function onDraw(e){
+    // 面积测量：临时多边形，算完即删，不落库
+    if(currentTool==='measure-area'){
+        const path=e.obj.getPath().map(p=>[p.lng,p.lat]);
+        const area=polygonAreaMeters(path);
+        e.obj.setMap(null);
+        setTool('pointer');
+        toast('🧮 面积: '+formatArea(area));
+        return;
+    }
     saveSnapshot();
-    const ov=e.obj;
+    let ov=e.obj;
     const type=TOOL_TYPE[currentTool]||'route';
+    if(type==='ellipse'){
+        // MouseTool 无 ellipse：先画圆，松手转成椭圆（短轴=长轴×0.6，可用选择工具微调）
+        const c=ov.getCenter(),r=ov.getRadius();
+        ov.setMap(null);
+        ov=new AMap.Ellipse({center:[c.lng,c.lat],radius:[r,Math.max(r*0.6,5)],strokeColor:TYPE_COLOR.ellipse,strokeWeight:2,fillColor:TYPE_COLOR.ellipse,fillOpacity:0.2,zIndex:5});
+    }
     if(type==='marker'){
         const cnt=overlays.filter(o=>o._type==='marker').length+1;
         ov._type='marker';ov._name='标记 '+cnt;ov._color='#f59e0b';ov._stroke=0;ov._opacity=1;
         ov.setContent(markerContent(ov._color,false));ov.setOffset(new AMap.Pixel(-8,-8));ov.setTitle(ov._name);
         ov.setMap(map);
         ov.on('click',()=>selectOv(ov));
+        bindMarkerDrag(ov);
         overlays.push(ov);
         updateUI();setTool('pointer');
         toast('✅ 已添加: '+ov._name);
         return;
     }
     const cnt=overlays.filter(o=>o._type===type).length+1;
-    const isAreaLike=(type==='area'||type==='rect'||type==='circle');
+    const isAreaLike=(type==='area'||type==='rect'||type==='circle'||type==='ellipse');
     ov._type=type;ov._name=TYPE_NAME[type]+' '+cnt;
     ov._color=TYPE_COLOR[type];
     ov._stroke=isAreaLike?2:3;
@@ -447,15 +497,49 @@ function onDraw(e){
     toast('✅ 已添加: '+ov._name);
 }
 
+// 自由文字标注：点击地图 → 输入文字 → AMap.Text（图层名即文字内容）
+function placeText(lnglat){
+    const txt=prompt('输入文字内容：','文字标注');
+    if(txt===null)return;
+    const text=txt.trim();
+    if(!text){setTool('pointer');return}
+    saveSnapshot();
+    const cnt=overlays.filter(o=>o._type==='text').length+1;
+    const ov=new AMap.Text({text,position:lnglat,anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
+    ov.setMap(map);
+    ov._type='text';ov._name=text;ov._color='#ffffff';ov._stroke=0;ov._opacity=1;ov._speed=0;ov._direction=1;ov._desc='';
+    ov.on('click',()=>selectOv(ov));
+    overlays.push(ov);
+    updateUI();setTool('pointer');
+    toast('✅ 已添加文字: '+text);
+}
+
+// 测面积：等距圆柱局部近似 + shoelace（校园尺度精度足够）
+function polygonAreaMeters(path){
+    if(!path||path.length<3)return 0;
+    const R=6371000,k=R*Math.PI/180;
+    let latSum=0;path.forEach(p=>latSum+=p[1]);
+    const cos=Math.cos(latSum/path.length*Math.PI/180);
+    const pts=path.map(p=>[p[0]*k*cos,p[1]*k]);
+    let area=0;
+    for(let i=0;i<pts.length;i++){const j=(i+1)%pts.length;area+=pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1]}
+    return Math.abs(area/2);
+}
+function formatArea(m2){
+    if(m2>=1e6)return (m2/1e6).toFixed(2)+' 平方公里';
+    return Math.round(m2)+' 平方米';
+}
+
 function selectOv(ov){
     if(currentTool!=='pointer')return;
     deselectOv();selectedOv=ov;
     if(ov._type==='marker'){
         ov.setContent(markerContent(ov._color,true));
-    }else{
+    }else if(ov._type!=='text'){
         const base=ov._stroke||(ov instanceof AMap.Polyline?3:2);
         ov.setOptions({strokeWeight:base+3,strokeColor:'#ffd400'});
     }
+    openEditorFor(ov);
     document.getElementById('btn-delete').disabled=false;
     document.getElementById('btn-duplicate').disabled=false;
     document.getElementById('status-text').textContent='已选中: '+(ov._name||'');
@@ -466,15 +550,54 @@ function deselectOv(){
     if(!selectedOv)return;
     if(selectedOv._type==='marker'){
         selectedOv.setContent(markerContent(selectedOv._color,false));
-    }else{
+    }else if(selectedOv._type!=='text'){
         const base=selectedOv._stroke||(selectedOv instanceof AMap.Polyline?3:2);
         selectedOv.setOptions({strokeWeight:base,strokeColor:selectedOv._color});
     }
+    closeEditor();
     selectedOv=null;
     document.getElementById('btn-delete').disabled=true;
     document.getElementById('btn-duplicate').disabled=true;
     document.getElementById('status-text').textContent='就绪';
     updateUI();updateProps();
+}
+
+// —— 图形编辑器（拖动顶点 / 整体移动 / 缩放）——
+function openEditorFor(ov){
+    closeEditor();
+    if(!ov||ov._type==='marker'||ov._type==='text')return;
+    // 编辑前快照：真正发生编辑时才提交到历史，避免「只选中不改」污染撤销栈
+    preEditSnapshot=captureOverlays();
+    let ed=null;
+    if(ov._type==='area'&&AMap.PolygonEditor)ed=new AMap.PolygonEditor(map,ov);
+    else if(ov._type==='circle'&&AMap.CircleEditor)ed=new AMap.CircleEditor(map,ov);
+    else if(ov._type==='rect'&&AMap.RectangleEditor)ed=new AMap.RectangleEditor(map,ov);
+    else if(ov._type==='ellipse'&&AMap.EllipseEditor)ed=new AMap.EllipseEditor(map,ov);
+    if(ed){
+        ed.on('adjust',commitPreEdit);ed.on('addnode',commitPreEdit);ed.on('removenode',commitPreEdit);
+        try{ed.open()}catch(_){}
+        activeEditor=ed;
+    }else{
+        preEditSnapshot=null;
+    }
+}
+function closeEditor(){
+    if(activeEditor){try{activeEditor.close()}catch(_){}activeEditor=null}
+    preEditSnapshot=null;
+}
+function commitPreEdit(){
+    if(preEditSnapshot===null)return;
+    history=history.slice(0,historyIdx+1);history.push(preEditSnapshot);
+    if(history.length>MAX_HISTORY)history.shift();
+    historyIdx=history.length-1;
+    preEditSnapshot=null;
+    updateUI();
+}
+function bindMarkerDrag(ov){
+    if(!ov||!ov.setDraggable)return;
+    ov.setDraggable(true);
+    ov.on('dragstart',()=>{preEditSnapshot=captureOverlays()});
+    ov.on('dragend',commitPreEdit);
 }
 
 // Delete
@@ -503,6 +626,12 @@ document.getElementById('btn-duplicate').addEventListener('click',()=>{
     }else if(type==='circle'){
         const c=selectedOv.getCenter();
         ov=new AMap.Circle({map,center:[c.lng,c.lat],radius:selectedOv.getRadius(),strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+    }else if(type==='ellipse'){
+        const c=selectedOv.getCenter(),r=selectedOv.getRadius();
+        ov=new AMap.Ellipse({map,center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+    }else if(type==='text'){
+        const pos=selectedOv.getPosition();
+        ov=new AMap.Text({map,text:selectedOv._name+' 副本',position:[pos.lng,pos.lat],anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
     }else{
         const path=selectedOv.getPath().map(p=>[p.lng,p.lat]);
         if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
@@ -510,6 +639,7 @@ document.getElementById('btn-duplicate').addEventListener('click',()=>{
     }
     ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;ov._stroke=sw;ov._opacity=op;ov._speed=selectedOv._speed;ov._direction=selectedOv._direction;ov._desc=selectedOv._desc;
     ov.on('click',()=>selectOv(ov));
+    if(type==='marker')bindMarkerDrag(ov);
     overlays.push(ov);updateUI();toast('已复制');
 });
 
@@ -544,12 +674,15 @@ function updateProps(){
     document.getElementById('prop-name').value=selectedOv._name||'';
     document.getElementById('prop-color').value=selectedOv._color||'#3b82f6';
     const isMarker=selectedOv._type==='marker';
+    const isText=selectedOv._type==='text';
     const isRoute=selectedOv._type==='route';
-    document.getElementById('prop-stroke').closest('.prop-row').style.display=isMarker?'none':'';
-    document.getElementById('prop-opacity').closest('.prop-row').style.display=isMarker?'none':'';
+    document.getElementById('prop-stroke').closest('.prop-row').style.display=(isMarker||isText)?'none':'';
+    document.getElementById('prop-opacity').closest('.prop-row').style.display=(isMarker||isText)?'none':'';
     document.getElementById('prop-speed').closest('.prop-row').style.display=isRoute?'':'none';
     document.getElementById('prop-direction').closest('.prop-row').style.display=isRoute?'':'none';
-    document.getElementById('prop-desc').closest('.prop-row').style.display=isMarker?'none':'';
+    document.getElementById('prop-desc').closest('.prop-row').style.display=(isMarker||isText)?'none':'';
+    document.getElementById('prop-color').closest('.prop-row').style.display=isText?'none':'';
+    document.getElementById('color-presets').style.display=isText?'none':'';
     const isLine=selectedOv instanceof AMap.Polyline;
     document.getElementById('prop-stroke').value=selectedOv._stroke||(isLine?3:2);
     document.getElementById('prop-opacity').value=Math.round((selectedOv._opacity??(isLine?0.9:0.2))*100);
@@ -561,10 +694,16 @@ function updateProps(){
     if(isMarker){
         const pos=selectedOv.getPosition();
         document.getElementById('prop-points-info').textContent='坐标: '+pos.lng.toFixed(6)+', '+pos.lat.toFixed(6);
+    }else if(isText){
+        const pos=selectedOv.getPosition();
+        document.getElementById('prop-points-info').textContent='文字标注 · 坐标: '+pos.lng.toFixed(6)+', '+pos.lat.toFixed(6);
     }else if(selectedOv._type==='rect'){
         document.getElementById('prop-points-info').textContent='矩形（两个对角点）';
     }else if(selectedOv._type==='circle'){
         document.getElementById('prop-points-info').textContent='半径: '+Math.round(selectedOv.getRadius())+' 米';
+    }else if(selectedOv._type==='ellipse'){
+        const rr=selectedOv.getRadius();
+        document.getElementById('prop-points-info').textContent='椭圆轴: '+(Array.isArray(rr)?Math.round(rr[0])+' × '+Math.round(rr[1]):'')+' 米';
     }else{
         document.getElementById('prop-points-info').textContent='顶点: '+(selectedOv.getPath?selectedOv.getPath().length:'-')+' 个';
     }
@@ -573,6 +712,7 @@ function updateProps(){
 document.getElementById('prop-name').addEventListener('input',function(){
     if(!selectedOv)return;selectedOv._name=this.value;updateUI();saveSnapshot();
     if(selectedOv._type==='marker')selectedOv.setTitle(this.value);
+    else if(selectedOv._type==='text')selectedOv.setText(this.value);
 });
 document.getElementById('prop-color').addEventListener('input',function(){
     if(!selectedOv)return;
@@ -589,9 +729,9 @@ document.getElementById('prop-stroke').addEventListener('input',function(){
     selectedOv.setOptions({strokeWeight:v});
 });
 document.getElementById('prop-opacity').addEventListener('input',function(){
-    if(!selectedOv||selectedOv._type==='marker')return;
+    if(!selectedOv||selectedOv._type==='marker'||selectedOv._type==='text')return;
     const v=Number(this.value)/100;selectedOv._opacity=v;
-    if(selectedOv instanceof AMap.Polygon||selectedOv._type==='rect'||selectedOv._type==='circle')selectedOv.setOptions({fillOpacity:v});
+    if(selectedOv instanceof AMap.Polygon||selectedOv._type==='rect'||selectedOv._type==='circle'||selectedOv._type==='ellipse')selectedOv.setOptions({fillOpacity:v});
     else selectedOv.setOptions({strokeOpacity:v});
 });
 document.getElementById('prop-speed').addEventListener('input',function(){
@@ -606,7 +746,7 @@ document.getElementById('prop-direction').addEventListener('change',function(){
     selectedOv._direction=Number(this.value);
 });
 document.getElementById('prop-desc').addEventListener('input',function(){
-    if(!selectedOv||selectedOv._type==='marker')return;
+    if(!selectedOv||selectedOv._type==='marker'||selectedOv._type==='text')return;
     selectedOv._desc=this.value;
 });
 
@@ -648,7 +788,7 @@ document.getElementById('btn-new-plan').addEventListener('click',()=>{
 });
 
 async function doSave(token,name){
-    const routes={},areas={},markers={},rects={},circles={};
+    const routes={},areas={},markers={},rects={},circles={},ellipses={},texts={};
     let skipped=0;
     overlays.forEach(o=>{
         if(o._type==='marker'){
@@ -666,6 +806,16 @@ async function doSave(token,name){
             circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
             return;
         }
+        if(o._type==='ellipse'){
+            const c=o.getCenter(),r=o.getRadius();
+            ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
+            return;
+        }
+        if(o._type==='text'){
+            const pos=o.getPosition();
+            texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff'};
+            return;
+        }
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
         if(o._type==='route'){
             if(pts.length<2){skipped++;return}
@@ -675,7 +825,7 @@ async function doSave(token,name){
             areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
         }
     });
-    const data={kind:'map',routes,areas,markers,rects,circles};
+    const data={kind:'map',routes,areas,markers,rects,circles,ellipses,texts};
     const isNew=!currentPlanId;
     const url='/api/editor/projects'+(isNew?'':'/'+currentPlanId);
     try{
@@ -724,16 +874,18 @@ document.getElementById('name-modal').addEventListener('click',e=>{if(e.target==
 
 // Export
 document.getElementById('btn-export').addEventListener('click',()=>{
-    const routes={},areas={},markers={},rects={},circles={};
+    const routes={},areas={},markers={},rects={},circles={},ellipses={},texts={};
     overlays.forEach(o=>{
         if(o._type==='marker'){const pos=o.getPosition();markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};return}
         if(o._type==='rect'){const b=o.getBounds();rects[o._name]={bounds:[[b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]],color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
         if(o._type==='circle'){const c=o.getCenter();circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
+        if(o._type==='ellipse'){const c=o.getCenter(),r=o.getRadius();ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
+        if(o._type==='text'){const pos=o.getPosition();texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff'};return}
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
         if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,speed:o._speed??0.9,direction:o._direction??1,desc:o._desc||''};
         else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,desc:o._desc||''};
     });
-    const blob=new Blob([JSON.stringify({routes,areas,markers,rects,circles},null,2)],{type:'application/json'});
+    const blob=new Blob([JSON.stringify({routes,areas,markers,rects,circles,ellipses,texts},null,2)],{type:'application/json'});
     const a=document.createElement('a');a.download='map-data.json';a.href=URL.createObjectURL(blob);a.click();
     URL.revokeObjectURL(a.href);toast('✅ 已导出 JSON');
 });
@@ -769,6 +921,9 @@ document.addEventListener('keydown',e=>{
     if(e.key==='r')setTool('polygon');
     if(e.key==='b')setTool('rectangle');
     if(e.key==='c')setTool('circle');
+    if(e.key==='e')setTool('ellipse');
+    if(e.key==='m')setTool('measure-area');
+    if(e.key==='t')setTool('text');
 });
 
 // UI
@@ -789,9 +944,9 @@ function updateUI(){
             list.appendChild(row);
         });
     }
-    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length,m=overlays.filter(o=>o._type==='marker').length,rc=overlays.filter(o=>o._type==='rect').length,cc=overlays.filter(o=>o._type==='circle').length;
-    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a+' · 画框 '+rc+' · 画圆 '+cc+' · 标记 '+m;
-    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a+' 画框:'+rc+' 画圆:'+cc+' 标记:'+m;
+    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length,m=overlays.filter(o=>o._type==='marker').length,rc=overlays.filter(o=>o._type==='rect').length,cc=overlays.filter(o=>o._type==='circle').length,ec=overlays.filter(o=>o._type==='ellipse').length,tc=overlays.filter(o=>o._type==='text').length;
+    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a+' · 画框 '+rc+' · 画圆 '+cc+' · 椭圆 '+ec+' · 文字 '+tc+' · 标记 '+m;
+    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a+' 画框:'+rc+' 画圆:'+cc+' 椭圆:'+ec+' 文字:'+tc+' 标记:'+m;
     document.getElementById('sb-history').textContent=history.length>0?((historyIdx+1)+'/'+history.length):'0/0';
     document.getElementById('btn-undo').disabled=historyIdx<0;
     document.getElementById('btn-redo').disabled=historyIdx>=history.length-2;

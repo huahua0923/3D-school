@@ -298,6 +298,8 @@
             <div class="sb-layer-item"><span class="layer-dot" style="background:#10b981"></span> 区域 <span id="layer-area-count">0</span></div>
             <div class="sb-layer-item"><span class="layer-dot" style="background:#8b5cf6"></span> 画框 <span id="layer-rect-count">0</span></div>
             <div class="sb-layer-item"><span class="layer-dot" style="background:#ec4899"></span> 画圆 <span id="layer-circle-count">0</span></div>
+            <div class="sb-layer-item"><span class="layer-dot" style="background:#06b6d4"></span> 椭圆 <span id="layer-ellipse-count">0</span></div>
+            <div class="sb-layer-item"><span class="layer-dot" style="background:#ffffff"></span> 文字 <span id="layer-text-count">0</span></div>
         </div>
     </div>
 
@@ -1108,21 +1110,27 @@ function addNameLabel(map, text, lngLat, anchor, offsetPx) {
 }
 
 function refreshLayerCounts() {
-    let routeCount = 0, areaCount = 0, rectCount = 0, circleCount = 0;
-    Object.values(planOverlayGroups).forEach(g => { routeCount += g.route || 0; areaCount += g.area || 0; rectCount += g.rect || 0; circleCount += g.circle || 0; });
+    let routeCount = 0, areaCount = 0, rectCount = 0, circleCount = 0, ellipseCount = 0, textCount = 0;
+    Object.values(planOverlayGroups).forEach(g => { routeCount += g.route || 0; areaCount += g.area || 0; rectCount += g.rect || 0; circleCount += g.circle || 0; ellipseCount += g.ellipse || 0; textCount += g.text || 0; });
     // 加上「地图绘制」保存到 CONFIG.routes / CONFIG.areas 的数量（避免被方案叠加数量覆盖）
     if (CONFIG && CONFIG.routes) routeCount += Object.keys(CONFIG.routes).length;
     if (CONFIG && CONFIG.areas) areaCount += Array.isArray(CONFIG.areas) ? CONFIG.areas.length : Object.keys(CONFIG.areas).length;
     if (CONFIG && CONFIG.rects) rectCount += Object.keys(CONFIG.rects).length;
     if (CONFIG && CONFIG.circles) circleCount += Object.keys(CONFIG.circles).length;
+    if (CONFIG && CONFIG.ellipses) ellipseCount += Object.keys(CONFIG.ellipses).length;
+    if (CONFIG && CONFIG.texts) textCount += Object.keys(CONFIG.texts).length;
     const rc = document.getElementById('layer-route-count');
     const ac = document.getElementById('layer-area-count');
     const xc = document.getElementById('layer-rect-count');
     const yc = document.getElementById('layer-circle-count');
+    const ec = document.getElementById('layer-ellipse-count');
+    const tc = document.getElementById('layer-text-count');
     if (rc) rc.textContent = routeCount;
     if (ac) ac.textContent = areaCount;
     if (xc) xc.textContent = rectCount;
     if (yc) yc.textContent = circleCount;
+    if (ec) ec.textContent = ellipseCount;
+    if (tc) tc.textContent = textCount;
 }
 
 function removePlanOverlay(map, planId) {
@@ -1138,7 +1146,7 @@ function removePlanOverlay(map, planId) {
 function applyPlan(map, plan) {
     removePlanOverlay(map, plan.id);
     const overlays = [];
-    const group = { overlays, route: 0, area: 0, rect: 0, circle: 0, flowIds: [] };
+    const group = { overlays, route: 0, area: 0, rect: 0, circle: 0, ellipse: 0, text: 0, flowIds: [] };
     planOverlayGroups[plan.id] = group;
 
     const data = plan.data || {};
@@ -1209,6 +1217,23 @@ function applyPlan(map, plan) {
                 o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '◯', title: name, badge: '画圆', desc: c.desc || '' })));
                 map.add(o); overlays.push(o); group.circle++; added++;
                 overlays.push(addNameLabel(map, name, c.center, 'center'));
+            });
+        }
+        if (data.ellipses) {
+            Object.entries(data.ellipses).forEach(([name, e]) => {
+                if (!e.center || e.radius == null) return;
+                const r = Array.isArray(e.radius) ? e.radius : [e.radius, e.radius];
+                const o = new AMap.Ellipse({ center: e.center, radius: r, strokeColor: colorToHex(e.color, '#06b6d4'), strokeWeight: e.strokeWidth || 2, fillColor: colorToHex(e.color, '#06b6d4'), fillOpacity: e.opacity ?? 0.2, zIndex: 5 });
+                o.on('click', (ev) => onFeatureClick(ev, () => ui && ui.showFeature({ icon: '⬭', title: name, badge: '椭圆', desc: e.desc || '' })));
+                map.add(o); overlays.push(o); group.ellipse++; added++;
+                overlays.push(addNameLabel(map, name, e.center, 'center'));
+            });
+        }
+        if (data.texts) {
+            Object.entries(data.texts).forEach(([name, t]) => {
+                if (t.lng == null || t.lat == null) return;
+                const o = new AMap.Text({ text: name, position: new AMap.LngLat(t.lng, t.lat), anchor: 'center', style: { 'color': t.color || '#ffffff', 'font-size': '14px', 'font-weight': '600', 'background-color': 'rgba(0,0,0,0.55)', 'padding': '3px 8px', 'border-radius': '4px', 'border': '1px solid rgba(255,255,255,0.25)' }, zIndex: 20 });
+                map.add(o); overlays.push(o); group.text++; added++;
             });
         }
         refreshLayerCounts();
