@@ -141,6 +141,7 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
             <div class="prop-row"><label>透明度</label><input type="range" id="prop-opacity" min="5" max="100" value="100" style="flex:1" /></div>
             <div class="prop-row"><label>速度</label><input type="range" id="prop-speed" min="1" max="50" value="9" style="flex:1" /><span id="prop-speed-val" style="font-size:0.7rem;color:rgba(255,255,255,0.5);min-width:34px;text-align:right">0.9</span></div>
             <div class="prop-row"><label>方向</label><select id="prop-direction" style="flex:1"><option value="1">正向 →（起点到终点）</option><option value="-1">反向 ←（终点到起点）</option></select></div>
+            <div class="prop-row" id="prop-rotation-row"><label>旋转</label><input type="range" id="prop-rotation" min="-180" max="180" value="0" style="flex:1" /><span id="prop-rotation-val" style="font-size:0.7rem;color:rgba(255,255,255,0.5);min-width:34px;text-align:right">0°</span></div>
             <div id="prop-points-info" style="font-size:0.7rem;color:rgba(255,255,255,0.35);margin-top:4px"></div>
             <div style="display:flex;gap:4px;margin-top:8px">
                 <button class="btn" id="btn-bring-front">⬆ 置顶</button>
@@ -196,11 +197,53 @@ async function loadConfig(){
     try{const r=await fetch('/config.json');if(r.ok)config=await r.json()}catch(e){}
 }
 
+// —— 方框旋转支持：bounds（轴对齐）+ rotation（绕中心顺时针，度）——
+function rectBoundsOf(ov){
+    if(ov._bounds)return ov._bounds;
+    if(ov.getBounds){const b=ov.getBounds();return [[b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]];}
+    return null;
+}
+function rectCorners(bounds, rotation){
+    const sw=bounds[0], ne=bounds[1];
+    const cx=(sw[0]+ne[0])/2, cy=(sw[1]+ne[1])/2;
+    const hl=(ne[0]-sw[0])/2, hla=(ne[1]-sw[1])/2;
+    const corners=[[cx-hl,cy-hla],[cx+hl,cy-hla],[cx+hl,cy+hla],[cx-hl,cy+hla]];
+    if(!rotation)return corners;
+    const rad=rotation*Math.PI/180, cos=Math.cos(rad), sin=Math.sin(rad);
+    const mLng=111320*Math.cos(cy*Math.PI/180);
+    return corners.map(([lng,lat])=>{
+        const dx=(lng-cx)*mLng, dy=(lat-cy)*111320;
+        const dx2=dx*cos+dy*sin, dy2=-dx*sin+dy*cos;
+        return [cx+dx2/mLng, cy+dy2/111320];
+    });
+}
+function buildRectOv(bounds, rotation, d){
+    if(rotation){
+        const ov=new AMap.Polygon({path:rectCorners(bounds,rotation),strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
+        ov._bounds=bounds; ov._rotation=rotation;
+        return ov;
+    }
+    return new AMap.Rectangle({bounds:new AMap.Bounds(bounds[0],bounds[1]),strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
+}
+function replaceRectOv(ov, rotation){
+    const bounds=rectBoundsOf(ov);
+    if(!bounds)return ov;
+    const idx=overlays.indexOf(ov);
+    const nv=buildRectOv(bounds, rotation, ov);
+    nv._type='rect';nv._name=ov._name;nv._color=ov._color;nv._stroke=ov._stroke;nv._opacity=ov._opacity;nv._speed=ov._speed;nv._direction=ov._direction;nv._desc=ov._desc;
+    nv._rotation=rotation;
+    nv.setMap(map);
+    nv.on('click',()=>selectOv(nv));
+    if(idx>=0)overlays[idx]=nv; else overlays.push(nv);
+    map.remove(ov);
+    return nv;
+}
+
 function captureOverlays(){
     return JSON.parse(JSON.stringify(overlays.map(o=>{
         const base={_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,_speed:o._speed,_direction:o._direction,_desc:o._desc};
         if(o._type==='marker'||o._type==='text')return {...base,path:[[o.getPosition().lng,o.getPosition().lat]]};
-        if(o._type==='rect'){const b=o.getBounds();return {...base,bounds:[[b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]]};}
+        if(o._type==='rect'){const b=rectBoundsOf(o);return {...base,_rotation:o._rotation||0,bounds:b};}
         if(o._type==='circle'){const c=o.getCenter();return {...base,center:[c.lng,c.lat],radius:o.getRadius()};}
         if(o._type==='ellipse'){const c=o.getCenter();return {...base,center:[c.lng,c.lat],radius:o.getRadius()};}
         return {...base,path:o.getPath().map(p=>[p.lng,p.lat])};
@@ -245,7 +288,7 @@ function restoreSnapshot(snap){
         }else if(d._type==='route'){
             ov=new AMap.Polyline({strokeColor:d._color,strokeWeight:d._stroke||3,strokeOpacity:d._opacity??0.9,zIndex:10,path:d.path.map(p=>[p[0],p[1]])});
         }else if(d._type==='rect'){
-            ov=new AMap.Rectangle({bounds:new AMap.Bounds(d.bounds[0],d.bounds[1]),strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
+            ov=buildRectOv(d.bounds, d._rotation||0, d);
         }else if(d._type==='circle'){
             ov=new AMap.Circle({center:d.center,radius:d.radius,strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
         }else if(d._type==='ellipse'){
@@ -255,7 +298,7 @@ function restoreSnapshot(snap){
             ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
         }
         ov.setMap(map);
-        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._direction=d._direction;ov._desc=d._desc;
+        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._direction=d._direction;ov._desc=d._desc;ov._rotation=d._rotation||0;
         ov.on('click',()=>selectOv(ov));
         if(d._type==='marker')bindMarkerDrag(ov);
         overlays.push(ov);
@@ -338,7 +381,7 @@ function addRectsCircles(rects,circles,target){
     const arr=target||overlays;
     if(rects)Object.entries(rects).forEach(([n,r])=>{
         if(!r.bounds||!r.bounds[0]||!r.bounds[1])return;
-        const ov=new AMap.Rectangle({bounds:new AMap.Bounds(r.bounds[0],r.bounds[1]),strokeColor:r.color||'#8b5cf6',strokeWeight:r.strokeWidth||2,fillColor:r.color||'#8b5cf6',fillOpacity:r.opacity??0.2,zIndex:5});
+        const ov=buildRectOv(r.bounds, r.rotation||0, {_color:r.color||'#8b5cf6',_stroke:r.strokeWidth||2,_opacity:r.opacity??0.2});
         ov.setMap(map);ov._type='rect';ov._name=n;ov._color=r.color||'#8b5cf6';ov._stroke=r.strokeWidth||2;ov._opacity=r.opacity??0.2;ov._desc=r.desc||'';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
     if(circles)Object.entries(circles).forEach(([n,c])=>{
@@ -631,7 +674,7 @@ function openEditorFor(ov){
     if(ov._type==='area'&&AMap.PolygonEditor)ed=new AMap.PolygonEditor(map,ov);
     else if(ov._type==='route'&&AMap.PolylineEditor)ed=new AMap.PolylineEditor(map,ov);
     else if(ov._type==='circle'&&AMap.CircleEditor)ed=new AMap.CircleEditor(map,ov);
-    else if(ov._type==='rect'&&AMap.RectangleEditor)ed=new AMap.RectangleEditor(map,ov);
+    else if(ov._type==='rect'&&!ov._rotation&&AMap.RectangleEditor)ed=new AMap.RectangleEditor(map,ov);
     else if(ov._type==='ellipse'&&AMap.EllipseEditor)ed=new AMap.EllipseEditor(map,ov);
     if(ed){
         ed.on('adjust',commitPreEdit);ed.on('addnode',commitPreEdit);ed.on('removenode',commitPreEdit);
@@ -681,8 +724,9 @@ document.getElementById('btn-duplicate').addEventListener('click',()=>{
         ov=new AMap.Marker({map,position:[pos.lng,pos.lat],content:markerContent(selectedOv._color,false),offset:new AMap.Pixel(-8,-8),title:selectedOv._name+' 副本'});
         ov._stroke=0;ov._opacity=1;
     }else if(type==='rect'){
-        const b=selectedOv.getBounds();
-        ov=new AMap.Rectangle({map,bounds:new AMap.Bounds([b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]),strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+        const b=rectBoundsOf(selectedOv);
+        ov=buildRectOv(b, selectedOv._rotation||0, {_color:selectedOv._color,_stroke:sw,_opacity:op});
+        ov.setMap(map);
     }else if(type==='circle'){
         const c=selectedOv.getCenter();
         ov=new AMap.Circle({map,center:[c.lng,c.lat],radius:selectedOv.getRadius(),strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
@@ -740,6 +784,9 @@ function updateProps(){
     document.getElementById('prop-opacity').closest('.prop-row').style.display=(isMarker||isText)?'none':'';
     document.getElementById('prop-speed').closest('.prop-row').style.display=isRoute?'':'none';
     document.getElementById('prop-direction').closest('.prop-row').style.display=isRoute?'':'none';
+    document.getElementById('prop-rotation-row').style.display=(selectedOv._type==='rect')?'':'none';
+    document.getElementById('prop-rotation').value=selectedOv._rotation||0;
+    document.getElementById('prop-rotation-val').textContent=(selectedOv._rotation||0)+'°';
     document.getElementById('prop-desc').closest('.prop-row').style.display=(isMarker||isText)?'none':'';
     document.getElementById('prop-color').closest('.prop-row').style.display=isText?'none':'';
     document.getElementById('color-presets').style.display=isText?'none':'';
@@ -805,6 +852,22 @@ document.getElementById('prop-direction').addEventListener('change',function(){
     saveSnapshot();
     selectedOv._direction=Number(this.value);
 });
+let _rotating=false;
+document.getElementById('prop-rotation').addEventListener('input',function(){
+    if(!selectedOv||selectedOv._type!=='rect')return;
+    const v=Number(this.value);
+    document.getElementById('prop-rotation-val').textContent=v+'°';
+    if(!_rotating){ saveSnapshot(); _rotating=true; }  // 旋转前推入一次快照（连续拖动只记一次撤销）
+    const old=selectedOv;
+    closeEditor();
+    if(old._type!=='text'){ old.setOptions({strokeWeight:old._stroke||2,strokeColor:old._color}); }
+    const nv=replaceRectOv(old, v);
+    selectedOv=nv;
+    nv.setOptions({strokeWeight:(nv._stroke||2)+3,strokeColor:'#ffd400'});
+    openEditorFor(nv);
+    updateUI();updateProps();
+});
+document.getElementById('prop-rotation').addEventListener('change',function(){ _rotating=false; });
 document.getElementById('prop-desc').addEventListener('input',function(){
     if(!selectedOv||selectedOv._type==='marker'||selectedOv._type==='text')return;
     selectedOv._desc=this.value;
@@ -857,8 +920,8 @@ async function doSave(token,name){
             return;
         }
         if(o._type==='rect'){
-            const b=o.getBounds();
-            rects[o._name]={bounds:[[b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]],color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
+            const b=rectBoundsOf(o);
+            rects[o._name]={bounds:b,rotation:o._rotation||0,color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
             return;
         }
         if(o._type==='circle'){
@@ -937,7 +1000,7 @@ document.getElementById('btn-export').addEventListener('click',()=>{
     const routes={},areas={},markers={},rects={},circles={},ellipses={},texts={};
     overlays.forEach(o=>{
         if(o._type==='marker'){const pos=o.getPosition();markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};return}
-        if(o._type==='rect'){const b=o.getBounds();rects[o._name]={bounds:[[b.getSouthWest().lng,b.getSouthWest().lat],[b.getNorthEast().lng,b.getNorthEast().lat]],color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
+        if(o._type==='rect'){const b=rectBoundsOf(o);rects[o._name]={bounds:b,rotation:o._rotation||0,color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
         if(o._type==='circle'){const c=o.getCenter();circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
         if(o._type==='ellipse'){const c=o.getCenter(),r=o.getRadius();ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
         if(o._type==='text'){const pos=o.getPosition();texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff'};return}

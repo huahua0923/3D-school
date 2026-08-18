@@ -1102,6 +1102,22 @@ function bakeRotatedImage(dataUrl, w, h, rotation) {
     });
 }
 
+// 方框旋转：bounds（西南/东北角）绕中心顺时针旋转，返回 4 顶点
+function rectCorners(bounds, rotation) {
+    const sw = bounds[0], ne = bounds[1];
+    const cx = (sw[0] + ne[0]) / 2, cy = (sw[1] + ne[1]) / 2;
+    const hl = (ne[0] - sw[0]) / 2, hla = (ne[1] - sw[1]) / 2;
+    const corners = [[cx - hl, cy - hla], [cx + hl, cy - hla], [cx + hl, cy + hla], [cx - hl, cy + hla]];
+    if (!rotation) return corners;
+    const rad = rotation * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+    const mLng = 111320 * Math.cos(cy * Math.PI / 180);
+    return corners.map(([lng, lat]) => {
+        const dx = (lng - cx) * mLng, dy = (lat - cy) * 111320;
+        const dx2 = dx * cos + dy * sin, dy2 = -dx * sin + dy * cos;
+        return [cx + dx2 / mLng, cy + dy2 / 111320];
+    });
+}
+
 // 统一销毁图层/覆盖物：Layer 用 setMap(null)，Overlay 用 map.remove
 function disposeOverlay(o, map) {
     try {
@@ -1202,7 +1218,10 @@ function applyPlan(map, plan) {
         if (data.rects) {
             Object.entries(data.rects).forEach(([name, r]) => {
                 if (!r.bounds || !r.bounds[0] || !r.bounds[1]) return;
-                const o = new AMap.Rectangle({ bounds: new AMap.Bounds(r.bounds[0], r.bounds[1]), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 });
+                const rot = r.rotation || 0;
+                const o = rot
+                    ? new AMap.Polygon({ path: rectCorners(r.bounds, rot), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 })
+                    : new AMap.Rectangle({ bounds: new AMap.Bounds(r.bounds[0], r.bounds[1]), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 });
                 o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '▭', title: name, badge: '画框', desc: r.desc || '' })));
                 map.add(o); overlays.push(o); group.rect++; added++;
                 const c = [(r.bounds[0][0] + r.bounds[1][0]) / 2, (r.bounds[0][1] + r.bounds[1][1]) / 2];
