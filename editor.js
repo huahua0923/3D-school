@@ -809,6 +809,125 @@
     });
   }
 
+  // —— 所见即所得对位：底图半透明叠加到地图，点击定位 + 拖手柄微调 + 滑块缩放 ——
+  function showGeoAlign(onPick) {
+    const imgDataUrl = state.backgroundImage;
+    if (!imgDataUrl) { alert('请先导入底图（🖼️ 导入图片）'); return; }
+    const imgW = state.imageWidth || 1200;
+    const imgH = state.imageHeight || 800;
+    const gb = ensureGeoBounds();
+    const center0 = [(gb.nw[0] + gb.se[0]) / 2, (gb.nw[1] + gb.se[1]) / 2];
+    const width0 = Math.max(gb.se[0] - gb.nw[0], 1e-6);
+
+    const zoom = (geoConfig && geoConfig.zoom) || 16;
+    const mapStyle = (geoConfig && geoConfig.mapStyle) || 'amap://styles/normal';
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+      <div style="position:relative;width:min(96vw,1200px);height:min(92vh,780px);background:#0d1117;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+        <div style="padding:10px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.08);background:#111827;flex-wrap:wrap;">
+          <span style="font-weight:700;color:#e0e0f0;font-size:0.9rem;">🎯 地图对位</span>
+          <span id="geo-align-hint" style="font-size:0.76rem;color:#9aa;flex:1;min-width:220px;">点击地图 → 移动底图中心；拖 🟡 手柄 → 微调；滑块 → 缩放</span>
+          <label style="font-size:0.75rem;color:#9aa;display:flex;align-items:center;gap:6px;">底图缩放
+            <input id="geo-align-scale" type="range" min="20" max="500" value="100" style="width:130px;accent-color:#3b82f6;" />
+            <span id="geo-align-scale-val" style="min-width:40px;">100%</span>
+          </label>
+          <button id="geo-align-reset" class="toolbar-btn" style="font-size:0.75rem;">重置</button>
+          <button id="geo-align-cancel" class="toolbar-btn" style="font-size:0.75rem;">取消</button>
+          <button id="geo-align-ok" class="toolbar-btn primary" style="font-size:0.75rem;">✅ 确定使用</button>
+        </div>
+        <div id="geo-align-map" style="flex:1;min-height:0;position:relative;overflow:hidden;">
+          <img id="geo-align-img" style="position:absolute;opacity:0.55;pointer-events:none;z-index:30;box-shadow:0 0 0 2px #ffd400;" />
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const mapEl = overlay.querySelector('#geo-align-map');
+    const img = overlay.querySelector('#geo-align-img');
+    const hint = overlay.querySelector('#geo-align-hint');
+    const scaleEl = overlay.querySelector('#geo-align-scale');
+    const scaleVal = overlay.querySelector('#geo-align-scale-val');
+    img.src = imgDataUrl;
+
+    overlay.querySelector('#geo-align-cancel').onclick = () => overlay.remove();
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    loadAmap().then(AMap => {
+      const map = new AMap.Map(mapEl, { viewMode: '2D', center: center0, zoom, mapStyle, pitch: 0, rotation: 0 });
+
+      let center = [...center0];
+      let widthDeg = width0;
+
+      // 纬度跨度按图片宽高比 + 墨卡托 cos 修正，保证底图在地图上显示为正确宽高比、不变形
+      function heightDeg() {
+        return widthDeg * (imgH / imgW) * Math.cos(center[1] * Math.PI / 180);
+      }
+      function positionImg() {
+        const hD = heightDeg();
+        const nw = [center[0] - widthDeg / 2, center[1] + hD / 2];
+        const se = [center[0] + widthDeg / 2, center[1] - hD / 2];
+        const pNW = map.lngLatToContainer(new AMap.LngLat(nw[0], nw[1]));
+        const pSE = map.lngLatToContainer(new AMap.LngLat(se[0], se[1]));
+        img.style.left = pNW.x + 'px';
+        img.style.top = pNW.y + 'px';
+        img.style.width = Math.max(1, pSE.x - pNW.x) + 'px';
+        img.style.height = Math.max(1, pSE.y - pNW.y) + 'px';
+      }
+
+      // 中心手柄（可拖拽，微调平移）
+      const centerMarker = new AMap.Marker({
+        position: center0,
+        draggable: true,
+        map,
+        zIndex: 40,
+        content: '<div style="width:22px;height:22px;border-radius:50%;background:#ffd400;border:3px solid #fff;box-shadow:0 0 10px rgba(0,0,0,0.7);cursor:move;"></div>',
+        offset: new AMap.Pixel(-11, -11),
+      });
+      centerMarker.on('dragging', e => {
+        center = [e.lnglat.getLng(), e.lnglat.getLat()];
+        positionImg();
+      });
+
+      // 点击地图：底图中心直接跳过去（快速定位）
+      map.on('click', e => {
+        center = [e.lnglat.getLng(), e.lnglat.getLat()];
+        centerMarker.setPosition([center[0], center[1]]);
+        positionImg();
+      });
+
+      // 底图缩放滑块（等比缩放）
+      scaleEl.addEventListener('input', () => {
+        widthDeg = width0 * (Number(scaleEl.value) / 100);
+        scaleVal.textContent = scaleEl.value + '%';
+        positionImg();
+      });
+
+      overlay.querySelector('#geo-align-reset').onclick = () => {
+        center = [...center0]; widthDeg = width0;
+        scaleEl.value = 100; scaleVal.textContent = '100%';
+        centerMarker.setPosition([center[0], center[1]]);
+        positionImg();
+      };
+
+      // 地图移动/缩放后，重新贴底图（底图固定在地理坐标上，跟随地图）
+      map.on('moveend', positionImg);
+      map.on('zoomend', positionImg);
+
+      overlay.querySelector('#geo-align-ok').onclick = () => {
+        const hD = heightDeg();
+        onPick({ nw: [center[0] - widthDeg / 2, center[1] + hD / 2], se: [center[0] + widthDeg / 2, center[1] - hD / 2] });
+        overlay.remove();
+      };
+
+      // 首次定位（地图容器就绪后）
+      map.on('complete', positionImg);
+      setTimeout(positionImg, 250);
+    }).catch(err => {
+      hint.textContent = '❌ ' + err.message;
+    });
+  }
+
   function showGeoBoundsModal() {
     const gb = ensureGeoBounds();
     const imgW = state.imageWidth || 1200;
@@ -827,7 +946,8 @@
         <label>东南角 经度<input type="number" id="geo-se-lng" step="0.00001" value="${gb.se[0]}"></label>
         <label>东南角 纬度<input type="number" id="geo-se-lat" step="0.00001" value="${gb.se[1]}"></label>
       </div>
-      <button class="toolbar-btn" id="geo-pick" style="margin-top:12px;width:100%;justify-content:center;">🖱️ 在地图上点选范围（自动获取经纬度）</button>
+      <button class="toolbar-btn primary" id="geo-align" style="margin-top:12px;width:100%;justify-content:center;">🎯 在地图上对位（拖拽/缩放底图，所见即所得）</button>
+      <button class="toolbar-btn" id="geo-pick" style="margin-top:6px;width:100%;justify-content:center;">🖱️ 点选两个角点（备用）</button>
       <div id="geo-distort" style="margin-top:10px;font-size:0.78rem;color:#8888aa;line-height:1.5;"></div>
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-panel);">
         <div style="font-size:0.78rem;color:#8888aa;margin-bottom:8px;">⚡ 按图片比例自动计算（图片 ${imgW}×${imgH}，比例 ${imgAr.toFixed(2)}:1）</div>
@@ -873,6 +993,12 @@
       overlay.querySelector('#' + id).addEventListener('input', updateDistortHint);
     });
 
+    overlay.querySelector('#geo-align').onclick = () => {
+      showGeoAlign(({ nw, se }) => {
+        nwLng.value = nw[0]; nwLat.value = nw[1]; seLng.value = se[0]; seLat.value = se[1];
+        updateDistortHint();
+      });
+    };
     overlay.querySelector('#geo-pick').onclick = () => {
       showGeoPicker(({ nw, se }) => {
         nwLng.value = nw[0]; nwLat.value = nw[1]; seLng.value = se[0]; seLat.value = se[1];
