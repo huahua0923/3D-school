@@ -373,6 +373,26 @@ body {
 .project-row:hover { background: var(--bg-panel-hover); }
 .project-row .name { flex: 1; font-size: 0.9rem; }
 .project-row .time { font-size: 0.75rem; color: var(--text-muted); }
+.project-row .del {
+  border: none; background: transparent; color: var(--text-muted);
+  cursor: pointer; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; flex-shrink: 0;
+}
+.project-row .del:hover { color: #ef4444; background: rgba(255,255,255,0.08); }
+
+/* ---- Side Plan List (right panel) ---- */
+#plan-panel { border-bottom: 1px solid var(--border-panel); }
+.plan-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 2px; }
+.plan-panel-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+.plan-panel-btns { display: flex; gap: 4px; }
+.plan-panel-btns button {
+  border: 1px solid var(--border-panel); background: transparent; color: var(--text-secondary);
+  border-radius: 4px; padding: 3px 8px; font-size: 0.78rem; cursor: pointer;
+}
+.plan-panel-btns button:hover { color: var(--text-primary); background: var(--bg-panel-hover); }
+#plan-list { padding: 6px 8px 12px; max-height: 240px; overflow-y: auto; }
+#plan-list .project-row { margin: 1px 0; padding: 6px 10px; }
+#plan-list .project-row.selected { background: rgba(59,130,246,0.12); border: 1px solid var(--accent-blue); border-radius: var(--radius-sm); }
+#plan-list .empty { font-size: 0.75rem; color: var(--text-muted); padding: 6px 2px; }
 
 /* ---- Shortcut Help ---- */
 .shortcut-grid {

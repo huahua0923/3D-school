@@ -1112,6 +1112,7 @@
     lastSavedAt = Date.now();
     showToast('✅ 项目已保存到服务器');
     updateSaveStatus();
+    loadPlanList();
   }
 
   async function loadFromServer() {
@@ -1159,6 +1160,69 @@
       };
     });
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  // ===== 侧栏方案列表（始终可见，参考路线图编辑器的右侧方案列表）=====
+  let planListCache = [];
+
+  async function loadPlanList() {
+    try {
+      const res = await fetch('/api/editor/projects');
+      const json = await res.json();
+      planListCache = (json.data || []).filter(p => !(p.data && p.data.kind === 'map'));
+    } catch (e) {
+      planListCache = [];
+    }
+    renderPlanList();
+  }
+
+  function renderPlanList() {
+    const box = document.getElementById('plan-list');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!planListCache.length) {
+      box.innerHTML = '<div class="empty">暂无室内方案</div>';
+      return;
+    }
+    planListCache.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'project-row' + (String(p.id) === String(state.projectId) ? ' selected' : '');
+      const name = document.createElement('span'); name.className = 'name'; name.textContent = p.name || ('方案 ' + p.id); name.title = p.name || '';
+      const time = document.createElement('span'); time.className = 'time'; time.textContent = (p.updated_at || '').slice(0, 16).replace('T', ' ');
+      const del = document.createElement('button'); del.className = 'del'; del.textContent = '✕'; del.title = '删除';
+      row.appendChild(name); row.appendChild(time); row.appendChild(del);
+      row.addEventListener('click', async (e) => {
+        if (e.target === del) {
+          e.stopPropagation();
+          if (!confirm('确定删除方案「' + (p.name || ('方案 ' + p.id)) + '」？')) return;
+          const t = getToken();
+          const res = await fetch('/api/editor/projects/' + p.id, { method: 'DELETE', headers: t ? { 'Authorization': 'Bearer ' + t } : {} });
+          if (res.ok) {
+            showToast('✅ 已删除');
+            if (String(p.id) === String(state.projectId)) blankProject();
+            loadPlanList();
+          } else {
+            const j = await res.json().catch(() => ({}));
+            alert('删除失败：' + (j.error || ('HTTP ' + res.status)) + '（请先保存/登录后再试）');
+          }
+          return;
+        }
+        const res = await fetch('/api/editor/projects/' + p.id);
+        const json = await res.json();
+        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data); showToast('✅ 已加载：' + (json.data.name || p.name)); renderPlanList(); }
+      });
+      box.appendChild(row);
+    });
+  }
+
+  function blankProject() {
+    setState({
+      projectId: null, projectName: '未命名项目', geoBounds: null, geoBoundsExplicit: false,
+      backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
+      elements: [], selectedElementId: null, selectedElementIds: [],
+      stageScale: 1, stagePosition: { x: 0, y: 0 },
+    });
+    bgImageObj = null; $name.value = '未命名项目'; lastSavedAt = null; resetHistory(); updateUI();
   }
 
   function getToken() { return localStorage.getItem('admin_token') || null; }
@@ -1607,6 +1671,13 @@
   });
   document.getElementById('btn-geo').addEventListener('click', showGeoBoundsModal);
 
+  // 侧栏方案列表：新建 / 刷新
+  document.getElementById('btn-plan-new').addEventListener('click', () => {
+    if (state.elements.length > 0 && !confirm('确定新建？未保存更改将丢失。')) return;
+    blankProject();
+  });
+  document.getElementById('btn-plan-refresh').addEventListener('click', loadPlanList);
+
   // Shortcuts help
   document.getElementById('btn-shortcuts').addEventListener('click', () => {
     const overlay = document.createElement('div');
@@ -1817,6 +1888,7 @@
   }).catch(() => {});
 
   init();
+  loadPlanList();
 
   // 从 URL ?project=<id> 跳转时自动加载对应项目（供首页「编辑」按钮跳转）
   (function autoLoadProjectFromUrl() {
@@ -1827,6 +1899,7 @@
         state.projectId = id;
         loadProjectData(json.data.data || json.data);
         showToast('✅ 已加载项目：' + (state.projectName || ('方案 ' + id)));
+        loadPlanList();
       }
     }).catch(() => {});
   })();
