@@ -74,8 +74,8 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 
 .toast{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:2000;background:#1a1a2e;color:#fff;font-weight:700;padding:9px 20px;border-radius:8px;font-size:0.9rem;border:1px solid rgba(255,255,255,0.25);pointer-events:none;opacity:0;transition:opacity 0.3s}
 
-/* 测距距离标签：暗色地图上强制白字 + 半透明深色底，保证看清（覆盖高德默认黑字） */
-.amap-overlay-text-container,.amap-marker-label,.amap-marker .amap-text,.amap-text-label{color:#fff !important;background:rgba(8,12,24,0.7) !important;padding:3px 8px !important;border-radius:6px !important;font-weight:700 !important;text-shadow:0 1px 2px #000 !important}
+/* 测距距离标签：黑字 + 浅色底，暗色/亮色地图都清晰 */
+.amap-overlay-text-container,.amap-marker-label,.amap-marker .amap-text,.amap-text-label{color:#000 !important;background:rgba(255,255,255,0.85) !important;padding:3px 8px !important;border-radius:6px !important;font-weight:700 !important;text-shadow:none !important}
 </style>
 </head>
 <body>
