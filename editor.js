@@ -828,17 +828,21 @@
       <div style="position:relative;width:min(96vw,1200px);height:min(92vh,780px);background:#0d1117;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.12);box-shadow:0 20px 60px rgba(0,0,0,0.5);">
         <div style="padding:10px 14px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(255,255,255,0.08);background:#111827;flex-wrap:wrap;">
           <span style="font-weight:700;color:#e0e0f0;font-size:0.9rem;">🎯 地图对位</span>
-          <span id="geo-align-hint" style="font-size:0.76rem;color:#9aa;flex:1;min-width:220px;">点击地图 → 移动底图中心；拖 🟡 手柄 → 微调；滑块 → 缩放</span>
+          <span id="geo-align-hint" style="font-size:0.76rem;color:#9aa;flex:1;min-width:220px;">点击地图 → 移动中心；拖 🟡 手柄 → 微调；缩放/旋转滑块 → 对齐</span>
           <label style="font-size:0.75rem;color:#9aa;display:flex;align-items:center;gap:6px;">底图缩放
             <input id="geo-align-scale" type="range" min="20" max="500" value="100" style="width:130px;accent-color:#3b82f6;" />
             <span id="geo-align-scale-val" style="min-width:40px;">100%</span>
+          </label>
+          <label style="font-size:0.75rem;color:#9aa;display:flex;align-items:center;gap:6px;">旋转
+            <input id="geo-align-rotate" type="range" min="-180" max="180" value="0" step="0.5" style="width:110px;accent-color:#f59e0b;" />
+            <span id="geo-align-rotate-val" style="min-width:40px;">0°</span>
           </label>
           <button id="geo-align-reset" class="toolbar-btn" style="font-size:0.75rem;">重置</button>
           <button id="geo-align-cancel" class="toolbar-btn" style="font-size:0.75rem;">取消</button>
           <button id="geo-align-ok" class="toolbar-btn primary" style="font-size:0.75rem;">✅ 确定使用</button>
         </div>
         <div id="geo-align-map" style="flex:1;min-height:0;position:relative;overflow:hidden;">
-          <img id="geo-align-img" style="position:absolute;opacity:0.55;pointer-events:none;z-index:30;box-shadow:0 0 0 2px #ffd400;" />
+          <img id="geo-align-img" style="position:absolute;opacity:0.55;pointer-events:none;z-index:30;box-shadow:0 0 0 2px #ffd400;transform-origin:center;" />
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -848,6 +852,8 @@
     const hint = overlay.querySelector('#geo-align-hint');
     const scaleEl = overlay.querySelector('#geo-align-scale');
     const scaleVal = overlay.querySelector('#geo-align-scale-val');
+    const rotateEl = overlay.querySelector('#geo-align-rotate');
+    const rotateVal = overlay.querySelector('#geo-align-rotate-val');
     img.src = imgDataUrl;
 
     overlay.querySelector('#geo-align-cancel').onclick = () => overlay.remove();
@@ -858,6 +864,8 @@
 
       let center = [...center0];
       let widthDeg = width0;
+      let rotation = gb.rotation || 0;
+      rotateEl.value = rotation; rotateVal.textContent = rotation + '°';
 
       // 纬度跨度按图片宽高比 + 墨卡托 cos 修正，保证底图在地图上显示为正确宽高比、不变形
       function heightDeg() {
@@ -873,6 +881,7 @@
         img.style.top = pNW.y + 'px';
         img.style.width = Math.max(1, pSE.x - pNW.x) + 'px';
         img.style.height = Math.max(1, pSE.y - pNW.y) + 'px';
+        img.style.transform = 'rotate(' + rotation + 'deg)';
       }
 
       // 中心手柄（可拖拽，微调平移）
@@ -903,9 +912,17 @@
         positionImg();
       });
 
+      // 底图旋转滑块（绕中心旋转，用于对齐非正北朝向的平面图）
+      rotateEl.addEventListener('input', () => {
+        rotation = Number(rotateEl.value);
+        rotateVal.textContent = rotation + '°';
+        positionImg();
+      });
+
       overlay.querySelector('#geo-align-reset').onclick = () => {
-        center = [...center0]; widthDeg = width0;
+        center = [...center0]; widthDeg = width0; rotation = gb.rotation || 0;
         scaleEl.value = 100; scaleVal.textContent = '100%';
+        rotateEl.value = rotation; rotateVal.textContent = rotation + '°';
         centerMarker.setPosition([center[0], center[1]]);
         positionImg();
       };
@@ -916,7 +933,7 @@
 
       overlay.querySelector('#geo-align-ok').onclick = () => {
         const hD = heightDeg();
-        onPick({ nw: [center[0] - widthDeg / 2, center[1] + hD / 2], se: [center[0] + widthDeg / 2, center[1] - hD / 2] });
+        onPick({ nw: [center[0] - widthDeg / 2, center[1] + hD / 2], se: [center[0] + widthDeg / 2, center[1] - hD / 2], rotation });
         overlay.remove();
       };
 
@@ -945,6 +962,7 @@
         <label>西北角 纬度<input type="number" id="geo-nw-lat" step="0.00001" value="${gb.nw[1]}"></label>
         <label>东南角 经度<input type="number" id="geo-se-lng" step="0.00001" value="${gb.se[0]}"></label>
         <label>东南角 纬度<input type="number" id="geo-se-lat" step="0.00001" value="${gb.se[1]}"></label>
+        <label>旋转角度(度)<input type="number" id="geo-rotation" step="0.5" value="${gb.rotation || 0}"></label>
       </div>
       <button class="toolbar-btn primary" id="geo-align" style="margin-top:12px;width:100%;justify-content:center;">🎯 在地图上对位（拖拽/缩放底图，所见即所得）</button>
       <button class="toolbar-btn" id="geo-pick" style="margin-top:6px;width:100%;justify-content:center;">🖱️ 点选两个角点（备用）</button>
@@ -966,12 +984,14 @@
     document.body.appendChild(overlay);
     const nwLng = overlay.querySelector('#geo-nw-lng'), nwLat = overlay.querySelector('#geo-nw-lat');
     const seLng = overlay.querySelector('#geo-se-lng'), seLat = overlay.querySelector('#geo-se-lat');
+    const rotationEl = overlay.querySelector('#geo-rotation');
     const distortEl = overlay.querySelector('#geo-distort');
 
     function readBounds() {
       return {
         nw: [Number(nwLng.value), Number(nwLat.value)],
         se: [Number(seLng.value), Number(seLat.value)],
+        rotation: Number(rotationEl.value) || 0,
       };
     }
     function updateDistortHint() {
@@ -994,8 +1014,9 @@
     });
 
     overlay.querySelector('#geo-align').onclick = () => {
-      showGeoAlign(({ nw, se }) => {
+      showGeoAlign(({ nw, se, rotation }) => {
         nwLng.value = nw[0]; nwLat.value = nw[1]; seLng.value = se[0]; seLat.value = se[1];
+        rotationEl.value = rotation || 0;
         updateDistortHint();
       });
     };
@@ -1008,6 +1029,7 @@
     overlay.querySelector('#geo-default').onclick = () => {
       const d = defaultGeoBounds();
       nwLng.value = d.nw[0]; nwLat.value = d.nw[1]; seLng.value = d.se[0]; seLat.value = d.se[1];
+      rotationEl.value = 0;
       updateDistortHint();
     };
     overlay.querySelector('#geo-auto-calc').onclick = () => {
@@ -1028,7 +1050,7 @@
       const nw = [Number(nwLng.value), Number(nwLat.value)];
       const se = [Number(seLng.value), Number(seLat.value)];
       if (nw.some(isNaN) || se.some(isNaN)) { alert('请输入有效经纬度'); return; }
-      setState({ geoBounds: { nw, se }, geoBoundsExplicit: true });
+      setState({ geoBounds: { nw, se, rotation: Number(rotationEl.value) || 0 }, geoBoundsExplicit: true });
       overlay.remove();
       showToast('✅ 地理范围已设置');
     };

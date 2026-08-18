@@ -1055,9 +1055,51 @@ function defaultPlanBounds(center) {
 }
 
 function planPointToLngLat(x, y, bounds, areaW, areaH) {
-    const lng = bounds.nw[0] + (x / areaW) * (bounds.se[0] - bounds.nw[0]);
-    const lat = bounds.nw[1] + (y / areaH) * (bounds.se[1] - bounds.nw[1]);
+    const rot = bounds.rotation || 0;
+    let px = x, py = y;
+    if (rot) {
+        // 底图旋转对位：像素绕图片中心顺时针旋转（与编辑器 CSS rotate 一致），再线性投影到经纬度
+        const rad = rot * Math.PI / 180;
+        const dx = x - areaW / 2, dy = y - areaH / 2;
+        const cos = Math.cos(rad), sin = Math.sin(rad);
+        px = areaW / 2 + (dx * cos - dy * sin);
+        py = areaH / 2 + (dx * sin + dy * cos);
+    }
+    const lng = bounds.nw[0] + (px / areaW) * (bounds.se[0] - bounds.nw[0]);
+    const lat = bounds.nw[1] + (py / areaH) * (bounds.se[1] - bounds.nw[1]);
     return [lng, lat];
+}
+
+// 旋转后四角的轴对齐外接 bounds（供 ImageLayer 使用）
+function rotatedBounds(bounds, areaW, areaH) {
+    const rot = bounds.rotation || 0;
+    if (!rot) return bounds;
+    const corners = [[0, 0], [areaW, 0], [areaW, areaH], [0, areaH]];
+    const lls = corners.map(c => planPointToLngLat(c[0], c[1], bounds, areaW, areaH));
+    const lngs = lls.map(p => p[0]), lats = lls.map(p => p[1]);
+    return { nw: [Math.min(...lngs), Math.max(...lats)], se: [Math.max(...lngs), Math.min(...lats)] };
+}
+
+// 把底图旋转 rotation 度烘焙成新图（轴对齐外接矩形，四角透明）
+function bakeRotatedImage(dataUrl, w, h, rotation) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const rad = rotation * Math.PI / 180;
+            const cos = Math.abs(Math.cos(rad)), sin = Math.abs(Math.sin(rad));
+            const bw = Math.max(1, Math.ceil(w * cos + h * sin));
+            const bh = Math.max(1, Math.ceil(w * sin + h * cos));
+            const canvas = document.createElement('canvas');
+            canvas.width = bw; canvas.height = bh;
+            const ctx = canvas.getContext('2d');
+            ctx.translate(bw / 2, bh / 2);
+            ctx.rotate(rad);
+            ctx.drawImage(img, -w / 2, -h / 2, w, h);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = () => reject(new Error('底图加载失败'));
+        img.src = dataUrl;
+    });
 }
 
 // 统一销毁图层/覆盖物：Layer 用 setMap(null)，Overlay 用 map.remove
@@ -1201,23 +1243,35 @@ function applyPlan(map, plan) {
     const areaW = data.imageWidth || PLAN_DEFAULT_W;
     const areaH = data.imageHeight || PLAN_DEFAULT_H;
 
-    // 底图：场地平面图，按 geoBounds 对齐到地图
+    // 底图：场地平面图，按 geoBounds 对齐到地图（支持旋转烘焙）
     if (data.backgroundImage) {
-        try {
-            const imgLayer = new AMap.ImageLayer({
-                url: data.backgroundImage,
-                bounds: new AMap.Bounds(
-                    new AMap.LngLat(bounds.nw[0], bounds.nw[1]),
-                    new AMap.LngLat(bounds.se[0], bounds.se[1])
-                ),
-                opacity: data.bgOpacity ?? 1,
-                zooms: [3, 20],
-                zIndex: 1,
-            });
-            imgLayer.setMap(map);
-            overlays.push(imgLayer);
-        } catch (err) {
-            console.warn('⚠️ 底图叠加失败:', err.message);
+        const rot = bounds.rotation || 0;
+        const bbox = rotatedBounds(bounds, areaW, areaH);
+        const makeLayer = (url) => {
+            try {
+                const imgLayer = new AMap.ImageLayer({
+                    url,
+                    bounds: new AMap.Bounds(
+                        new AMap.LngLat(bbox.nw[0], bbox.nw[1]),
+                        new AMap.LngLat(bbox.se[0], bbox.se[1])
+                    ),
+                    opacity: data.bgOpacity ?? 1,
+                    zooms: [3, 20],
+                    zIndex: 1,
+                });
+                imgLayer.setMap(map);
+                overlays.push(imgLayer);
+            } catch (err) {
+                console.warn('⚠️ 底图叠加失败:', err.message);
+            }
+        };
+        if (rot) {
+            bakeRotatedImage(data.backgroundImage, areaW, areaH, rot).then(url => {
+                if (planOverlayGroups[plan.id] !== group) return; // 方案已移除，丢弃
+                makeLayer(url);
+            }).catch(err => console.warn('⚠️ 底图旋转失败:', err.message));
+        } else {
+            makeLayer(data.backgroundImage);
         }
     }
 
