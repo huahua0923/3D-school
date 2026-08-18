@@ -48,6 +48,7 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 .layer-vis:hover{color:#fff;background:rgba(255,255,255,0.08)}
 .layer-del{color:var(--danger);font-size:0.7rem;padding:2px 5px;border-radius:3px;cursor:pointer}
 .layer-del:hover{background:rgba(239,68,68,0.15)}
+.layer-time{font-size:0.66rem;color:rgba(255,255,255,0.35);flex-shrink:0;font-variant-numeric:tabular-nums}
 
 /* Props inputs */
 .prop-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -142,6 +143,14 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
             <div class="prop-row"><label>速度</label><input type="range" id="prop-speed" min="1" max="50" value="9" style="flex:1" /><span id="prop-speed-val" style="font-size:0.7rem;color:rgba(255,255,255,0.5);min-width:34px;text-align:right">0.9</span></div>
             <div class="prop-row"><label>方向</label><select id="prop-direction" style="flex:1"><option value="1">正向 →（起点到终点）</option><option value="-1">反向 ←（终点到起点）</option></select></div>
             <div class="prop-row" id="prop-rotation-row"><label>旋转</label><input type="range" id="prop-rotation" min="-180" max="180" value="0" style="flex:1" /><span id="prop-rotation-val" style="font-size:0.7rem;color:rgba(255,255,255,0.5);min-width:34px;text-align:right">0°</span></div>
+            <div id="prop-images-block" style="margin-top:6px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                    <label style="font-size:0.7rem;color:rgba(255,255,255,0.5)">🖼️ 图片（首页点击放大）</label>
+                    <button class="btn" id="btn-add-images" style="padding:2px 8px;font-size:0.7rem">＋ 添加</button>
+                </div>
+                <div id="prop-images-thumbs" style="display:flex;flex-wrap:wrap;gap:4px"></div>
+            </div>
+            <input type="file" id="prop-img-input" accept="image/*" multiple style="display:none" />
             <div id="prop-points-info" style="font-size:0.7rem;color:rgba(255,255,255,0.35);margin-top:4px"></div>
             <div style="display:flex;gap:4px;margin-top:8px">
                 <button class="btn" id="btn-bring-front">⬆ 置顶</button>
@@ -230,7 +239,7 @@ function replaceRectOv(ov, rotation){
     if(!bounds)return ov;
     const idx=overlays.indexOf(ov);
     const nv=buildRectOv(bounds, rotation, ov);
-    nv._type='rect';nv._name=ov._name;nv._color=ov._color;nv._stroke=ov._stroke;nv._opacity=ov._opacity;nv._speed=ov._speed;nv._direction=ov._direction;nv._desc=ov._desc;
+    nv._type='rect';nv._name=ov._name;nv._color=ov._color;nv._stroke=ov._stroke;nv._opacity=ov._opacity;nv._speed=ov._speed;nv._direction=ov._direction;nv._desc=ov._desc;nv._images=ov._images||[];
     nv._rotation=rotation;
     nv.setMap(map);
     nv.on('click',()=>selectOv(nv));
@@ -241,7 +250,7 @@ function replaceRectOv(ov, rotation){
 
 function captureOverlays(){
     return JSON.parse(JSON.stringify(overlays.map(o=>{
-        const base={_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,_speed:o._speed,_direction:o._direction,_desc:o._desc};
+        const base={_type:o._type,_name:o._name,_color:o._color,_stroke:o._stroke,_opacity:o._opacity,_speed:o._speed,_direction:o._direction,_desc:o._desc,_images:o._images||[]};
         if(o._type==='marker'||o._type==='text')return {...base,path:[[o.getPosition().lng,o.getPosition().lat]]};
         if(o._type==='rect'){const b=rectBoundsOf(o);return {...base,_rotation:o._rotation||0,bounds:b};}
         if(o._type==='circle'){const c=o.getCenter();return {...base,center:[c.lng,c.lat],radius:o.getRadius()};}
@@ -298,7 +307,7 @@ function restoreSnapshot(snap){
             ov=new AMap.Polygon({strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5,path:d.path.map(p=>[p[0],p[1]])});
         }
         ov.setMap(map);
-        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._direction=d._direction;ov._desc=d._desc;ov._rotation=d._rotation||0;
+        ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._direction=d._direction;ov._desc=d._desc;ov._rotation=d._rotation||0;ov._images=d._images||[];
         ov.on('click',()=>selectOv(ov));
         if(d._type==='marker')bindMarkerDrag(ov);
         overlays.push(ov);
@@ -358,12 +367,12 @@ function addRoutesAreas(routes,areas,target){
     if(routes)Object.entries(routes).forEach(([n,r])=>{
         if(!r.pts||r.pts.length<2)return;
         const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:r.strokeWidth||3,strokeOpacity:r.opacity??0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov._speed=r.speed??0.9;ov._direction=r.direction??1;ov._desc=r.desc||'';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov._speed=r.speed??0.9;ov._direction=r.direction??1;ov._desc=r.desc||'';ov._images=r.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
     if(areas)Object.entries(areas).forEach(([n,a])=>{
         if(!a.pts||a.pts.length<3)return;
         const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity??0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';ov._images=a.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
 }
 
@@ -372,7 +381,7 @@ function addMarkers(markers,target){
     const arr=target||overlays;
     Object.entries(markers).forEach(([n,m])=>{
         const ov=new AMap.Marker({position:[m.lng,m.lat],content:markerContent(m.color||'#f59e0b',false),offset:new AMap.Pixel(-8,-8),title:n});
-        ov.setMap(map);ov._type='marker';ov._name=n;ov._color=m.color||'#f59e0b';ov._stroke=0;ov._opacity=1;
+        ov.setMap(map);ov._type='marker';ov._name=n;ov._color=m.color||'#f59e0b';ov._stroke=0;ov._opacity=1;ov._images=m.images||[];
         if(arr===overlays){ov.on('click',()=>selectOv(ov));bindMarkerDrag(ov);}arr.push(ov);
     });
 }
@@ -382,12 +391,12 @@ function addRectsCircles(rects,circles,target){
     if(rects)Object.entries(rects).forEach(([n,r])=>{
         if(!r.bounds||!r.bounds[0]||!r.bounds[1])return;
         const ov=buildRectOv(r.bounds, r.rotation||0, {_color:r.color||'#8b5cf6',_stroke:r.strokeWidth||2,_opacity:r.opacity??0.2});
-        ov.setMap(map);ov._type='rect';ov._name=n;ov._color=r.color||'#8b5cf6';ov._stroke=r.strokeWidth||2;ov._opacity=r.opacity??0.2;ov._desc=r.desc||'';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='rect';ov._name=n;ov._color=r.color||'#8b5cf6';ov._stroke=r.strokeWidth||2;ov._opacity=r.opacity??0.2;ov._desc=r.desc||'';ov._images=r.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
     if(circles)Object.entries(circles).forEach(([n,c])=>{
         if(!c.center||c.radius==null)return;
         const ov=new AMap.Circle({center:c.center,radius:c.radius,strokeColor:c.color||'#ec4899',strokeWeight:c.strokeWidth||2,fillColor:c.color||'#ec4899',fillOpacity:c.opacity??0.2,zIndex:5});
-        ov.setMap(map);ov._type='circle';ov._name=n;ov._color=c.color||'#ec4899';ov._stroke=c.strokeWidth||2;ov._opacity=c.opacity??0.2;ov._desc=c.desc||'';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='circle';ov._name=n;ov._color=c.color||'#ec4899';ov._stroke=c.strokeWidth||2;ov._opacity=c.opacity??0.2;ov._desc=c.desc||'';ov._images=c.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
 }
 
@@ -397,12 +406,12 @@ function addEllipsesTexts(ellipses,texts,target){
         if(!e.center)return;
         const rr=Array.isArray(e.radius)?e.radius:[e.radius||80,e.radius||80];
         const ov=new AMap.Ellipse({center:e.center,radius:rr,strokeColor:e.color||'#06b6d4',strokeWeight:e.strokeWidth||2,fillColor:e.color||'#06b6d4',fillOpacity:e.opacity??0.2,zIndex:5});
-        ov.setMap(map);ov._type='ellipse';ov._name=n;ov._color=e.color||'#06b6d4';ov._stroke=e.strokeWidth||2;ov._opacity=e.opacity??0.2;ov._desc=e.desc||'';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='ellipse';ov._name=n;ov._color=e.color||'#06b6d4';ov._stroke=e.strokeWidth||2;ov._opacity=e.opacity??0.2;ov._desc=e.desc||'';ov._images=e.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
     if(texts)Object.entries(texts).forEach(([n,t])=>{
         if(t.lng==null||t.lat==null)return;
         const ov=new AMap.Text({text:n,position:[t.lng,t.lat],anchor:'center',style:{'color':t.color||'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
-        ov.setMap(map);ov._type='text';ov._name=n;ov._color=t.color||'#ffffff';ov._stroke=0;ov._opacity=1;ov._speed=0;ov._direction=1;ov._desc='';if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='text';ov._name=n;ov._color=t.color||'#ffffff';ov._stroke=0;ov._opacity=1;ov._speed=0;ov._direction=1;ov._desc='';ov._images=t.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
     });
 }
 
@@ -441,8 +450,9 @@ function renderPlanList(){
             cb.addEventListener('change',()=>togglePlanOverlay(p.id,cb.checked));
             row.appendChild(dot);row.appendChild(cb);row.appendChild(name);
         }
+        const time=document.createElement('span');time.className='layer-time';time.textContent=(p.updated_at||'').slice(5,16).replace('T',' ');time.title=p.updated_at||'';
         const del=document.createElement('span');del.className='layer-del';del.textContent='✕';
-        row.appendChild(del);
+        row.appendChild(time);row.appendChild(del);
         row.addEventListener('click',e=>{
             if(e.target===del){deletePlan(p.id);return}
             if(e.target.tagName==='INPUT')return;
@@ -573,7 +583,7 @@ function onDraw(e){
     }
     if(type==='marker'){
         const cnt=overlays.filter(o=>o._type==='marker').length+1;
-        ov._type='marker';ov._name='标记 '+cnt;ov._color='#f59e0b';ov._stroke=0;ov._opacity=1;
+        ov._type='marker';ov._name='标记 '+cnt;ov._color='#f59e0b';ov._stroke=0;ov._opacity=1;ov._images=[];
         ov.setContent(markerContent(ov._color,false));ov.setOffset(new AMap.Pixel(-8,-8));ov.setTitle(ov._name);
         ov.setMap(map);
         ov.on('click',()=>selectOv(ov));
@@ -592,6 +602,7 @@ function onDraw(e){
     ov._speed=0.9;
     ov._direction=1;
     ov._desc='';
+    ov._images=[];
     ov.setMap(map);  // 确保图形在地图上显示
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);
@@ -609,7 +620,7 @@ function placeText(lnglat){
     const cnt=overlays.filter(o=>o._type==='text').length+1;
     const ov=new AMap.Text({text,position:lnglat,anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
     ov.setMap(map);
-    ov._type='text';ov._name=text;ov._color='#ffffff';ov._stroke=0;ov._opacity=1;ov._speed=0;ov._direction=1;ov._desc='';
+    ov._type='text';ov._name=text;ov._color='#ffffff';ov._stroke=0;ov._opacity=1;ov._speed=0;ov._direction=1;ov._desc='';ov._images=[];
     ov.on('click',()=>selectOv(ov));
     overlays.push(ov);
     updateUI();setTool('pointer');
@@ -634,7 +645,7 @@ function formatArea(m2){
 
 function selectOv(ov){
     if(currentTool!=='pointer')return;
-    deselectOv();selectedOv=ov;
+    deselectOv();selectedOv=ov;selectedOv._images=selectedOv._images||[];
     if(ov._type==='marker'){
         ov.setContent(markerContent(ov._color,true));
     }else if(ov._type!=='text'){
@@ -814,6 +825,7 @@ function updateProps(){
     }else{
         document.getElementById('prop-points-info').textContent='顶点: '+(selectedOv.getPath?selectedOv.getPath().length:'-')+' 个';
     }
+    renderPropImages();
 }
 
 document.getElementById('prop-name').addEventListener('input',function(){
@@ -873,6 +885,65 @@ document.getElementById('prop-desc').addEventListener('input',function(){
     selectedOv._desc=this.value;
 });
 
+// —— 元素图片：多张上传，base64 存进方案数据，首页点击放大 ——
+function optimizeImg(dataUrl, maxDim){
+    maxDim=maxDim||1400;
+    return new Promise(resolve=>{
+        const img=new Image();
+        img.onload=()=>{
+            const scale=Math.min(1, maxDim/Math.max(img.width,img.height));
+            const w=Math.round(img.width*scale),h=Math.round(img.height*scale);
+            const c=document.createElement('canvas');c.width=w;c.height=h;
+            c.getContext('2d').drawImage(img,0,0,w,h);
+            resolve(c.toDataURL('image/jpeg',0.82));
+        };
+        img.onerror=()=>resolve(dataUrl);
+        img.src=dataUrl;
+    });
+}
+function renderPropImages(){
+    const box=document.getElementById('prop-images-thumbs');
+    if(!box)return;
+    const imgs=(selectedOv&&selectedOv._images)||[];
+    box.innerHTML='';
+    if(!imgs.length){ box.innerHTML='<span style="font-size:0.7rem;color:rgba(255,255,255,0.3)">暂无图片</span>'; return; }
+    imgs.forEach((src,i)=>{
+        const t=document.createElement('div');
+        t.style.cssText='position:relative;width:52px;height:52px;border-radius:4px;overflow:hidden;border:1px solid rgba(255,255,255,0.15)';
+        t.innerHTML='<img src="'+src+'" style="width:100%;height:100%;object-fit:cover;display:block" />';
+        const x=document.createElement('button');
+        x.textContent='✕';x.title='删除';
+        x.style.cssText='position:absolute;top:0;right:0;background:rgba(0,0,0,0.65);color:#fff;border:none;border-radius:0 0 0 4px;font-size:10px;line-height:1;padding:2px 4px;cursor:pointer';
+        x.addEventListener('click',e=>{
+            e.stopPropagation();
+            if(!selectedOv)return;
+            selectedOv._images.splice(i,1);
+            saveSnapshot();renderPropImages();
+        });
+        t.appendChild(x);box.appendChild(t);
+    });
+}
+document.getElementById('btn-add-images').addEventListener('click',()=>{
+    if(!selectedOv)return;
+    document.getElementById('prop-img-input').value='';
+    document.getElementById('prop-img-input').click();
+});
+document.getElementById('prop-img-input').addEventListener('change',async function(){
+    if(!selectedOv)return;
+    const files=Array.from(this.files||[]);
+    if(!files.length)return;
+    selectedOv._images=selectedOv._images||[];
+    let added=0;
+    for(const f of files){
+        if(!f.type.startsWith('image/'))continue;
+        const dataUrl=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f);});
+        selectedOv._images.push(await optimizeImg(dataUrl));
+        added++;
+    }
+    saveSnapshot();renderPropImages();
+    if(added)toast('✅ 已添加 '+added+' 张图片');
+});
+
 // Color presets
 document.getElementById('color-presets').innerHTML=COLOR_PRESETS.map(c=>`<span class="color-preset" style="background:${c}" data-color="${c}"></span>`).join('');
 document.getElementById('color-presets').addEventListener('click',e=>{
@@ -914,38 +985,39 @@ async function doSave(token,name){
     const routes={},areas={},markers={},rects={},circles={},ellipses={},texts={};
     let skipped=0;
     overlays.forEach(o=>{
+        const imgs=o._images||[];
         if(o._type==='marker'){
             const pos=o.getPosition();
-            markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};
+            markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b',images:imgs};
             return;
         }
         if(o._type==='rect'){
             const b=rectBoundsOf(o);
-            rects[o._name]={bounds:b,rotation:o._rotation||0,color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
+            rects[o._name]={bounds:b,rotation:o._rotation||0,color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};
             return;
         }
         if(o._type==='circle'){
             const c=o.getCenter();
-            circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
+            circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};
             return;
         }
         if(o._type==='ellipse'){
             const c=o.getCenter(),r=o.getRadius();
-            ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
+            ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};
             return;
         }
         if(o._type==='text'){
             const pos=o.getPosition();
-            texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff'};
+            texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff',images:imgs};
             return;
         }
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
         if(o._type==='route'){
             if(pts.length<2){skipped++;return}
-            routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:o._speed??0.9,direction:o._direction??1,desc:o._desc||''};
+            routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,opacity:o._opacity??0.9,speed:o._speed??0.9,direction:o._direction??1,desc:o._desc||'',images:imgs};
         }else{
             if(pts.length<3){skipped++;return}
-            areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};
+            areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};
         }
     });
     const data={kind:'map',routes,areas,markers,rects,circles,ellipses,texts};
@@ -988,7 +1060,12 @@ function showNameModal(token){
 }
 document.getElementById('name-cancel').addEventListener('click',()=>{document.getElementById('name-modal').style.display='none'});
 document.getElementById('name-submit').addEventListener('click',async()=>{
-    const name=document.getElementById('plan-name').value.trim()||'未命名方案';
+    let name=document.getElementById('plan-name').value.trim()||'未命名方案';
+    // 新建且仍是默认名时自动追加时间戳，避免多个「未命名方案」混淆
+    if(!currentPlanId && name==='未命名方案'){
+        const d=new Date(),p=n=>String(n).padStart(2,'0');
+        name='未命名方案 '+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+    }
     document.getElementById('name-modal').style.display='none';
     await doSave(saveToken,name);
 });
@@ -999,14 +1076,15 @@ document.getElementById('name-modal').addEventListener('click',e=>{if(e.target==
 document.getElementById('btn-export').addEventListener('click',()=>{
     const routes={},areas={},markers={},rects={},circles={},ellipses={},texts={};
     overlays.forEach(o=>{
-        if(o._type==='marker'){const pos=o.getPosition();markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b'};return}
-        if(o._type==='rect'){const b=rectBoundsOf(o);rects[o._name]={bounds:b,rotation:o._rotation||0,color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
-        if(o._type==='circle'){const c=o.getCenter();circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
-        if(o._type==='ellipse'){const c=o.getCenter(),r=o.getRadius();ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||''};return}
-        if(o._type==='text'){const pos=o.getPosition();texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff'};return}
+        const imgs=o._images||[];
+        if(o._type==='marker'){const pos=o.getPosition();markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b',images:imgs};return}
+        if(o._type==='rect'){const b=rectBoundsOf(o);rects[o._name]={bounds:b,rotation:o._rotation||0,color:o._color||'#8b5cf6',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};return}
+        if(o._type==='circle'){const c=o.getCenter();circles[o._name]={center:[c.lng,c.lat],radius:o.getRadius(),color:o._color||'#ec4899',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};return}
+        if(o._type==='ellipse'){const c=o.getCenter(),r=o.getRadius();ellipses[o._name]={center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],color:o._color||'#06b6d4',strokeWidth:o._stroke||2,opacity:o._opacity??0.2,desc:o._desc||'',images:imgs};return}
+        if(o._type==='text'){const pos=o.getPosition();texts[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#ffffff',images:imgs};return}
         const pts=o.getPath().map(p=>[p.lng,p.lat]);
-        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,speed:o._speed??0.9,direction:o._direction??1,desc:o._desc||''};
-        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,desc:o._desc||''};
+        if(o._type==='route')routes[o._name]={pts,color:o._color||'#3b82f6',strokeWidth:o._stroke||3,speed:o._speed??0.9,direction:o._direction??1,desc:o._desc||'',images:imgs};
+        else areas[o._name]={pts,color:o._color||'#10b981',strokeWidth:o._stroke||2,desc:o._desc||'',images:imgs};
     });
     const blob=new Blob([JSON.stringify({routes,areas,markers,rects,circles,ellipses,texts},null,2)],{type:'application/json'});
     const a=document.createElement('a');a.download='map-data.json';a.href=URL.createObjectURL(blob);a.click();

@@ -378,6 +378,7 @@ body {
   cursor: pointer; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; flex-shrink: 0;
 }
 .project-row .del:hover { color: #ef4444; background: rgba(255,255,255,0.08); }
+.project-row .badge { flex-shrink: 0; font-size: 0.7rem; }
 
 /* ---- Side Plan List (right panel) ---- */
 #plan-panel { border-bottom: 1px solid var(--border-panel); }

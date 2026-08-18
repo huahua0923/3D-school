@@ -147,6 +147,11 @@
     // Elements
     for (const el of state.elements) { if (el.visible) drawElement(el); }
 
+    // Overlay plans (readonly, dimmed) — 勾选的其它方案叠加对比
+    for (const pid in overlayPlanElements) {
+      for (const el of overlayPlanElements[pid]) { if (el.visible !== false) drawOverlayElement(el); }
+    }
+
     // Drawing preview
     if (state.isDrawing && state.drawingPoints.length > 0) drawDrawingPreview();
 
@@ -176,6 +181,44 @@
     if (el.id === state.selectedElementId && !el.locked && (el.type === 'route' || el.type === 'area')) {
       drawVertexHandles(el);
     }
+  }
+
+  // 只读叠加图层：其它方案的元素以灰暗虚线绘制，用于对比（不参与编辑/保存/选中）
+  function drawOverlayElement(el) {
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    if (el.type === 'route') {
+      if (el.points.length < 2) { ctx.restore(); return; }
+      ctx.strokeStyle = '#9ca3af';
+      ctx.lineWidth = el.strokeWidth || 3;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(el.points[0].x, el.points[0].y);
+      for (let i = 1; i < el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (el.type === 'area') {
+      if (el.points.length < 3) { ctx.restore(); return; }
+      ctx.fillStyle = 'rgba(156,163,175,0.25)';
+      ctx.beginPath();
+      ctx.moveTo(el.points[0].x, el.points[0].y);
+      for (let i = 1; i < el.points.length; i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#9ca3af';
+      ctx.lineWidth = el.strokeWidth || 2;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else if (el.type === 'text') {
+      const p = el.points[0]; if (!p) { ctx.restore(); return; }
+      const fs = el.fontSize || 16;
+      ctx.font = `${fs}px "Inter","PingFang SC","Microsoft YaHei",sans-serif`;
+      ctx.fillStyle = '#9ca3af';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(el.label || '', p.x + 8, p.y);
+    }
+    ctx.restore();
   }
 
   function drawRoute(el) {
@@ -1164,6 +1207,54 @@
 
   // ===== 侧栏方案列表（始终可见，参考路线图编辑器的右侧方案列表）=====
   let planListCache = [];
+  let overlayPlanElements = {};   // planId -> elements[]（只读叠加图层）
+  let overlayPlanIds = new Set(); // 勾选叠加的方案 id
+  const OVERLAY_MEMORY_KEY = 'editor_overlay_plans';
+
+  function saveOverlayPlanIds() { try { localStorage.setItem(OVERLAY_MEMORY_KEY, JSON.stringify([...overlayPlanIds])); } catch (_) {} }
+  function loadOverlayPlanIds() { try { overlayPlanIds = new Set((JSON.parse(localStorage.getItem(OVERLAY_MEMORY_KEY) || '[]') || []).map(String)); } catch (_) { overlayPlanIds = new Set(); } }
+
+  function removePlanOverlay(id) {
+    const changed = overlayPlanIds.delete(String(id)) || !!overlayPlanElements[String(id)];
+    if (changed) { delete overlayPlanElements[String(id)]; saveOverlayPlanIds(); render(); }
+  }
+
+  async function togglePlanOverlay(p, on) {
+    const id = String(p.id);
+    if (on) {
+      if (overlayPlanElements[id]) return;
+      overlayPlanIds.add(id); saveOverlayPlanIds();
+      try {
+        const res = await fetch('/api/editor/projects/' + p.id);
+        const json = await res.json();
+        const data = json.data && (json.data.data || json.data);
+        overlayPlanElements[id] = (data && Array.isArray(data.elements)) ? data.elements : [];
+        render();
+      } catch (e) {
+        console.error('❌ 叠加方案失败', e);
+        overlayPlanIds.delete(id); saveOverlayPlanIds();
+        renderPlanList();
+      }
+    } else {
+      removePlanOverlay(id);
+    }
+  }
+
+  async function restoreOverlayPlans() {
+    for (const id of overlayPlanIds) {
+      if (String(id) === String(state.projectId)) continue;
+      if (overlayPlanElements[id]) continue;
+      const p = planListCache.find(x => String(x.id) === String(id));
+      if (!p) { overlayPlanIds.delete(id); continue; }
+      try {
+        const res = await fetch('/api/editor/projects/' + id);
+        const json = await res.json();
+        const data = json.data && (json.data.data || json.data);
+        overlayPlanElements[id] = (data && Array.isArray(data.elements)) ? data.elements : [];
+      } catch (e) { overlayPlanIds.delete(id); }
+    }
+    render();
+  }
 
   async function loadPlanList() {
     try {
@@ -1174,6 +1265,7 @@
       planListCache = [];
     }
     renderPlanList();
+    await restoreOverlayPlans();
   }
 
   function renderPlanList() {
@@ -1185,8 +1277,20 @@
       return;
     }
     planListCache.forEach(p => {
+      const isCurrent = String(p.id) === String(state.projectId);
       const row = document.createElement('div');
-      row.className = 'project-row' + (String(p.id) === String(state.projectId) ? ' selected' : '');
+      row.className = 'project-row' + (isCurrent ? ' selected' : '');
+      if (isCurrent) {
+        const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = '✏️'; badge.title = '编辑中';
+        row.appendChild(badge);
+      } else {
+        const cb = document.createElement('input'); cb.type = 'checkbox';
+        cb.checked = overlayPlanIds.has(String(p.id));
+        cb.title = '勾选叠加对比';
+        cb.style.cssText = 'flex-shrink:0;accent-color:#3b82f6;cursor:pointer;';
+        cb.addEventListener('change', () => togglePlanOverlay(p, cb.checked));
+        row.appendChild(cb);
+      }
       const name = document.createElement('span'); name.className = 'name'; name.textContent = p.name || ('方案 ' + p.id); name.title = p.name || '';
       const time = document.createElement('span'); time.className = 'time'; time.textContent = (p.updated_at || '').slice(0, 16).replace('T', ' ');
       const del = document.createElement('button'); del.className = 'del'; del.textContent = '✕'; del.title = '删除';
@@ -1200,6 +1304,7 @@
           if (res.ok) {
             showToast('✅ 已删除');
             if (String(p.id) === String(state.projectId)) blankProject();
+            removePlanOverlay(String(p.id));
             loadPlanList();
           } else {
             const j = await res.json().catch(() => ({}));
@@ -1207,9 +1312,10 @@
           }
           return;
         }
+        if (e.target.tagName === 'INPUT') return;
         const res = await fetch('/api/editor/projects/' + p.id);
         const json = await res.json();
-        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data); showToast('✅ 已加载：' + (json.data.name || p.name)); renderPlanList(); }
+        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data); showToast('✅ 已加载：' + (json.data.name || p.name)); removePlanOverlay(String(p.id)); renderPlanList(); }
       });
       box.appendChild(row);
     });
@@ -1888,6 +1994,7 @@
   }).catch(() => {});
 
   init();
+  loadOverlayPlanIds();
   loadPlanList();
 
   // 从 URL ?project=<id> 跳转时自动加载对应项目（供首页「编辑」按钮跳转）

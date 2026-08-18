@@ -241,6 +241,27 @@
         }
         .info-btn.ghost:hover { border-color: var(--border-active); color: #fff; }
 
+        /* 元素图片展示（首页点击线路/点/区域显示） */
+        #info-images { display: none; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+        .info-img-thumb {
+            width: 60px; height: 60px; object-fit: cover; border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle); cursor: zoom-in; transition: transform 0.15s ease;
+        }
+        .info-img-thumb:hover { transform: scale(1.06); }
+        /* 图片灯箱：点击缩略图放大到页面三分之二 */
+        #lightbox {
+            position: fixed; inset: 0; z-index: 1000;
+            background: rgba(0,0,0,0.85);
+            display: none; align-items: center; justify-content: center;
+            cursor: zoom-out;
+        }
+        #lightbox.show { display: flex; }
+        #lightbox img {
+            max-width: 66.66vw; max-height: 66.66vh; width: auto; height: auto;
+            object-fit: contain; border-radius: 10px;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             #sidebar { width: 200px; top: 8px; left: 8px; max-height: calc(100vh - 16px); }
@@ -349,12 +370,16 @@
         <span class="badge main" id="info-badge">MAIN</span>
     </div>
     <p class="info-desc" id="info-desc"></p>
+    <div id="info-images"></div>
     <div class="info-features" id="info-features"></div>
     <div class="info-action">
         <button class="info-btn primary" id="info-btn-nav">📍 导航至此</button>
         <button class="info-btn ghost" id="info-btn-close">关闭</button>
     </div>
 </div>
+
+<!-- 图片灯箱：点击缩略图放大到页面三分之二 -->
+<div id="lightbox"><img id="lightbox-img" alt="图片" /></div>
 
 <!-- ============================================================
 Three.js Import Map
@@ -893,7 +918,7 @@ class UIController {
     }
 
     /** 显示路线/区域的名称/介绍（复用信息卡，隐藏导航按钮与特征列表） */
-    showFeature({ icon, title, badge, desc }) {
+    showFeature({ icon, title, badge, desc, images }) {
         document.getElementById('info-icon').textContent = icon || '📍';
         document.getElementById('info-title-text').textContent = title || '';
         const badgeEl = document.getElementById('info-badge');
@@ -901,6 +926,19 @@ class UIController {
         else badgeEl.style.display = 'none';
         document.getElementById('info-desc').textContent = desc || '';
         document.getElementById('info-features').innerHTML = '';
+        const imgBox = document.getElementById('info-images');
+        imgBox.innerHTML = '';
+        if (images && images.length) {
+            imgBox.style.display = 'flex';
+            images.forEach(src => {
+                const t = document.createElement('img');
+                t.src = src; t.className = 'info-img-thumb'; t.alt = title || '图片';
+                t.addEventListener('click', () => openLightbox(src));
+                imgBox.appendChild(t);
+            });
+        } else {
+            imgBox.style.display = 'none';
+        }
         document.getElementById('info-btn-nav').style.display = 'none';
         this.infoCard.classList.add('show');
         this.infoBackdrop.classList.add('show');
@@ -1009,6 +1047,14 @@ function onFeatureClick(e, fn) {
     fn();
 }
 
+/** 图片灯箱：点击缩略图放大到页面三分之二 */
+function openLightbox(src) {
+    document.getElementById('lightbox-img').src = src;
+    document.getElementById('lightbox').classList.add('show');
+}
+document.getElementById('lightbox').addEventListener('click', () => document.getElementById('lightbox').classList.remove('show'));
+document.getElementById('lightbox-img').addEventListener('click', (e) => e.stopPropagation());
+
 // ========================================================
 // 路线和区域展示（纯展示，无编辑功能）
 function displayRoutesAndAreas(map) {
@@ -1020,7 +1066,7 @@ function displayRoutesAndAreas(map) {
             const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
             // 透明折线仅作点击热区，虚线视觉由 flow 层绘制
             const line = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 8, strokeOpacity: 0.01, zIndex: 10 });
-            line.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
+            line.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [] })));
             map.add(line);
             addFlowRoute('config:' + name, r.pts, r.color, 3, r.speed);
             const mid = r.pts[Math.floor(r.pts.length / 2)];
@@ -1032,7 +1078,7 @@ function displayRoutesAndAreas(map) {
             if (!a.pts || a.pts.length < 3) return;
             const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
             const poly = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity || 0.2, zIndex: 5 });
-            poly.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '' })));
+            poly.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '', images: a.images || [] })));
             map.add(poly);
             let cx = 0, cy = 0;
             a.pts.forEach(p => { cx += p[0]; cy += p[1]; });
@@ -1180,7 +1226,7 @@ function applyPlan(map, plan) {
                 if (!r.pts || r.pts.length < 2) return;
                 const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 8, strokeOpacity: 0.01, zIndex: 10 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [] })));
                 map.add(o); overlays.push(o); group.route++; added++;
                 // 流动虚线（Canvas 层绘制，严格贴线）
                 const flowId = 'plan:' + plan.id + ':' + name;
@@ -1196,7 +1242,7 @@ function applyPlan(map, plan) {
                 if (!a.pts || a.pts.length < 3) return;
                 const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '' })));
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '', images: a.images || [] })));
                 map.add(o); overlays.push(o); group.area++; added++;
                 // 区域名称标签（质心）
                 let cx = 0, cy = 0;
@@ -1215,7 +1261,7 @@ function applyPlan(map, plan) {
                     offset: new AMap.Pixel(-8, -8),
                     zIndex: 15,
                 });
-                mk.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '📍', title: name, badge: '标记点', desc: m.desc || '' })));
+                mk.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '📍', title: name, badge: '标记点', desc: m.desc || '', images: m.images || [] })));
                 map.add(mk); overlays.push(mk); added++;
                 // 标记点名称标签（圆点下方）
                 overlays.push(addNameLabel(map, name, [m.lng, m.lat], 'top-center', [0, 10]));
@@ -1228,7 +1274,7 @@ function applyPlan(map, plan) {
                 const o = rot
                     ? new AMap.Polygon({ path: rectCorners(r.bounds, rot), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 })
                     : new AMap.Rectangle({ bounds: new AMap.Bounds(r.bounds[0], r.bounds[1]), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '▭', title: name, badge: '画框', desc: r.desc || '' })));
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '▭', title: name, badge: '画框', desc: r.desc || '', images: r.images || [] })));
                 map.add(o); overlays.push(o); group.rect++; added++;
                 const c = [(r.bounds[0][0] + r.bounds[1][0]) / 2, (r.bounds[0][1] + r.bounds[1][1]) / 2];
                 overlays.push(addNameLabel(map, name, c, 'center'));
@@ -1238,7 +1284,7 @@ function applyPlan(map, plan) {
             Object.entries(data.circles).forEach(([name, c]) => {
                 if (!c.center || c.radius == null) return;
                 const o = new AMap.Circle({ center: c.center, radius: c.radius, strokeColor: colorToHex(c.color, '#ec4899'), strokeWeight: c.strokeWidth || 2, fillColor: colorToHex(c.color, '#ec4899'), fillOpacity: c.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '◯', title: name, badge: '画圆', desc: c.desc || '' })));
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '◯', title: name, badge: '画圆', desc: c.desc || '', images: c.images || [] })));
                 map.add(o); overlays.push(o); group.circle++; added++;
                 overlays.push(addNameLabel(map, name, c.center, 'center'));
             });
@@ -1248,7 +1294,7 @@ function applyPlan(map, plan) {
                 if (!e.center || e.radius == null) return;
                 const r = Array.isArray(e.radius) ? e.radius : [e.radius, e.radius];
                 const o = new AMap.Ellipse({ center: e.center, radius: r, strokeColor: colorToHex(e.color, '#06b6d4'), strokeWeight: e.strokeWidth || 2, fillColor: colorToHex(e.color, '#06b6d4'), fillOpacity: e.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (ev) => onFeatureClick(ev, () => ui && ui.showFeature({ icon: '⬭', title: name, badge: '椭圆', desc: e.desc || '' })));
+                o.on('click', (ev) => onFeatureClick(ev, () => ui && ui.showFeature({ icon: '⬭', title: name, badge: '椭圆', desc: e.desc || '', images: e.images || [] })));
                 map.add(o); overlays.push(o); group.ellipse++; added++;
                 overlays.push(addNameLabel(map, name, e.center, 'center'));
             });
