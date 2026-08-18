@@ -296,6 +296,8 @@
         <div class="sb-layers">
             <div class="sb-layer-item"><span class="layer-dot" style="background:#3b82f6"></span> 路线 <span id="layer-route-count">0</span></div>
             <div class="sb-layer-item"><span class="layer-dot" style="background:#10b981"></span> 区域 <span id="layer-area-count">0</span></div>
+            <div class="sb-layer-item"><span class="layer-dot" style="background:#8b5cf6"></span> 画框 <span id="layer-rect-count">0</span></div>
+            <div class="sb-layer-item"><span class="layer-dot" style="background:#ec4899"></span> 画圆 <span id="layer-circle-count">0</span></div>
         </div>
     </div>
 
@@ -1106,15 +1108,21 @@ function addNameLabel(map, text, lngLat, anchor, offsetPx) {
 }
 
 function refreshLayerCounts() {
-    let routeCount = 0, areaCount = 0;
-    Object.values(planOverlayGroups).forEach(g => { routeCount += g.route; areaCount += g.area; });
+    let routeCount = 0, areaCount = 0, rectCount = 0, circleCount = 0;
+    Object.values(planOverlayGroups).forEach(g => { routeCount += g.route || 0; areaCount += g.area || 0; rectCount += g.rect || 0; circleCount += g.circle || 0; });
     // 加上「地图绘制」保存到 CONFIG.routes / CONFIG.areas 的数量（避免被方案叠加数量覆盖）
     if (CONFIG && CONFIG.routes) routeCount += Object.keys(CONFIG.routes).length;
     if (CONFIG && CONFIG.areas) areaCount += Array.isArray(CONFIG.areas) ? CONFIG.areas.length : Object.keys(CONFIG.areas).length;
+    if (CONFIG && CONFIG.rects) rectCount += Object.keys(CONFIG.rects).length;
+    if (CONFIG && CONFIG.circles) circleCount += Object.keys(CONFIG.circles).length;
     const rc = document.getElementById('layer-route-count');
     const ac = document.getElementById('layer-area-count');
+    const xc = document.getElementById('layer-rect-count');
+    const yc = document.getElementById('layer-circle-count');
     if (rc) rc.textContent = routeCount;
     if (ac) ac.textContent = areaCount;
+    if (xc) xc.textContent = rectCount;
+    if (yc) yc.textContent = circleCount;
 }
 
 function removePlanOverlay(map, planId) {
@@ -1130,7 +1138,7 @@ function removePlanOverlay(map, planId) {
 function applyPlan(map, plan) {
     removePlanOverlay(map, plan.id);
     const overlays = [];
-    const group = { overlays, route: 0, area: 0, flowIds: [] };
+    const group = { overlays, route: 0, area: 0, rect: 0, circle: 0, flowIds: [] };
     planOverlayGroups[plan.id] = group;
 
     const data = plan.data || {};
@@ -1182,6 +1190,25 @@ function applyPlan(map, plan) {
                 map.add(mk); overlays.push(mk); added++;
                 // 标记点名称标签（圆点下方）
                 overlays.push(addNameLabel(map, name, [m.lng, m.lat], 'top-center', [0, 10]));
+            });
+        }
+        if (data.rects) {
+            Object.entries(data.rects).forEach(([name, r]) => {
+                if (!r.bounds || !r.bounds[0] || !r.bounds[1]) return;
+                const o = new AMap.Rectangle({ bounds: new AMap.Bounds(r.bounds[0], r.bounds[1]), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 });
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '▭', title: name, badge: '画框', desc: r.desc || '' })));
+                map.add(o); overlays.push(o); group.rect++; added++;
+                const c = [(r.bounds[0][0] + r.bounds[1][0]) / 2, (r.bounds[0][1] + r.bounds[1][1]) / 2];
+                overlays.push(addNameLabel(map, name, c, 'center'));
+            });
+        }
+        if (data.circles) {
+            Object.entries(data.circles).forEach(([name, c]) => {
+                if (!c.center || c.radius == null) return;
+                const o = new AMap.Circle({ center: c.center, radius: c.radius, strokeColor: colorToHex(c.color, '#ec4899'), strokeWeight: c.strokeWidth || 2, fillColor: colorToHex(c.color, '#ec4899'), fillOpacity: c.opacity ?? 0.2, zIndex: 5 });
+                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '◯', title: name, badge: '画圆', desc: c.desc || '' })));
+                map.add(o); overlays.push(o); group.circle++; added++;
+                overlays.push(addNameLabel(map, name, c.center, 'center'));
             });
         }
         refreshLayerCounts();
