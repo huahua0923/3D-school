@@ -1142,8 +1142,9 @@
           e.stopPropagation();
           if (confirm('确定删除此项目？')) {
             const t = getToken();
-            await fetch(`/api/editor/projects/${e.target.dataset.delete}`, { method: 'DELETE', headers: t ? { 'Authorization': 'Bearer ' + t } : {} });
-            overlay.remove(); loadFromServer();
+            const res = await fetch(`/api/editor/projects/${e.target.dataset.delete}`, { method: 'DELETE', headers: t ? { 'Authorization': 'Bearer ' + t } : {} });
+            if (res.ok) { overlay.remove(); loadFromServer(); showToast('✅ 已删除'); }
+            else { const j = await res.json().catch(() => ({})); alert('删除失败：' + (j.error || ('HTTP ' + res.status)) + '（请先保存/登录后再试）'); }
           }
           return;
         }
