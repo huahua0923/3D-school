@@ -1027,6 +1027,8 @@ function displayRoutesAndAreas(map) {
             line.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '' })));
             map.add(line);
             addFlowRoute('config:' + name, r.pts, r.color, 3, r.speed);
+            const mid = r.pts[Math.floor(r.pts.length / 2)];
+            addNameLabel(map, name, mid, 'center');
             routeCount++;
         });
     }
@@ -1037,6 +1039,10 @@ function displayRoutesAndAreas(map) {
             const poly = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity || 0.2, zIndex: 5 });
             poly.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '' })));
             map.add(poly);
+            let cx = 0, cy = 0;
+            a.pts.forEach(p => { cx += p[0]; cy += p[1]; });
+            cx /= a.pts.length; cy /= a.pts.length;
+            addNameLabel(map, name, [cx, cy], 'center');
             areaCount++;
         });
     }
@@ -1074,6 +1080,29 @@ function disposeOverlay(o, map) {
         if (o && typeof o.setMap === 'function') o.setMap(null);
         else if (o) map.remove(o);
     } catch (_) {}
+}
+
+/** 地图上放置名称标签（AMap.Text）：白字 + 半透明深底，可读 */
+function addNameLabel(map, text, lngLat, anchor, offsetPx) {
+    if (!text) return null;
+    const t = new AMap.Text({
+        text,
+        position: new AMap.LngLat(lngLat[0], lngLat[1]),
+        anchor: anchor || 'center',
+        offset: offsetPx ? new AMap.Pixel(offsetPx[0], offsetPx[1]) : new AMap.Pixel(0, 0),
+        style: {
+            'background-color': 'rgba(0,0,0,0.62)',
+            'color': '#ffffff',
+            'font-size': '12px',
+            'font-weight': '600',
+            'padding': '3px 8px',
+            'border-radius': '4px',
+            'border': '1px solid rgba(255,255,255,0.22)',
+        },
+        zIndex: 20,
+    });
+    map.add(t);
+    return t;
 }
 
 function refreshLayerCounts() {
@@ -1120,6 +1149,9 @@ function applyPlan(map, plan) {
                 const flowId = 'plan:' + plan.id + ':' + name;
                 addFlowRoute(flowId, r.pts, r.color, r.strokeWidth || 3, r.speed, r.direction);
                 group.flowIds.push(flowId);
+                // 路线名称标签（中点）
+                const mid = r.pts[Math.floor(r.pts.length / 2)];
+                overlays.push(addNameLabel(map, name, mid, 'center'));
             });
         }
         if (data.areas) {
@@ -1129,6 +1161,27 @@ function applyPlan(map, plan) {
                 const o = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity ?? 0.2, zIndex: 5 });
                 o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '' })));
                 map.add(o); overlays.push(o); group.area++; added++;
+                // 区域名称标签（质心）
+                let cx = 0, cy = 0;
+                a.pts.forEach(p => { cx += p[0]; cy += p[1]; });
+                cx /= a.pts.length; cy /= a.pts.length;
+                overlays.push(addNameLabel(map, name, [cx, cy], 'center'));
+            });
+        }
+        if (data.markers) {
+            Object.entries(data.markers).forEach(([name, m]) => {
+                if (m.lng == null || m.lat == null) return;
+                const color = colorToHex(m.color, '#f59e0b');
+                const mk = new AMap.Marker({
+                    position: new AMap.LngLat(m.lng, m.lat),
+                    content: '<div style="width:12px;height:12px;background:' + color + ';border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.6)"></div>',
+                    offset: new AMap.Pixel(-8, -8),
+                    zIndex: 15,
+                });
+                mk.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '📍', title: name, badge: '标记点', desc: m.desc || '' })));
+                map.add(mk); overlays.push(mk); added++;
+                // 标记点名称标签（圆点下方）
+                overlays.push(addNameLabel(map, name, [m.lng, m.lat], 'top-center', [0, 10]));
             });
         }
         refreshLayerCounts();
