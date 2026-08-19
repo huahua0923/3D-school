@@ -273,18 +273,33 @@
             border: 1px solid var(--border-subtle); cursor: zoom-in; transition: transform 0.15s ease;
         }
         .info-img-thumb:hover { transform: scale(1.06); }
-        /* 图片灯箱：点击缩略图放大到页面三分之二 */
+        /* 图片灯箱：点击缩略图放大，多图左右切换 */
         #lightbox {
             position: fixed; inset: 0; z-index: 1000;
-            background: rgba(0,0,0,0.85);
+            background: rgba(0,0,0,0.88);
             display: none; align-items: center; justify-content: center;
             cursor: zoom-out;
         }
         #lightbox.show { display: flex; }
         #lightbox img {
-            max-width: 66.66vw; max-height: 66.66vh; width: auto; height: auto;
+            max-width: 86vw; max-height: 86vh; width: auto; height: auto;
             object-fit: contain; border-radius: 10px;
-            box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+            box-shadow: 0 24px 80px rgba(0,0,0,0.7); background: #000;
+        }
+        #lightbox .lb-btn {
+            position: absolute; z-index: 1;
+            background: rgba(0,0,0,0.5); color: #fff; border: none;
+            border-radius: 50%; width: 44px; height: 44px; font-size: 26px; line-height: 1;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s ease;
+        }
+        #lightbox .lb-btn:hover { background: rgba(0,0,0,0.8); }
+        #lb-prev { left: 18px; top: 50%; transform: translateY(-50%); }
+        #lb-next { right: 18px; top: 50%; transform: translateY(-50%); }
+        #lb-close { top: 16px; right: 16px; font-size: 18px; width: 36px; height: 36px; border-radius: 8px; }
+        #lb-count {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            color: rgba(255,255,255,0.75); font-size: 0.85rem; letter-spacing: 1px;
         }
 
         /* Responsive */
@@ -411,7 +426,13 @@
 </div>
 
 <!-- 图片灯箱：点击缩略图放大到页面三分之二 -->
-<div id="lightbox"><img id="lightbox-img" alt="图片" /></div>
+<div id="lightbox">
+    <button class="lb-btn" id="lb-prev" title="上一张">‹</button>
+    <img id="lightbox-img" alt="图片" />
+    <button class="lb-btn" id="lb-next" title="下一张">›</button>
+    <button class="lb-btn" id="lb-close" title="关闭">✕</button>
+    <span id="lb-count"></span>
+</div>
 
 <!-- 测量结果提示 -->
 <div id="toast"></div>
@@ -1008,10 +1029,10 @@ class UIController {
         imgBox.innerHTML = '';
         if (images && images.length) {
             imgBox.style.display = 'flex';
-            images.forEach(src => {
+            images.forEach((src, i) => {
                 const t = document.createElement('img');
                 t.src = src; t.className = 'info-img-thumb'; t.alt = title || '图片';
-                t.addEventListener('click', () => openLightbox(src));
+                t.addEventListener('click', () => openLightbox(images, i));
                 imgBox.appendChild(t);
             });
         } else {
@@ -1128,13 +1149,36 @@ function onFeatureClick(e, fn) {
     fn();
 }
 
-/** 图片灯箱：点击缩略图放大到页面三分之二 */
-function openLightbox(src) {
-    document.getElementById('lightbox-img').src = src;
+/** 图片灯箱：点击缩略图放大，多图左右切换 */
+let lbImages = []; let lbIndex = 0;
+function openLightbox(imgs, idx) {
+    lbImages = Array.isArray(imgs) ? imgs : (imgs ? [imgs] : []);
+    lbIndex = idx || 0;
+    renderLightbox();
     document.getElementById('lightbox').classList.add('show');
+}
+function renderLightbox() {
+    document.getElementById('lightbox-img').src = lbImages[lbIndex] || '';
+    document.getElementById('lb-count').textContent = lbImages.length > 1 ? (lbIndex + 1) + ' / ' + lbImages.length : '';
+    document.getElementById('lb-prev').style.display = lbImages.length > 1 ? 'flex' : 'none';
+    document.getElementById('lb-next').style.display = lbImages.length > 1 ? 'flex' : 'none';
+}
+function lightboxStep(d) {
+    if (!lbImages.length) return;
+    lbIndex = (lbIndex + d + lbImages.length) % lbImages.length;
+    renderLightbox();
 }
 document.getElementById('lightbox').addEventListener('click', () => document.getElementById('lightbox').classList.remove('show'));
 document.getElementById('lightbox-img').addEventListener('click', (e) => e.stopPropagation());
+document.getElementById('lb-prev').addEventListener('click', (e) => { e.stopPropagation(); lightboxStep(-1); });
+document.getElementById('lb-next').addEventListener('click', (e) => { e.stopPropagation(); lightboxStep(1); });
+document.getElementById('lb-close').addEventListener('click', (e) => { e.stopPropagation(); document.getElementById('lightbox').classList.remove('show'); });
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('lightbox').classList.contains('show')) return;
+    if (e.key === 'ArrowLeft') lightboxStep(-1);
+    else if (e.key === 'ArrowRight') lightboxStep(1);
+    else if (e.key === 'Escape') document.getElementById('lightbox').classList.remove('show');
+});
 
 // ========================================================
 // 路线和区域展示（纯展示，无编辑功能）

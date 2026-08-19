@@ -75,6 +75,17 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 
 .toast{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:2000;background:#1a1a2e;color:#fff;font-weight:700;padding:9px 20px;border-radius:8px;font-size:0.9rem;border:1px solid rgba(255,255,255,0.25);pointer-events:none;opacity:0;transition:opacity 0.3s}
 
+/* 图片灯箱：点击缩略图放大，多图左右切换 */
+#img-lightbox{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.88);display:none;align-items:center;justify-content:center;cursor:zoom-out}
+#img-lightbox.show{display:flex}
+#img-lightbox img{max-width:86vw;max-height:86vh;object-fit:contain;border-radius:6px;box-shadow:0 10px 48px rgba(0,0,0,0.65);background:#000;cursor:default}
+.img-lb-btn{position:absolute;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.15s;z-index:1}
+.img-lb-btn:hover{background:rgba(0,0,0,0.8)}
+#img-lb-prev{left:18px;top:50%;transform:translateY(-50%)}
+#img-lb-next{right:18px;top:50%;transform:translateY(-50%)}
+#img-lb-close{top:16px;right:16px;font-size:18px;width:36px;height:36px;border-radius:8px}
+#img-lb-count{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.75);font-size:0.85rem;letter-spacing:1px}
+
 /* 测距距离标签：高德默认白底，但文字继承页面浅色(#e0e0f0)导致看不清 → 强制黑字加粗 */
 .amap-ranging-label{color:#000 !important;font-weight:700 !important;background:#fff !important;border:1px solid #bbb !important;border-radius:4px !important;text-shadow:none !important}
 </style>
@@ -184,6 +195,14 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div id="img-lightbox">
+    <button class="img-lb-btn" id="img-lb-prev" title="上一张">‹</button>
+    <img id="img-lightbox-img" alt="图片预览" />
+    <button class="img-lb-btn" id="img-lb-next" title="下一张">›</button>
+    <button class="img-lb-btn" id="img-lb-close" title="关闭">✕</button>
+    <span id="img-lb-count"></span>
+</div>
 
 <script>
 (function(){
@@ -945,8 +964,10 @@ function renderPropImages(){
     if(!imgs.length){ box.innerHTML='<span style="font-size:0.7rem;color:rgba(255,255,255,0.3)">暂无图片</span>'; return; }
     imgs.forEach((src,i)=>{
         const t=document.createElement('div');
-        t.style.cssText='position:relative;width:52px;height:52px;border-radius:4px;overflow:hidden;border:1px solid rgba(255,255,255,0.15)';
+        t.style.cssText='position:relative;width:52px;height:52px;border-radius:4px;overflow:hidden;border:1px solid rgba(255,255,255,0.15);cursor:zoom-in';
+        t.title='点击放大';
         t.innerHTML='<img src="'+src+'" style="width:100%;height:100%;object-fit:cover;display:block" />';
+        t.addEventListener('click',e=>{e.stopPropagation();openImgLightbox(imgs,i)});
         const x=document.createElement('button');
         x.textContent='✕';x.title='删除';
         x.style.cssText='position:absolute;top:0;right:0;background:rgba(0,0,0,0.65);color:#fff;border:none;border-radius:0 0 0 4px;font-size:10px;line-height:1;padding:2px 4px;cursor:pointer';
@@ -959,6 +980,36 @@ function renderPropImages(){
         t.appendChild(x);box.appendChild(t);
     });
 }
+// —— 图片灯箱：多图左右切换 ——
+let lbImages=[];let lbIndex=0;
+function openImgLightbox(imgs,idx){
+    lbImages=Array.isArray(imgs)?imgs:(imgs?[imgs]:[]);
+    lbIndex=idx||0;
+    renderImgLightbox();
+    document.getElementById('img-lightbox').classList.add('show');
+}
+function renderImgLightbox(){
+    document.getElementById('img-lightbox-img').src=lbImages[lbIndex]||'';
+    document.getElementById('img-lb-count').textContent=lbImages.length>1?(lbIndex+1)+' / '+lbImages.length:'';
+    document.getElementById('img-lb-prev').style.display=lbImages.length>1?'flex':'none';
+    document.getElementById('img-lb-next').style.display=lbImages.length>1?'flex':'none';
+}
+function imgLightboxStep(d){
+    if(!lbImages.length)return;
+    lbIndex=(lbIndex+d+lbImages.length)%lbImages.length;
+    renderImgLightbox();
+}
+document.getElementById('img-lb-prev').addEventListener('click',e=>{e.stopPropagation();imgLightboxStep(-1)});
+document.getElementById('img-lb-next').addEventListener('click',e=>{e.stopPropagation();imgLightboxStep(1)});
+document.getElementById('img-lb-close').addEventListener('click',e=>{e.stopPropagation();document.getElementById('img-lightbox').classList.remove('show')});
+document.getElementById('img-lightbox').addEventListener('click',()=>document.getElementById('img-lightbox').classList.remove('show'));
+document.getElementById('img-lightbox-img').addEventListener('click',e=>e.stopPropagation());
+document.addEventListener('keydown',e=>{
+    if(!document.getElementById('img-lightbox').classList.contains('show'))return;
+    if(e.key==='ArrowLeft')imgLightboxStep(-1);
+    else if(e.key==='ArrowRight')imgLightboxStep(1);
+    else if(e.key==='Escape')document.getElementById('img-lightbox').classList.remove('show');
+});
 document.getElementById('btn-add-images').addEventListener('click',()=>{
     if(!selectedOv)return;
     document.getElementById('prop-img-input').value='';
