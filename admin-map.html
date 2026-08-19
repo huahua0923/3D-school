@@ -119,6 +119,7 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
         <option value="normal">🗺️ 标准</option>
         <option value="satellite">🛰️ 卫星</option>
     </select>
+    <label id="roadnet-toggle" title="卫星模式下显示/隐藏路网标注" style="display:none;align-items:center;gap:4px;font-size:0.78rem;color:#e0e0f0;cursor:pointer;user-select:none;white-space:nowrap"><input type="checkbox" id="roadnet-check" checked style="cursor:pointer;vertical-align:middle" />路网</label>
     <span id="zoom-label">100%</span>
     <span class="sep"></span>
     <span id="status-text">就绪</span>
@@ -1181,10 +1182,23 @@ document.getElementById('btn-export').addEventListener('click',()=>{
 // Map style switch
 function setMapStyle(style){
     if(!map)return;
-    if(style==='satellite'){satelliteLayer.show();roadNetLayer.show();}
-    else{satelliteLayer.hide();roadNetLayer.hide();map.setMapStyle(style==='normal'?'amap://styles/normal':'amap://styles/dark');}
+    const roadToggle=document.getElementById('roadnet-toggle');
+    if(style==='satellite'){
+        satelliteLayer.show();syncRoadNet();
+        if(roadToggle)roadToggle.style.display='flex';
+    }else{
+        satelliteLayer.hide();roadNetLayer.hide();
+        if(roadToggle)roadToggle.style.display='none';
+        map.setMapStyle(style==='normal'?'amap://styles/normal':'amap://styles/dark');
+    }
+}
+function syncRoadNet(){
+    if(!roadNetLayer)return;
+    const chk=document.getElementById('roadnet-check');
+    if(chk&&chk.checked)roadNetLayer.show();else roadNetLayer.hide();
 }
 document.getElementById('map-style').addEventListener('change',function(){setMapStyle(this.value)});
+document.getElementById('roadnet-check').addEventListener('change',syncRoadNet);
 
 // Zoom controls
 document.getElementById('btn-zoom-in').addEventListener('click',()=>map&&map.zoomIn());
