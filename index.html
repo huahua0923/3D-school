@@ -2083,13 +2083,14 @@ async function boot() {
             const layer = btn.dataset.layer;
             const visGroup = document.getElementById('route-visibility');
             if (layer === 'satellite') {
-                if (!satelliteLayer) satelliteLayer = new AMap.TileLayer.Satellite();
-                map.setLayers([new AMap.TileLayer(), satelliteLayer]);
+                // 卫星层只 add 一次，之后用 show/hide 切换；绝不用 setLayers 替换底图
+                //（否则底图被换成默认栅格层，setMapStyle 切不回暗黑/标准矢量样式）
+                if (!satelliteLayer) { satelliteLayer = new AMap.TileLayer.Satellite(); map.add(satelliteLayer); }
+                satelliteLayer.show();
                 if (visGroup) visGroup.style.display = '';   // 卫星图下显示「隐藏路线」开关
             } else {
-                // 非卫星：移除卫星层，只走 setMapStyle（setLayers(new TileLayer()) 会覆盖成默认浅色底图，
-                // 导致「标准→暗黑」切不回去）
-                if (satelliteLayer) { try { satelliteLayer.setMap(null); } catch (_) {} satelliteLayer = null; }
+                // 非卫星：隐藏卫星层，用 setMapStyle 切回矢量样式（暗黑/标准）
+                if (satelliteLayer) { try { satelliteLayer.hide(); } catch (_) {} }
                 map.setMapStyle(layerStyles[layer] || 'amap://styles/dark');
                 if (visGroup) visGroup.style.display = 'none';
                 // 离开卫星图自动恢复显示路线
