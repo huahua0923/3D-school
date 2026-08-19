@@ -48,6 +48,8 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 .layer-vis:hover{color:#fff;background:rgba(255,255,255,0.08)}
 .layer-del{color:var(--danger);font-size:0.7rem;padding:2px 5px;border-radius:3px;cursor:pointer}
 .layer-del:hover{background:rgba(239,68,68,0.15)}
+.layer-copy{color:rgba(255,255,255,0.5);font-size:0.75rem;padding:2px 5px;border-radius:3px;cursor:pointer}
+.layer-copy:hover{color:#fff;background:rgba(255,255,255,0.08)}
 .layer-time{font-size:0.66rem;color:rgba(255,255,255,0.35);flex-shrink:0;font-variant-numeric:tabular-nums}
 
 /* Props inputs */
@@ -494,10 +496,12 @@ function renderPlanList(){
             row.appendChild(dot);row.appendChild(cb);row.appendChild(name);
         }
         const time=document.createElement('span');time.className='layer-time';time.textContent=(p.updated_at||'').slice(5,16).replace('T',' ');time.title=p.updated_at||'';
+        const cp=document.createElement('span');cp.className='layer-copy';cp.textContent='⧉';cp.title='复制方案';
         const del=document.createElement('span');del.className='layer-del';del.textContent='✕';
-        row.appendChild(time);row.appendChild(del);
+        row.appendChild(time);row.appendChild(cp);row.appendChild(del);
         row.addEventListener('click',e=>{
             if(e.target===del){deletePlan(p.id);return}
+            if(e.target===cp){copyPlan(p);return}
             if(e.target.tagName==='INPUT')return;
             loadPlan(p);
         });
@@ -573,6 +577,17 @@ function deletePlan(id){
             loadPlans();toast('✅ 已删除');
         })
         .catch(()=>toast('❌ 删除失败'));
+}
+
+async function copyPlan(p){
+    const t=localStorage.getItem('admin_token');if(!t){showLogin();return}
+    const name=(p.name||'方案')+' 副本';
+    try{
+        const r=await fetch('/api/editor/projects',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({name,data:p.data})});
+        const j=await r.json();
+        if(r.ok){await loadPlans();toast('✅ 已复制为「'+name+'」');}
+        else toast('❌ 复制失败: '+(j.error||('HTTP '+r.status)));
+    }catch(e){toast('❌ 网络错误')}
 }
 
 document.querySelectorAll('#topbar button[data-tool]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.tool)));
@@ -779,40 +794,41 @@ document.getElementById('btn-delete').addEventListener('click',()=>{
     updateUI();toast('已删除');
 });
 
-// Duplicate
-document.getElementById('btn-duplicate').addEventListener('click',()=>{
-    if(!selectedOv)return;
+// 复制图层（selectedOv 或指定图层）
+function duplicateOverlay(source){
+    if(!source)return;
     saveSnapshot();
-    const type=selectedOv._type;
-    const sw=selectedOv._stroke||(type==='route'?3:2),op=selectedOv._opacity;
+    const type=source._type;
+    const sw=source._stroke||(type==='route'?3:2),op=source._opacity;
     let ov;
     if(type==='marker'){
-        const pos=selectedOv.getPosition();
-        ov=new AMap.Marker({map,position:[pos.lng,pos.lat],content:markerContent(selectedOv._color,false),offset:new AMap.Pixel(-8,-8),title:selectedOv._name+' 副本'});
+        const pos=source.getPosition();
+        ov=new AMap.Marker({map,position:[pos.lng,pos.lat],content:markerContent(source._color,false),offset:new AMap.Pixel(-8,-8),title:source._name+' 副本'});
         ov._stroke=0;ov._opacity=1;
     }else if(type==='rect'){
-        const b=rectBoundsOf(selectedOv);
-        ov=buildRectOv(b, selectedOv._rotation||0, {_color:selectedOv._color,_stroke:sw,_opacity:op});
+        const b=rectBoundsOf(source);
+        ov=buildRectOv(b, source._rotation||0, {_color:source._color,_stroke:sw,_opacity:op});
         ov.setMap(map);
     }else if(type==='circle'){
-        const c=selectedOv.getCenter();
-        ov=new AMap.Circle({map,center:[c.lng,c.lat],radius:selectedOv.getRadius(),strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+        const c=source.getCenter();
+        ov=new AMap.Circle({map,center:[c.lng,c.lat],radius:source.getRadius(),strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
     }else if(type==='ellipse'){
-        const c=selectedOv.getCenter(),r=selectedOv.getRadius();
-        ov=new AMap.Ellipse({map,center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+        const c=source.getCenter(),r=source.getRadius();
+        ov=new AMap.Ellipse({map,center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
     }else if(type==='text'){
-        const pos=selectedOv.getPosition();
-        ov=new AMap.Text({map,text:selectedOv._name+' 副本',position:[pos.lng,pos.lat],anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
+        const pos=source.getPosition();
+        ov=new AMap.Text({map,text:source._name+' 副本',position:[pos.lng,pos.lat],anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
     }else{
-        const path=selectedOv.getPath().map(p=>[p.lng,p.lat]);
-        if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:selectedOv._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
-        else ov=new AMap.Polygon({map,path,strokeColor:selectedOv._color,strokeWeight:sw,fillColor:selectedOv._color,fillOpacity:op??0.2,zIndex:5});
+        const path=source.getPath().map(p=>[p.lng,p.lat]);
+        if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:source._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
+        else ov=new AMap.Polygon({map,path,strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
     }
-    ov._type=type;ov._name=selectedOv._name+' 副本';ov._color=selectedOv._color;ov._stroke=sw;ov._opacity=op;ov._speed=selectedOv._speed;ov._direction=selectedOv._direction;ov._desc=selectedOv._desc;
+    ov._type=type;ov._name=source._name+' 副本';ov._color=source._color;ov._stroke=sw;ov._opacity=op;ov._speed=source._speed;ov._direction=source._direction;ov._desc=source._desc;ov._rotation=source._rotation||0;ov._images=(source._images||[]).slice();
     ov.on('click',()=>selectOv(ov));
     if(type==='marker')bindMarkerDrag(ov);
     overlays.push(ov);updateUI();toast('已复制');
-});
+}
+document.getElementById('btn-duplicate').addEventListener('click',()=>{ if(selectedOv)duplicateOverlay(selectedOv); });
 
 // Z-order
 document.getElementById('btn-bring-front').addEventListener('click',()=>{
@@ -1049,6 +1065,7 @@ document.getElementById('color-presets').addEventListener('click',e=>{
 document.getElementById('layer-list').addEventListener('click',e=>{
     const row=e.target.closest('.layer-row');if(!row)return;
     if(e.target.classList.contains('layer-vis')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){const o=overlays[idx];o._hidden=!o._hidden;if(o._hidden){o.hide()}else{o.show()}updateUI()}return}
+    if(e.target.classList.contains('layer-copy')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length)duplicateOverlay(overlays[idx]);return}
     if(e.target.classList.contains('layer-del')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){saveSnapshot();map.remove(overlays[idx]);overlays.splice(idx,1);deselectOv();updateUI();toast('已删除')}return}
     const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length)selectOv(overlays[idx]);
 });
@@ -1240,8 +1257,9 @@ function updateUI(){
             if(o._hidden)dot.style.opacity='0.3';
             const name=document.createElement('span');name.className='layer-name';name.textContent=o._name||'';if(o._hidden)name.style.opacity='0.4';
             const vis=document.createElement('span');vis.className='layer-vis';vis.textContent=o._hidden?'👁‍🗗':'👁';
+            const cp=document.createElement('span');cp.className='layer-copy';cp.textContent='⧉';cp.title='复制图层';
             const del=document.createElement('span');del.className='layer-del';del.textContent='✕';
-            row.appendChild(dot);row.appendChild(name);row.appendChild(vis);row.appendChild(del);
+            row.appendChild(dot);row.appendChild(name);row.appendChild(vis);row.appendChild(cp);row.appendChild(del);
             list.appendChild(row);
         });
     }
