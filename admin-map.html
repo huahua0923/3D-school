@@ -89,7 +89,6 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
     <button class="btn" data-tool="polygon">⬡ 区域</button>
     <button class="btn" data-tool="rectangle">▭ 画框</button>
     <button class="btn" data-tool="circle">◯ 画圆</button>
-    <button class="btn" data-tool="ellipse">⬭ 椭圆</button>
     <button class="btn" data-tool="ranging">📐 测距</button>
     <button class="btn" data-tool="measure-area">🧮 测面积</button>
     <button class="btn" data-tool="marker">📍 标记点</button>
@@ -248,10 +247,12 @@ function threePointRect(path){
     if(vlen<1e-6) return {bounds:[[A[0],A[1]],[A[0],A[1]]], rotation:0};
     const nx=-vy/vlen, ny=vx/vlen;                 // 基边的单位法向量（逆时针90°）
     const w=(cx-ax)*nx+(cy-ay)*ny;                 // 有符号宽度（C 到基边的垂距）
-    const toLl=(x,y)=>[x/mLng, y/111320];
-    const corners=[toLl(ax,ay),toLl(bx,by),toLl(bx+nx*w,by+ny*w),toLl(ax+nx*w,ay+ny*w)];
-    const lngs=corners.map(p=>p[0]), lats=corners.map(p=>p[1]);
-    const bounds=[[Math.min.apply(null,lngs),Math.min.apply(null,lats)],[Math.max.apply(null,lngs),Math.max.apply(null,lats)]];
+    // 真实矩形中心 = A + 基边一半 + 法向一半；bounds 存「未旋转」的半长/半宽，
+    // rectCorners 会拿这个 bounds 再旋转 rotation，二者必须匹配（不能存旋转后的外接包围盒）
+    const mcx=ax+vx/2+nx*w/2, mcy=ay+vy/2+ny*w/2;
+    const hl=vlen/2/mLng, hla=Math.abs(w)/2/111320;
+    const cll=mcx/mLng, clat=mcy/111320;
+    const bounds=[[cll-hl,clat-hla],[cll+hl,clat+hla]];
     const rotation=-Math.atan2(vy,vx)*180/Math.PI; // 基边方向角取反，匹配 rectCorners 的顺时针约定
     return {bounds, rotation};
 }
@@ -568,7 +569,6 @@ function setTool(tool){
     else if(tool==='polygon'){mouseTool.polygon({strokeColor:'#10b981',strokeWeight:2,strokeOpacity:0.8,fillColor:'#10b981',fillOpacity:0.2});st.textContent='⬡ 画区域 — 点击加顶点，双击完成'}
     else if(tool==='rectangle'){mouseTool.polyline({strokeColor:'#8b5cf6',strokeWeight:2,strokeOpacity:0.8});st.textContent='▭ 画框(三点) — 点1角点、点2边长、点3宽度，双击完成'}
     else if(tool==='circle'){mouseTool.circle({strokeColor:'#ec4899',strokeWeight:2,strokeOpacity:0.8,fillColor:'#ec4899',fillOpacity:0.2});st.textContent='◯ 画圆 — 点击圆心，拖拽设定半径'}
-    else if(tool==='ellipse'){mouseTool.circle({strokeColor:'#06b6d4',strokeWeight:2,strokeOpacity:0.8,fillColor:'#06b6d4',fillOpacity:0.2});st.textContent='⬭ 画椭圆 — 先画圆，松手后变成椭圆（可用选择工具拖动调整）'}
     else if(tool==='ranging'){if(rangingTool)rangingTool.turnOn();st.textContent='📐 测距 — 点击加测量点，双击结束'}
     else if(tool==='measure-area'){mouseTool.polygon({strokeColor:'#f59e0b',strokeWeight:2,strokeOpacity:0.8,fillColor:'#f59e0b',fillOpacity:0.2});st.textContent='🧮 测面积 — 点击加顶点，双击出面积'}
     else if(tool==='marker'){mouseTool.marker();st.textContent='📍 标记点 — 点击地图放置一个标记点'}
@@ -580,9 +580,9 @@ function markerContent(color,selected){
     return '<div style="width:12px;height:12px;background:'+color+';border:2px solid #fff;border-radius:50%;'+ring+';cursor:pointer"></div>';
 }
 
-const TOOL_TYPE={polyline:'route',polygon:'area',marker:'marker',rectangle:'rect',circle:'circle',ellipse:'ellipse'};
-const TYPE_NAME={route:'路线',area:'区域',rect:'画框',circle:'画圆',ellipse:'椭圆'};
-const TYPE_COLOR={route:'#3b82f6',area:'#10b981',rect:'#8b5cf6',circle:'#ec4899',ellipse:'#06b6d4'};
+const TOOL_TYPE={polyline:'route',polygon:'area',marker:'marker',rectangle:'rect',circle:'circle'};
+const TYPE_NAME={route:'路线',area:'区域',rect:'画框',circle:'画圆'};
+const TYPE_COLOR={route:'#3b82f6',area:'#10b981',rect:'#8b5cf6',circle:'#ec4899'};
 
 function onDraw(e){
     // 面积测量：临时多边形，算完即删，不落库
@@ -614,12 +614,6 @@ function onDraw(e){
     saveSnapshot();
     let ov=e.obj;
     const type=TOOL_TYPE[currentTool]||'route';
-    if(type==='ellipse'){
-        // MouseTool 无 ellipse：先画圆，松手转成椭圆（短轴=长轴×0.6，可用选择工具微调）
-        const c=ov.getCenter(),r=ov.getRadius();
-        ov.setMap(null);
-        ov=new AMap.Ellipse({center:[c.lng,c.lat],radius:[r,Math.max(r*0.6,5)],strokeColor:TYPE_COLOR.ellipse,strokeWeight:2,fillColor:TYPE_COLOR.ellipse,fillOpacity:0.2,zIndex:5});
-    }
     if(type==='marker'){
         const cnt=overlays.filter(o=>o._type==='marker').length+1;
         ov._type='marker';ov._name='标记 '+cnt;ov._color='#f59e0b';ov._stroke=0;ov._opacity=1;ov._images=[];
@@ -1164,7 +1158,6 @@ document.addEventListener('keydown',e=>{
     if(e.key==='r')setTool('polygon');
     if(e.key==='b')setTool('rectangle');
     if(e.key==='c')setTool('circle');
-    if(e.key==='e')setTool('ellipse');
     if(e.key==='m')setTool('measure-area');
     if(e.key==='t')setTool('text');
 });
@@ -1187,9 +1180,9 @@ function updateUI(){
             list.appendChild(row);
         });
     }
-    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length,m=overlays.filter(o=>o._type==='marker').length,rc=overlays.filter(o=>o._type==='rect').length,cc=overlays.filter(o=>o._type==='circle').length,ec=overlays.filter(o=>o._type==='ellipse').length,tc=overlays.filter(o=>o._type==='text').length;
-    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a+' · 画框 '+rc+' · 画圆 '+cc+' · 椭圆 '+ec+' · 文字 '+tc+' · 标记 '+m;
-    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a+' 画框:'+rc+' 画圆:'+cc+' 椭圆:'+ec+' 文字:'+tc+' 标记:'+m;
+    const r=overlays.filter(o=>o._type==='route').length,a=overlays.filter(o=>o._type==='area').length,m=overlays.filter(o=>o._type==='marker').length,rc=overlays.filter(o=>o._type==='rect').length,cc=overlays.filter(o=>o._type==='circle').length,tc=overlays.filter(o=>o._type==='text').length;
+    document.getElementById('stats').textContent='路线 '+r+' · 区域 '+a+' · 画框 '+rc+' · 画圆 '+cc+' · 文字 '+tc+' · 标记 '+m;
+    document.getElementById('sb-counts').textContent='路线:'+r+' 区域:'+a+' 画框:'+rc+' 画圆:'+cc+' 文字:'+tc+' 标记:'+m;
     document.getElementById('sb-history').textContent=history.length>0?((historyIdx+1)+'/'+history.length):'0/0';
     document.getElementById('btn-undo').disabled=historyIdx<0;
     document.getElementById('btn-redo').disabled=historyIdx>=history.length-2;
