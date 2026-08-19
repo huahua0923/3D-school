@@ -742,8 +742,11 @@ function buildVenue(scene, localToAmap) {
         amap = localToAmap(main.pos[0], main.pos[2], 0);
         col = new THREE.Color(main.color);
 
-        // 主建筑（实心）
-        const mainMat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.4, metalness: 0.2 });
+        // 主建筑（实心）：紫色体块 + 轻微自发光，对齐 Loca cadmall 深色商场风格
+        const mainMat = new THREE.MeshStandardMaterial({
+            color: col, roughness: 0.5, metalness: 0.15,
+            emissive: col, emissiveIntensity: 0.35,
+        });
         const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
         mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
         mainMesh.castShadow = true; mainMesh.receiveShadow = true;
@@ -752,7 +755,11 @@ function buildVenue(scene, localToAmap) {
 
     // Sub buildings
     for (const sb of CONFIG.building.subs) {
-        const mat = new THREE.MeshStandardMaterial({ color: sb.color, roughness: 0.45, metalness: 0.15, transparent: true, opacity: 0.8 });
+        const _sc = new THREE.Color(sb.color);
+        const mat = new THREE.MeshStandardMaterial({
+            color: _sc, roughness: 0.45, metalness: 0.15, transparent: true, opacity: 0.8,
+            emissive: _sc, emissiveIntensity: 0.3,
+        });
         const sa = localToAmap(sb.x, sb.z, 0);
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(sb.w * S, sb.d * S, sb.h * S), mat);
         mesh.position.set(sa.x, sa.y, sa.z + sb.h * S / 2);
@@ -1168,27 +1175,28 @@ function displayRoutesAndAreas(map) {
 // ========================================================
 function buildLocaFeatures() {
     const features = [];
-    if (CONFIG.markers) {
-        Object.entries(CONFIG.markers).forEach(([key, m]) => {
-            const lngLat = localToLngLat(m.pos[0], m.pos[2], CONFIG.geo.center);
-            features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: lngLat },
-                properties: { name: m.label || key, icon: m.icon || '📍', color: colorToHex(m.color, '#3b82f6') } });
+    // 数据源 = 首页勾选的「地图方案」（admin-map.html 绘制）。config.json 的旧 markers/routes/areas 已废弃。
+    Object.entries(activePlanData).forEach(([, data]) => {
+        if (!data || data.kind !== 'map') return;
+        // 标记点 → Point（地图方案直接存经纬度 lng/lat）
+        Object.entries(data.markers || {}).forEach(([name, m]) => {
+            if (m.lng == null || m.lat == null) return;
+            features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [m.lng, m.lat] },
+                properties: { name, icon: m.icon || '📍', color: colorToHex(m.color, '#f59e0b') } });
         });
-    }
-    if (CONFIG.routes) {
-        Object.entries(CONFIG.routes).forEach(([name, r]) => {
+        // 路线 → LineString
+        Object.entries(data.routes || {}).forEach(([name, r]) => {
             if (!r.pts || r.pts.length < 2) return;
             features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.pts },
                 properties: { name, color: colorToHex(r.color, '#3b82f6') } });
         });
-    }
-    if (CONFIG.areas) {
-        Object.entries(CONFIG.areas).forEach(([name, a]) => {
+        // 区域 → Polygon
+        Object.entries(data.areas || {}).forEach(([name, a]) => {
             if (!a.pts || a.pts.length < 3) return;
             features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [a.pts] },
                 properties: { name, color: colorToHex(a.color, '#10b981') } });
         });
-    }
+    });
     return features;
 }
 
@@ -1250,7 +1258,7 @@ function initLoca(map) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: polys } });
             const layer = new Loca.PolygonLayer({ zIndex: 105 });
             layer.setSource(src);
-            layer.setStyle({ topColor: (...a) => locaColorOf(...a, '#10b981'), sideColor: '#0a0e17', altitude: 15 });
+            layer.setStyle({ topColor: (...a) => locaColorOf(...a, '#8889ff'), sideColor: (...a) => locaColorOf(...a, '#5C57B8'), altitude: 15 });
             loca.add(layer);
         }
 
@@ -1272,6 +1280,13 @@ function toggleLoca(map) {
     else { initLoca(map); if (locaContainer) locaActive = true; }
     const btn = document.getElementById('btn-loca-toggle');
     if (btn) { btn.textContent = locaActive ? '🎆 关闭 3D 特效' : '🎆 开启 3D 特效'; btn.classList.toggle('active', locaActive); }
+}
+
+// 方案勾选变化后，若特效已开启则重建 Loca 图层（数据源变了）
+function rebuildLocaIfActive() {
+    if (!locaActive || !planMap) return;
+    destroyLoca();
+    initLoca(planMap);
 }
 
 // ========================================================
@@ -1324,6 +1339,7 @@ const PLAN_MEMORY_KEY = 'active_plans';
 let planMap = null;                     // 当前地图实例
 let planProjects = [];                  // 方案列表缓存 {id,name}
 let planOverlayGroups = {};             // planId -> { overlays:[], route:0, area:0 }
+let activePlanData = {};                // planId -> { kind:'map', routes, areas, markers, ... }（供 Loca 特效读取）
 let planFetching = {};                  // planId -> Promise（防重复 fetch）
 let ui = null;                          // UI 控制器引用（供 applyPlan / displayRoutesAndAreas 显示名称）
 let suppressMapClickUntil = 0;          // 覆盖物点击后短暂屏蔽 map click 的 hideInfo
@@ -1437,6 +1453,7 @@ function removePlanOverlay(map, planId) {
     // 移除该方案的流动虚线
     (g.flowIds || []).forEach(id => removeFlowRoute(id));
     delete planOverlayGroups[planId];
+    delete activePlanData[planId];
 }
 
 function applyPlan(map, plan) {
@@ -1446,6 +1463,7 @@ function applyPlan(map, plan) {
     planOverlayGroups[plan.id] = group;
 
     const data = plan.data || {};
+    activePlanData[plan.id] = data;   // 缓存方案数据，供 Loca 特效读取
 
     // 「地图绘制」方案：routes/areas 直接存经纬度 [lng, lat]，无需底图对齐
     if (data.kind === 'map') {
@@ -1681,6 +1699,7 @@ async function deletePlanFromHome(p) {
         const ids = getActivePlanIds().filter(id => String(id) !== String(p.id));
         saveActivePlanIds(ids);
         if (planMap) removePlanOverlay(planMap, p.id);
+        rebuildLocaIfActive();
         await refreshPlanList();
     } catch (e) { alert('删除失败：' + e.message); }
 }
@@ -1704,10 +1723,12 @@ function togglePlan(planId, on) {
             if (!plan) { console.warn('⚠️ 方案加载失败'); return; }
             const n = applyPlan(planMap, plan);
             console.log(`✅ 已叠加方案「${plan.name}」，${n} 个对象`);
+            rebuildLocaIfActive();
         });
     } else {
         saveActivePlanIds(active);
         if (planMap) removePlanOverlay(planMap, planId);
+        rebuildLocaIfActive();
     }
 }
 
@@ -1745,6 +1766,7 @@ async function initPlanSelector(map) {
         getActivePlanIds().forEach(id => removePlanOverlay(map, Number(id)));
         saveActivePlanIds([]);
         renderPlanList();
+        rebuildLocaIfActive();
     });
 
     // 恢复上次勾选的方案（跨页面刷新记忆）

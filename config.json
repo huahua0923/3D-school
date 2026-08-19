@@ -16,10 +16,20 @@
   "fogNear": 60,
   "fogFar": 220,
   "building": {
-    "main": null,
-    "subs": [],
     "roadWidth": 8,
-    "roadVisible": false
+    "roadVisible": false,
+    "subs": [],
+    "main": {
+      "w": 40,
+      "d": 60,
+      "h": 18,
+      "color": "#5C57B8",
+      "pos": [
+        0,
+        0,
+        0
+      ]
+    }
   },
   "markers": {},
   "routes": {},
