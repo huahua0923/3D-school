@@ -157,6 +157,23 @@
             color: #fff; font-size: 0.8rem; font-weight: 600;
             opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(8px);
         }
+        #weather-panel {
+            position: fixed; top: 70px; right: 20px; z-index: 20;
+            width: 220px; padding: 14px 16px; border-radius: 16px;
+            background: rgba(12,18,30,0.9); backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            color: #fff; display: none; font-family: inherit;
+        }
+        #weather-panel .w-city { font-size: 0.8rem; color: rgba(255,255,255,0.5); font-weight: 600; }
+        #weather-panel .w-live { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 2px; }
+        #weather-panel .w-temp { font-size: 2rem; font-weight: 700; }
+        #weather-panel .w-cond { font-size: 0.9rem; color: rgba(255,255,255,0.85); }
+        #weather-panel .w-meta { font-size: 0.7rem; color: rgba(255,255,255,0.45); }
+        #weather-panel .w-forecast { margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+        #weather-panel .w-frow { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; }
+        #weather-panel .w-fdate { color: rgba(255,255,255,0.5); }
+        #weather-panel .w-fcond { color: rgba(255,255,255,0.85); flex: 1; text-align: center; }
+        #weather-panel .w-ftemp { color: rgba(255,255,255,0.6); }
 
         
         @keyframes bannerIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
@@ -355,6 +372,12 @@
         <button class="sb-btn" id="btn-measure-clear" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除测量</button>
     </div>
 
+    <!-- Loca 3D 可视化特效 -->
+    <div class="sb-section">
+        <div class="sb-label">🎆 可视化特效</div>
+        <button class="sb-btn" id="btn-loca-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🎆 开启 3D 特效</button>
+    </div>
+
     <!-- Links -->
     <div class="sb-section sb-actions">
         <a href="/admin.html" class="sb-btn" style="text-decoration:none;display:block;margin-top:4px;">⚙️ 系统配置</a>
@@ -404,6 +427,9 @@
 
 <!-- 测量结果提示 -->
 <div id="toast"></div>
+
+<!-- 天气预报面板 -->
+<div id="weather-panel"></div>
 
 <!-- ============================================================
 Three.js Import Map
@@ -822,6 +848,10 @@ let measureRanging = null;          // AMap.RangingTool（测距）
 let measureMode = null;             // 'distance' | 'area' | null
 let measureOverlays = [];           // 测量产生的临时覆盖物（清除用）
 
+// —— Loca v2 可视化特效：标牌(ZMarker) + 线(Line) + 面(Polygon) + 脉冲线(PulseLine) ——
+let locaContainer = null;           // Loca.Container 实例
+let locaActive = false;             // 特效开关状态
+
 function toast(msg){
     const el = document.getElementById('toast');
     if (!el) return;
@@ -1065,6 +1095,10 @@ async function initAmap() {
     const amapUrl = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`;
     await loadScript(amapUrl);
 
+    // 加载 Loca v2（数据可视化）SDK，失败不阻塞主地图
+    try { await loadScript(`https://webapi.amap.com/loca?v=2.0.0&key=${amapKey}`); }
+    catch (_) { console.warn('⚠️ Loca SDK 加载失败，可视化特效不可用'); }
+
     // Also load AMap helper plugins if needed
     if (!window.AMap) {
         console.error('❌ 高德地图加载失败');
@@ -1144,6 +1178,159 @@ function displayRoutesAndAreas(map) {
             addNameLabel(map, name, [cx, cy], 'center');
         });
     }
+}
+
+// ========================================================
+// Loca v2 可视化特效：标牌(ZMarker) + 线(Line) + 面(Polygon) + 脉冲线(PulseLine)
+// 叠加在现有 2D 覆盖物之上，由开关控制；Loca 与 GLCustomLayer 共用 WebGL 上下文
+// ========================================================
+function buildLocaFeatures() {
+    const features = [];
+    if (CONFIG.markers) {
+        Object.entries(CONFIG.markers).forEach(([key, m]) => {
+            const lngLat = localToLngLat(m.pos[0], m.pos[2], CONFIG.geo.center);
+            features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: lngLat },
+                properties: { name: m.label || key, icon: m.icon || '📍', color: colorToHex(m.color, '#3b82f6') } });
+        });
+    }
+    if (CONFIG.routes) {
+        Object.entries(CONFIG.routes).forEach(([name, r]) => {
+            if (!r.pts || r.pts.length < 2) return;
+            features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.pts },
+                properties: { name, color: colorToHex(r.color, '#3b82f6') } });
+        });
+    }
+    if (CONFIG.areas) {
+        Object.entries(CONFIG.areas).forEach(([name, a]) => {
+            if (!a.pts || a.pts.length < 3) return;
+            features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [a.pts] },
+                properties: { name, color: colorToHex(a.color, '#10b981') } });
+        });
+    }
+    return features;
+}
+
+// 从 Loca 回调参数里安全取颜色（不同图层回调签名可能是 (feature) 或 (index, feature)）
+function locaColorOf(...args) {
+    let fallback = '#3b82f6';
+    for (const a of args) {
+        if (a && a.properties && a.properties.color) return a.properties.color;
+        if (a && a.color) return a.color;
+        if (typeof a === 'string' && a.charAt(0) === '#') fallback = a;
+    }
+    return fallback;
+}
+
+function initLoca(map) {
+    if (!window.Loca) { toast('⚠️ Loca SDK 未加载'); return; }
+    if (locaContainer) return;
+    try {
+        const loca = new Loca.Container({ map });
+        const all = buildLocaFeatures();
+        const pts = all.filter(f => f.geometry.type === 'Point');
+        const lines = all.filter(f => f.geometry.type === 'LineString');
+        const polys = all.filter(f => f.geometry.type === 'Polygon');
+
+        // 标牌（ZMarker）
+        if (pts.length) {
+            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
+            const layer = new Loca.ZMarkerLayer({ zIndex: 120 });
+            layer.setSource(src);
+            layer.setStyle({
+                unit: 'px', size: [150, 40], anchor: 'center', altitude: 4, rotation: 0, alwaysFront: true,
+                content: (...args) => {
+                    const d = args[0];
+                    const p = (d && d.properties) ? d.properties : (d || {});
+                    return '<div style="padding:6px 12px;border-radius:8px;background:' + (p.color || '#3b82f6') +
+                        ';color:#fff;font-size:13px;font-weight:700;box-shadow:0 0 12px ' + (p.color || '#3b82f6') +
+                        ';white-space:nowrap;">' + (p.icon || '') + ' ' + (p.name || '') + '</div>';
+                },
+            });
+            loca.add(layer);
+        }
+
+        // 线（Line）+ 脉冲线（PulseLine）
+        if (lines.length) {
+            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: lines } });
+            const lineLayer = new Loca.LineLayer({ zIndex: 110 });
+            lineLayer.setSource(src);
+            lineLayer.setStyle({ lineWidth: 3, altitude: 0, dash: [10, 6], color: (...a) => locaColorOf(...a) });
+            loca.add(lineLayer);
+
+            const pulseLayer = new Loca.PulseLineLayer({ zIndex: 111 });
+            pulseLayer.setSource(src);
+            pulseLayer.setStyle({ lineWidth: 3, altitude: 1, color: (...a) => locaColorOf(...a), headColor: '#ffffff', duration: 1800 });
+            loca.add(pulseLayer);
+        }
+
+        // 面（Polygon）3D 挤出
+        if (polys.length) {
+            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: polys } });
+            const layer = new Loca.PolygonLayer({ zIndex: 105 });
+            layer.setSource(src);
+            layer.setStyle({ topColor: (...a) => locaColorOf(...a, '#10b981'), sideColor: '#0a0e17', altitude: 15 });
+            loca.add(layer);
+        }
+
+        loca.animate();
+        locaContainer = loca;
+    } catch (e) {
+        console.error('❌ Loca 特效初始化失败', e);
+        toast('⚠️ 特效初始化失败：' + (e && e.message ? e.message : e));
+    }
+}
+
+function destroyLoca() {
+    try { if (locaContainer && typeof locaContainer.destroy === 'function') locaContainer.destroy(); } catch (_) {}
+    locaContainer = null;
+}
+
+function toggleLoca(map) {
+    if (locaActive) { destroyLoca(); locaActive = false; }
+    else { initLoca(map); if (locaContainer) locaActive = true; }
+    const btn = document.getElementById('btn-loca-toggle');
+    if (btn) { btn.textContent = locaActive ? '🎆 关闭 3D 特效' : '🎆 开启 3D 特效'; btn.classList.toggle('active', locaActive); }
+}
+
+// ========================================================
+// 天气预报：AMap.Weather 插件（实时 + 3 天预报），右上角面板
+// 城市默认「成都市」，可在 config.json 的 weather.city 覆盖
+// ========================================================
+function initWeather() {
+    const panel = document.getElementById('weather-panel');
+    if (!panel) return;
+    const city = (CONFIG.weather && CONFIG.weather.city) || '成都市';
+    const deg = (t) => String(t == null ? '--' : t).replace('℃', '').replace('°', '');
+    let liveHtml = '';
+    let forecastHtml = '';
+    function render() {
+        panel.innerHTML = liveHtml + forecastHtml;
+        panel.style.display = (liveHtml || forecastHtml) ? 'block' : 'none';
+    }
+    AMap.plugin('AMap.Weather', () => {
+        const weather = new AMap.Weather();
+        weather.getLive(city, (err, live) => {
+            if (err || !live) { console.warn('⚠️ 天气实时数据获取失败', err); return; }
+            liveHtml =
+                '<div class="w-city">' + (live.city || city) + '</div>' +
+                '<div class="w-live"><span class="w-temp">' + deg(live.temperature) + '°</span>' +
+                '<span class="w-cond">' + (live.weather || '') + '</span></div>' +
+                '<div class="w-meta">' + (live.windDirection || '') + '风 ' + (live.windPower || '') + ' · 湿度 ' + (live.humidity || '--') + '%</div>';
+            render();
+        });
+        weather.getForecast(city, (err, fc) => {
+            if (err || !fc || !fc.forecasts) { console.warn('⚠️ 天气预报数据获取失败', err); return; }
+            let rows = '';
+            fc.forecasts.slice(0, 3).forEach(f => {
+                rows +=
+                    '<div class="w-frow"><span class="w-fdate">' + (f.date || '').slice(5) + '</span>' +
+                    '<span class="w-fcond">' + (f.dayweather || '') + '</span>' +
+                    '<span class="w-ftemp">' + deg(f.nighttemp) + '~' + deg(f.daytemp) + '°</span></div>';
+            });
+            forecastHtml = '<div class="w-forecast">' + rows + '</div>';
+            render();
+        });
+    });
 }
 
 // ========================================================
@@ -1706,6 +1893,13 @@ async function boot() {
 
     // 首页测量工具：测距 + 测面积
     initMeasureTools(map);
+
+    // 可视化特效开关（Loca v2）
+    const btnLoca = document.getElementById('btn-loca-toggle');
+    if (btnLoca) btnLoca.addEventListener('click', () => toggleLoca(map));
+
+    // 天气预报（AMap.Weather）
+    initWeather();
 
     // 搜索：优先匹配本地场馆标记，其次高德 POI
     AMap.plugin('AMap.AutoComplete', () => {
