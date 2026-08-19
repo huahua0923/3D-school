@@ -1166,7 +1166,7 @@
   }
 
   async function loadFromServer() {
-    const res = await fetch('/api/editor/projects');
+    const res = await fetch('/api/editor/projects', { headers: authHeaders() });
     const json = await res.json();
     // 过滤掉「地图绘制」方案（kind==='map'），避免与 2D 路线编辑器项目混在一起
     showProjectList((json.data || []).filter(p => !(p.data && p.data.kind === 'map')));
@@ -1232,7 +1232,7 @@
       if (overlayPlanElements[id]) return;
       overlayPlanIds.add(id); saveOverlayPlanIds();
       try {
-        const res = await fetch('/api/editor/projects/' + p.id);
+        const res = await fetch('/api/editor/projects/' + p.id, { headers: authHeaders() });
         const json = await res.json();
         const data = json.data && (json.data.data || json.data);
         overlayPlanElements[id] = (data && Array.isArray(data.elements)) ? data.elements : [];
@@ -1254,7 +1254,7 @@
       const p = planListCache.find(x => String(x.id) === String(id));
       if (!p) { overlayPlanIds.delete(id); continue; }
       try {
-        const res = await fetch('/api/editor/projects/' + id);
+        const res = await fetch('/api/editor/projects/' + id, { headers: authHeaders() });
         const json = await res.json();
         const data = json.data && (json.data.data || json.data);
         overlayPlanElements[id] = (data && Array.isArray(data.elements)) ? data.elements : [];
@@ -1265,7 +1265,7 @@
 
   async function loadPlanList() {
     try {
-      const res = await fetch('/api/editor/projects');
+      const res = await fetch('/api/editor/projects', { headers: authHeaders() });
       const json = await res.json();
       planListCache = (json.data || []).filter(p => !(p.data && p.data.kind === 'map'));
     } catch (e) {
@@ -1320,7 +1320,7 @@
           return;
         }
         if (e.target.tagName === 'INPUT') return;
-        const res = await fetch('/api/editor/projects/' + p.id);
+        const res = await fetch('/api/editor/projects/' + p.id, { headers: authHeaders() });
         const json = await res.json();
         if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data); showToast('✅ 已加载：' + (json.data.name || p.name)); removePlanOverlay(String(p.id)); renderPlanList(); }
       });
@@ -1339,6 +1339,7 @@
   }
 
   function getToken() { return localStorage.getItem('admin_token') || null; }
+  function authHeaders() { const t = getToken(); return t ? { 'Authorization': 'Bearer ' + t } : {}; }
 
   function showLoginPrompt(onSuccess) {
     const overlay = document.createElement('div');
@@ -2008,7 +2009,7 @@
   (function autoLoadProjectFromUrl() {
     const id = Number(new URLSearchParams(location.search).get('project'));
     if (!id) return;
-    fetch('/api/editor/projects/' + id).then(r => r.ok ? r.json() : null).then(json => {
+    fetch('/api/editor/projects/' + id, { headers: authHeaders() }).then(r => r.ok ? r.json() : null).then(json => {
       if (json && json.data) {
         state.projectId = id;
         loadProjectData(json.data.data || json.data);

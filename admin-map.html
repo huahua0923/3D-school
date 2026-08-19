@@ -464,7 +464,8 @@ function addEllipsesTexts(ellipses,texts,target){
 async function loadPlans(){
     loadActivePlanIds();
     try{
-        const r=await fetch('/api/editor/projects');
+        const t=localStorage.getItem('admin_token');
+        const r=await fetch('/api/editor/projects',{headers:t?{'Authorization':'Bearer '+t}:{}});
         const j=await r.json();
         plans=(j.data||[]).filter(p=>p.data&&p.data.kind==='map');
     }catch(e){plans=[]}
@@ -530,7 +531,7 @@ async function togglePlanOverlay(id,on){
     id=String(id);
     if(on){
         let p=plans.find(x=>String(x.id)===id);
-        if(!p){ try{ const r=await fetch('/api/editor/projects/'+id); const j=await r.json(); p=j.data; }catch(_){ p=null; } }
+        if(!p){ try{ const t=localStorage.getItem('admin_token'); const r=await fetch('/api/editor/projects/'+id,{headers:t?{'Authorization':'Bearer '+t}:{}}); const j=await r.json(); p=j.data; }catch(_){ p=null; } }
         if(p)renderPlanReadonly(id,p.data||{});
         activePlanIds.add(id);
     }else{

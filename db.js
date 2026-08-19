@@ -254,6 +254,18 @@ function createTables() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL DEFAULT '未命名项目',
       data TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT '',
+      visibility TEXT NOT NULL DEFAULT 'public'
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'user',
+      created_at TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL DEFAULT ''
     )
   `);
@@ -261,19 +273,23 @@ function createTables() {
 
 /** 迁移：为旧数据库补充新增列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列） */
 function migrateSchema() {
-  try {
-    const info = db.exec(`PRAGMA table_info(buildings_main)`);
-    if (info.length === 0) return;
-    const cols = info[0].values.map(v => v[1]);
-    if (!cols.includes('visible')) {
-      db.run(`ALTER TABLE buildings_main ADD COLUMN visible INTEGER NOT NULL DEFAULT 1`);
+  const addColumn = (table, col, ddl) => {
+    try {
+      const info = db.exec(`PRAGMA table_info(${table})`);
+      if (info.length === 0) return;
+      const cols = info[0].values.map(v => v[1]);
+      if (!cols.includes(col)) {
+        db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+      }
+    } catch (err) {
+      console.error(`⚠️ 迁移 ${table}.${col} 失败:`, err.message);
     }
-    if (!cols.includes('road_visible')) {
-      db.run(`ALTER TABLE buildings_main ADD COLUMN road_visible INTEGER NOT NULL DEFAULT 1`);
-    }
-  } catch (err) {
-    console.error('⚠️ 迁移 buildings_main 失败:', err.message);
-  }
+  };
+
+  addColumn('buildings_main', 'visible', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn('buildings_main', 'road_visible', 'INTEGER NOT NULL DEFAULT 1');
+  // 方案可见性：public（普通用户可见）/ restricted（仅超级用户与管理员）
+  addColumn('editor_projects', 'visibility', "TEXT NOT NULL DEFAULT 'public'");
 }
 
 // ---------- 数据填充 ----------
@@ -865,7 +881,7 @@ function getEditorProjects() {
   const rows = db.exec('SELECT * FROM editor_projects ORDER BY updated_at DESC');
   if (rows.length === 0) return [];
   return rows[0].values.map(r => ({
-    id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3]
+    id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3], visibility: r[4] || 'public'
   }));
 }
 
@@ -873,19 +889,34 @@ function getEditorProject(id) {
   const rows = db.exec('SELECT * FROM editor_projects WHERE id = ?', [id]);
   if (rows.length === 0 || rows[0].values.length === 0) return null;
   const r = rows[0].values[0];
-  return { id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3] };
+  return { id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3], visibility: r[4] || 'public' };
 }
 
-function saveEditorProject(id, name, data) {
+// 按角色过滤方案列表：user（含访客）只见公开方案；super/admin 见全部
+function getEditorProjectsForRole(role) {
+  const all = getEditorProjects();
+  if (role === 'super' || role === 'admin') return all;
+  return all.filter(p => (p.visibility || 'public') === 'public');
+}
+
+// 判断某角色能否查看某方案（user 只能看 public）
+function canViewProject(role, project) {
+  if (!project) return false;
+  if (role === 'super' || role === 'admin') return true;
+  return (project.visibility || 'public') === 'public';
+}
+
+function saveEditorProject(id, name, data, visibility) {
   const now = new Date().toISOString();
+  const vis = visibility === 'restricted' ? 'restricted' : 'public';
   if (id) {
-    db.run('UPDATE editor_projects SET name = ?, data = ?, updated_at = ? WHERE id = ?',
-      [name, JSON.stringify(data), now, id]);
+    db.run('UPDATE editor_projects SET name = ?, data = ?, updated_at = ?, visibility = ? WHERE id = ?',
+      [name, JSON.stringify(data), now, vis, id]);
     saveDbToDisk();
     return id;
   } else {
-    db.run('INSERT INTO editor_projects (name, data, updated_at) VALUES (?, ?, ?)',
-      [name, JSON.stringify(data), now]);
+    db.run('INSERT INTO editor_projects (name, data, updated_at, visibility) VALUES (?, ?, ?, ?)',
+      [name, JSON.stringify(data), now, vis]);
     saveDbToDisk();
     const result = db.exec('SELECT MAX(id) as id FROM editor_projects');
     return result[0].values[0][0];
@@ -895,6 +926,64 @@ function saveEditorProject(id, name, data) {
 function deleteEditorProject(id) {
   db.run('DELETE FROM editor_projects WHERE id = ?', [id]);
   saveDbToDisk();
+}
+
+// ---------- 用户管理 ----------
+
+const USER_ROLES = ['admin', 'super', 'user'];
+
+function getUsers() {
+  const rows = db.exec('SELECT id, username, role, created_at, updated_at FROM users ORDER BY id');
+  if (rows.length === 0) return [];
+  return rows[0].values.map(r => ({
+    id: r[0], username: r[1], role: r[2], created_at: r[3], updated_at: r[4]
+  }));
+}
+
+function getUserByUsername(username) {
+  const rows = db.exec('SELECT * FROM users WHERE username = ?', [username]);
+  if (rows.length === 0 || rows[0].values.length === 0) return null;
+  const r = rows[0].values[0];
+  return { id: r[0], username: r[1], password_hash: r[2], role: r[3], created_at: r[4], updated_at: r[5] };
+}
+
+function getUserById(id) {
+  const rows = db.exec('SELECT * FROM users WHERE id = ?', [id]);
+  if (rows.length === 0 || rows[0].values.length === 0) return null;
+  const r = rows[0].values[0];
+  return { id: r[0], username: r[1], password_hash: r[2], role: r[3], created_at: r[4], updated_at: r[5] };
+}
+
+function createUser({ username, password_hash, role }) {
+  const now = new Date().toISOString();
+  db.run('INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    [username, password_hash || '', role || 'user', now, now]);
+  saveDbToDisk();
+  return Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
+}
+
+function updateUser(id, { username, password_hash, role }) {
+  const existing = getUserById(id);
+  if (!existing) return null;
+  const now = new Date().toISOString();
+  db.run('UPDATE users SET username = ?, password_hash = ?, role = ?, updated_at = ? WHERE id = ?',
+    [username !== undefined ? username : existing.username,
+     password_hash !== undefined ? password_hash : existing.password_hash,
+     role !== undefined ? role : existing.role,
+     now, id]);
+  saveDbToDisk();
+  return getUserById(id);
+}
+
+function deleteUser(id) {
+  db.run('DELETE FROM users WHERE id = ?', [id]);
+  saveDbToDisk();
+}
+
+function countAdmins() {
+  const rows = db.exec("SELECT COUNT(*) FROM users WHERE role = 'admin'");
+  if (rows.length === 0 || rows[0].values.length === 0) return 0;
+  return rows[0].values[0][0];
 }
 
 // ---------- 关闭数据库 ----------
@@ -925,5 +1014,10 @@ module.exports = {
   getCamera, updateCamera,
 
   // 编辑器项目
-  getEditorProjects, getEditorProject, saveEditorProject, deleteEditorProject
+  getEditorProjects, getEditorProject, getEditorProjectsForRole, canViewProject,
+  saveEditorProject, deleteEditorProject,
+
+  // 用户管理
+  getUsers, getUserByUsername, getUserById, createUser, updateUser, deleteUser, countAdmins,
+  USER_ROLES
 };

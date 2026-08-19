@@ -442,8 +442,13 @@
         <button class="sb-btn" id="btn-loca-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🎆 开启 3D 特效</button>
     </div>
 
-    <!-- Links -->
+    <!-- 登录 / 角色 -->
     <div class="sb-section sb-actions">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <span id="auth-badge" style="display:none;font-size:0.68rem;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.85);"></span>
+            <button class="sb-btn" id="btn-auth" style="flex:1;font-size:0.72rem;padding:6px 8px;">👤 登录</button>
+        </div>
+        <div id="auth-hint" style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-bottom:6px;">未登录 · 仅显示公开方案</div>
         <a href="/admin.html" class="sb-btn" style="text-decoration:none;display:block;margin-top:4px;">⚙️ 系统配置</a>
     </div>
 </div>
@@ -502,14 +507,15 @@
 <!-- 天气预报面板 -->
 <div id="weather-panel"></div>
 
-<!-- 管理员登录弹窗（编辑/删除需密码） -->
+<!-- 登录弹窗（角色决定方案可见性） -->
 <div class="modal-overlay" id="login-modal" style="display:none;">
     <div class="modal-box">
-        <h2 id="login-title">需要管理员密码</h2>
-        <input type="password" id="login-pwd" placeholder="请输入管理员密码" autocomplete="current-password" />
+        <h2 id="login-title">登录查看方案</h2>
+        <input type="text" id="login-user" placeholder="用户名" autocomplete="username" style="width:100%;margin-bottom:10px;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#fff;font-size:0.9rem;outline:none;font-family:inherit;" />
+        <input type="password" id="login-pwd" placeholder="密码" autocomplete="current-password" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:#fff;font-size:0.9rem;outline:none;font-family:inherit;" />
         <div class="modal-actions">
             <button id="login-cancel" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.7);cursor:pointer;font-family:inherit;">取消</button>
-            <button id="login-submit" style="padding:8px 18px;border-radius:8px;border:none;background:var(--accent-main);color:#000;font-weight:600;cursor:pointer;font-family:inherit;">确定</button>
+            <button id="login-submit" style="padding:8px 18px;border-radius:8px;border:none;background:var(--accent-main);color:#000;font-weight:600;cursor:pointer;font-family:inherit;">登录</button>
         </div>
     </div>
 </div>
@@ -1784,7 +1790,6 @@ function renderOnePlanList(box, plans, active) {
         box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案</div>';
         return;
     }
-    const btnStyle = 'background:none;border:none;cursor:pointer;font-size:0.8rem;padding:0 2px;opacity:0.7;flex-shrink:0;';
     plans.forEach(p => {
         const item = document.createElement('div');
         item.className = 'plan-item';
@@ -1797,76 +1802,115 @@ function renderOnePlanList(box, plans, active) {
         name.textContent = p.name || ('方案 ' + p.id);
         name.title = p.name || '';
         name.addEventListener('click', () => { cb.checked = !cb.checked; togglePlan(p.id, cb.checked); });
-        const del = document.createElement('button');
-        del.textContent = '🗑'; del.title = '删除此方案';
-        del.style.cssText = btnStyle;
-        del.addEventListener('click', e => { e.stopPropagation(); deletePlanFromHome(p); });
         item.appendChild(cb);
         item.appendChild(name);
-        item.appendChild(del);
         box.appendChild(item);
     });
 }
 
-// —— 管理员密码门禁（编辑/删除前必须验证）——
-let loginResolve = null;
-function promptPassword(actionLabel) {
-    return new Promise((resolve) => {
-        const overlay = document.getElementById('login-modal');
-        const input = document.getElementById('login-pwd');
-        const title = document.getElementById('login-title');
-        if (!overlay || !input) { resolve(null); return; }
-        if (title) title.textContent = (actionLabel || '该操作') + '需要管理员密码';
-        input.value = '';
-        overlay.style.display = 'flex';
-        loginResolve = resolve;
-        setTimeout(() => input.focus(), 50);
-    });
+// ========================================================
+// 首页登录（角色决定方案可见性）
+// 未登录 = 访客（等同普通用户，仅公开方案）；超级用户/管理员 = 全部方案
+// 首页为纯查看：无编辑、无删除，登录只影响「能看到哪些方案」
+const AUTH_KEY = 'viewer_token';
+const ROLE_NAMES = { admin: '管理员', super: '超级用户', user: '普通用户' };
+let viewerAuth = { token: null, username: null, role: null };
+
+function authHeaders() {
+    return viewerAuth.token ? { 'Authorization': 'Bearer ' + viewerAuth.token } : {};
 }
-function settleLogin(token) {
+
+function openLogin() {
+    const overlay = document.getElementById('login-modal');
+    if (overlay) { overlay.style.display = 'flex'; setTimeout(() => document.getElementById('login-user').focus(), 50); }
+}
+function closeLogin() {
     const overlay = document.getElementById('login-modal');
     if (overlay) overlay.style.display = 'none';
-    if (loginResolve) { loginResolve(token); loginResolve = null; }
 }
-document.getElementById('login-cancel').addEventListener('click', () => settleLogin(null));
-document.getElementById('login-submit').addEventListener('click', async () => {
-    const pwd = document.getElementById('login-pwd').value;
-    if (!pwd) { alert('密码不能为空'); return; }
+
+async function doLogin() {
+    const username = (document.getElementById('login-user').value || '').trim();
+    const password = document.getElementById('login-pwd').value;
+    if (!username || !password) { alert('请输入用户名和密码'); return; }
     try {
-        const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+        const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
         const j = await r.json();
         if (!r.ok) { alert('登录失败：' + (j.error || ('HTTP ' + r.status))); return; }
-        localStorage.setItem('admin_token', j.token);
-        settleLogin(j.token);
+        viewerAuth = { token: j.token, username: j.username, role: j.role };
+        localStorage.setItem(AUTH_KEY, j.token);
+        closeLogin();
+        renderAuthState();
+        await refreshPlansAfterAuthChange();
     } catch (e) { alert('登录失败：' + e.message); }
-});
-document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) settleLogin(null); });
-document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-submit').click(); });
-
-async function requireAdminToken(actionLabel) {
-    let token = localStorage.getItem('admin_token');
-    if (token) return token;
-    return await promptPassword(actionLabel);
 }
 
-async function deletePlanFromHome(p) {
-    if (!confirm('确定删除方案「' + (p.name || ('方案 ' + p.id)) + '」？')) return;
-    const token = await requireAdminToken('删除');
-    if (!token) return;
+async function logout() {
+    viewerAuth = { token: null, username: null, role: null };
+    localStorage.removeItem(AUTH_KEY);
+    renderAuthState();
+    await refreshPlansAfterAuthChange();
+}
+
+async function initAuth() {
     try {
-        const r = await fetch('/api/editor/projects/' + p.id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); alert('删除失败：' + (j.error || ('HTTP ' + r.status))); return; }
-        const ids = getActivePlanIds().filter(id => String(id) !== String(p.id));
-        saveActivePlanIds(ids);
-        if (planMap) removePlanOverlay(planMap, p.id);
-        rebuildLocaIfActive();
-        await refreshPlanList();
-    } catch (e) { alert('删除失败：' + e.message); }
+        const token = localStorage.getItem(AUTH_KEY);
+        if (!token) { renderAuthState(); return; }
+        viewerAuth.token = token;
+        const r = await fetch('/api/check', { headers: { 'Authorization': 'Bearer ' + token } });
+        if (r.ok) {
+            const j = await r.json();
+            viewerAuth.username = j.username;
+            viewerAuth.role = j.role;
+        } else {
+            viewerAuth = { token: null, username: null, role: null };
+            localStorage.removeItem(AUTH_KEY);
+        }
+    } catch (_) {
+        viewerAuth = { token: null, username: null, role: null };
+    }
+    renderAuthState();
 }
+
+function renderAuthState() {
+    const btn = document.getElementById('btn-auth');
+    const badge = document.getElementById('auth-badge');
+    const hint = document.getElementById('auth-hint');
+    if (viewerAuth.role) {
+        if (btn) btn.textContent = '🚪 退出';
+        if (badge) { badge.textContent = ROLE_NAMES[viewerAuth.role] || viewerAuth.role; badge.style.display = 'inline-block'; }
+        if (hint) hint.textContent = (viewerAuth.role === 'user') ? '仅显示公开方案' : '显示全部方案';
+    } else {
+        if (btn) btn.textContent = '👤 登录';
+        if (badge) badge.style.display = 'none';
+        if (hint) hint.textContent = '未登录 · 仅显示公开方案';
+    }
+}
+
+// 登录/退出后清空已叠加方案，按新角色重新加载可见方案
+async function refreshPlansAfterAuthChange() {
+    if (planMap) getActivePlanIds().forEach(id => removePlanOverlay(planMap, Number(id)));
+    saveActivePlanIds([]);
+    await refreshPlanList();
+    rebuildLocaIfActive();
+    if (planProjects.length > 0) {
+        const first = planProjects[0];
+        saveActivePlanIds([String(first.id)]);
+        renderPlanList();
+        fetchPlanData(first.id).then(plan => { if (plan) applyPlan(planMap, plan); });
+    }
+}
+
+document.getElementById('login-cancel').addEventListener('click', closeLogin);
+document.getElementById('login-submit').addEventListener('click', doLogin);
+document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeLogin(); });
+document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('login-user').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('btn-auth').addEventListener('click', () => { viewerAuth.role ? logout() : openLogin(); });
 
 async function refreshPlanList() {
     try {
-        const res = await fetch('/api/editor/projects');
+        const res = await fetch('/api/editor/projects', { headers: authHeaders() });
         const json = await res.json();
         planProjects = json.data || [];
     } catch (e) {}
@@ -1896,7 +1940,7 @@ async function fetchPlanData(id) {
     if (planFetching[id]) return planFetching[id];
     planFetching[id] = (async () => {
         try {
-            const res = await fetch('/api/editor/projects/' + id);
+            const res = await fetch('/api/editor/projects/' + id, { headers: authHeaders() });
             if (!res.ok) throw new Error('HTTP ' + res.status);
             const json = await res.json();
             return json.data;
@@ -1913,7 +1957,7 @@ async function fetchPlanData(id) {
 async function initPlanSelector(map) {
     planMap = map;
     try {
-        const res = await fetch('/api/editor/projects');
+        const res = await fetch('/api/editor/projects', { headers: authHeaders() });
         const json = await res.json();
         planProjects = json.data || [];
     } catch (err) {
@@ -2052,7 +2096,8 @@ async function boot() {
     // Init drawing manager
     displayRoutesAndAreas(map);
 
-    // 加载「导览方案」下拉并支持叠加渲染
+    // 先解析登录态（角色决定方案可见性），再加载「导览方案」
+    await initAuth();
     initPlanSelector(map);
 
     // 首页测量工具：测距 + 测面积

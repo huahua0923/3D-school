@@ -197,7 +197,8 @@ a { color: #58a6ff; }
     <div class="login-box">
         <h1>⚙️ 后台配置</h1>
         <p>会展中心 3D 导览管理系统</p>
-        <input type="password" id="login-pwd" placeholder="请输入管理员密码" autofocus />
+        <input type="text" id="login-user" placeholder="用户名" value="admin" autocomplete="username" />
+        <input type="password" id="login-pwd" placeholder="密码" autocomplete="current-password" autofocus />
         <button id="login-btn">登 录</button>
         <div class="err" id="login-err"></div>
     </div>
@@ -215,6 +216,7 @@ a { color: #58a6ff; }
     <button data-panel="camera">📷 相机</button>
     <button data-panel="geo">🌍 地理信息</button>
     <button data-panel="plans">📋 方案</button>
+    <button data-panel="users">👥 用户管理</button>
     <a href="admin-map.html" class="nav-link">🗺️ 路线图编辑</a>
     <a href="editor.html" class="nav-link">✏️ 室内编辑</a>
 </nav>
@@ -288,6 +290,11 @@ a { color: #58a6ff; }
     <div class="panel" id="panel-plans">
         <div id="form-plans"></div>
     </div>
+
+    <!-- ====== Users Panel ====== -->
+    <div class="panel" id="panel-users">
+        <div id="form-users"></div>
+    </div>
 </div>
 
 <!-- Status bar -->
@@ -307,19 +314,27 @@ a { color: #58a6ff; }
 let config = null;
 let mapPlans = [];   // 地图方案（kind='map'）数据，供「标记点/路线/区域」面板显示真实数据
 let token = localStorage.getItem('admin_token') || '';
+let currentRole = '';
+
+function authHeaders() {
+    return token ? { 'Authorization': 'Bearer ' + token } : {};
+}
 
 // ---------- Auth ----------
 async function login() {
+    const username = (document.getElementById('login-user').value || '').trim();
     const pwd = document.getElementById('login-pwd').value;
     const errEl = document.getElementById('login-err');
     try {
         const resp = await fetch('/api/login', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: pwd }),
+            body: JSON.stringify({ username: username || 'admin', password: pwd }),
         });
         const data = await resp.json();
         if (!resp.ok) { errEl.textContent = data.error || '登录失败'; return; }
+        if (data.role !== 'admin') { errEl.textContent = '该账号不是管理员，无法进入后台'; return; }
         token = data.token;
+        currentRole = data.role;
         localStorage.setItem('admin_token', token);
         document.getElementById('login-overlay').classList.add('hidden');
         await loadConfig();
@@ -336,6 +351,7 @@ function logout() {
 
 // Enter key to login
 document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+document.getElementById('login-user').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 document.getElementById('login-btn').addEventListener('click', login);
 
 // ---------- Tab switching ----------
@@ -516,6 +532,7 @@ function renderAll() {
     renderCamera();
     renderGeo();
     renderPlans();
+    renderUsers();
 }
 
 
@@ -635,7 +652,7 @@ function jkey(v) { return escHtml(JSON.stringify(v)); }
 // 从地图方案（kind='map'）聚合标记点/路线/区域，供面板显示真实数据
 async function loadMapPlans() {
     try {
-        const resp = await fetch('/api/editor/projects');
+        const resp = await fetch('/api/editor/projects', { headers: authHeaders() });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         mapPlans = (json.data || []).filter(p => p && p.data && p.data.kind === 'map');
@@ -764,7 +781,7 @@ async function renderPlans() {
     if (!box) return;
     let rows = [];
     try {
-        const resp = await fetch('/api/editor/projects');
+        const resp = await fetch('/api/editor/projects', { headers: authHeaders() });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const json = await resp.json();
         rows = json.data || [];
@@ -778,10 +795,17 @@ async function renderPlans() {
     }
     box.innerHTML = rows.map(p => {
         const name = p.name || ('方案 ' + p.id);
+        const vis = p.visibility || 'public';
         return `<div class="section">
             <h3>🗂️ ${escHtml(name)}</h3>
             <div class="form-grid">
                 <div class="form-group"><label>名称</label><input id="plan-name-${p.id}" type="text" value="${escHtml(name)}" /></div>
+                <div class="form-group"><label>可见性</label>
+                    <select onchange="updatePlanVisibility(${p.id}, this.value)">
+                        <option value="public" ${vis === 'public' ? 'selected' : ''}>公开（普通用户可见）</option>
+                        <option value="restricted" ${vis === 'restricted' ? 'selected' : ''}>受限（仅超级用户/管理员）</option>
+                    </select>
+                </div>
             </div>
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <span style="font-size:0.78rem;color:#8b949e;">更新: ${escHtml(p.updated_at || '—')}</span>
@@ -791,6 +815,20 @@ async function renderPlans() {
             </div>
         </div>`;
     }).join('');
+}
+
+async function updatePlanVisibility(id, visibility) {
+    try {
+        const resp = await fetch('/api/editor/projects/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ visibility }),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) showToast('✅ 可见性已更新', 'ok');
+        else showToast('❌ ' + (data.error || '更新失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
 }
 
 async function renamePlan(id) {
@@ -821,6 +859,114 @@ async function deletePlan(id) {
         if (resp.status === 401) { logout(); return; }
         if (resp.ok) { showToast('✅ 方案已删除', 'ok'); renderPlans(); }
         else { const d = await resp.json(); showToast('❌ ' + (d.error || '删除失败'), 'err'); }
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
+// ---------- 用户管理（/api/users） ----------
+const ROLE_LIST = [['admin', '管理员'], ['super', '超级用户'], ['user', '普通用户']];
+
+async function renderUsers() {
+    const box = document.getElementById('form-users');
+    if (!box) return;
+    let rows = [];
+    try {
+        const resp = await fetch('/api/users', { headers: authHeaders() });
+        if (resp.status === 401) { logout(); return; }
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const json = await resp.json();
+        rows = json.data || [];
+    } catch (e) {
+        box.innerHTML = `<div class="section"><p style="color:#f85149;">加载失败: ${escHtml(e.message)}</p></div>`;
+        return;
+    }
+
+    const roleOptions = (sel) => ROLE_LIST.map(([v, label]) =>
+        `<option value="${v}" ${sel === v ? 'selected' : ''}>${label}</option>`).join('');
+
+    box.innerHTML = `
+        <div class="section">
+            <h3>➕ 新增用户</h3>
+            <div class="form-grid">
+                <div class="form-group"><label>用户名</label><input id="new-user-name" type="text" placeholder="登录用户名" autocomplete="off" /></div>
+                <div class="form-group"><label>密码</label><input id="new-user-pwd" type="password" placeholder="至少 6 位" autocomplete="new-password" /></div>
+                <div class="form-group"><label>角色</label><select id="new-user-role">${roleOptions('user')}</select></div>
+            </div>
+            <button class="btn-add-feat" style="margin-top:12px" onclick="addUser()">➕ 创建用户</button>
+        </div>
+        <div class="section">
+            <h3>👥 用户列表</h3>
+            ${rows.length === 0 ? '<p style="color:#8b949e;">暂无用户</p>' : rows.map(u => `
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid #21262d;">
+                    <span style="font-weight:600;color:#f0f6fc;min-width:120px;">${escHtml(u.username)}</span>
+                    <select onchange="updateUserRole(${u.id}, this.value)">${roleOptions(u.role)}</select>
+                    <button class="btn-add-feat" onclick="resetUserPassword(${u.id}, ${jkey(u.username)})">🔑 重置密码</button>
+                    <button class="btn-del" style="margin-top:0" onclick="deleteUser(${u.id}, ${jkey(u.username)})">✕ 删除</button>
+                    <span style="font-size:0.72rem;color:#8b949e;margin-left:auto;">${escHtml(u.created_at || '')}</span>
+                </div>`).join('')}
+        </div>`;
+}
+
+async function addUser() {
+    const username = document.getElementById('new-user-name').value.trim();
+    const password = document.getElementById('new-user-pwd').value;
+    const role = document.getElementById('new-user-role').value;
+    if (!username) { showToast('用户名不能为空', 'err'); return; }
+    if (!password || password.length < 6) { showToast('密码至少 6 位', 'err'); return; }
+    try {
+        const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ username, password, role }),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) { showToast('✅ 用户已创建', 'ok'); renderUsers(); }
+        else showToast('❌ ' + (data.error || '创建失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
+async function updateUserRole(id, role) {
+    try {
+        const resp = await fetch('/api/users/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ role }),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) { showToast('✅ 角色已更新', 'ok'); renderUsers(); }
+        else showToast('❌ ' + (data.error || '更新失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
+async function resetUserPassword(id, username) {
+    const pwd = prompt('为用户「' + username + '」设置新密码（至少 6 位）：');
+    if (pwd === null) return;
+    if (pwd.length < 6) { showToast('密码至少 6 位', 'err'); return; }
+    try {
+        const resp = await fetch('/api/users/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ password: pwd }),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) showToast('✅ 密码已重置', 'ok');
+        else showToast('❌ ' + (data.error || '重置失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
+async function deleteUser(id, username) {
+    if (!confirm('确定删除用户「' + username + '」？')) return;
+    try {
+        const resp = await fetch('/api/users/' + id, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token },
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok) { showToast('✅ 用户已删除', 'ok'); renderUsers(); }
+        else showToast('❌ ' + (data.error || '删除失败'), 'err');
     } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
 }
 

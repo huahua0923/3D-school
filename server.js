@@ -59,42 +59,109 @@ app.use((req, res, next) => {
 });
 app.use(express.static(__dirname));
 
-// ---------- 无状态 token 管理（HMAC 签名，服务器重启不丢失）----------
-const TOKEN_SECRET = process.env.ADMIN_SECRET || ADMIN_PASSWORD;
-const TOKEN_TTL = 24 * 60 * 60 * 1000; // 24 小时
+// ---------- 密码哈希（scrypt，符合「密码必须哈希存储」）----------
+const SCRYPT_KEYLEN = 64;
 
-function generateToken() {
-    const timestamp = Date.now();
-    const payload = timestamp.toString();
-    const hmac = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-    return Buffer.from(timestamp + '.' + hmac).toString('base64url');
+function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password, salt, SCRYPT_KEYLEN).toString('hex');
+    return salt + ':' + hash;
 }
 
-function verifyToken(token) {
+function verifyPassword(password, stored) {
     try {
-        const decoded = Buffer.from(token, 'base64url').toString('utf-8');
-        const dotIdx = decoded.indexOf('.');
-        if (dotIdx === -1) return false;
-        const timestamp = parseInt(decoded.substring(0, dotIdx), 10);
-        const hmac = decoded.substring(dotIdx + 1);
-        if (!timestamp || !hmac) return false;
-        // Check expiry
-        if (Date.now() - timestamp > TOKEN_TTL) return false;
-        // Verify HMAC
-        const expectedHmac = crypto.createHmac('sha256', TOKEN_SECRET).update(timestamp.toString()).digest('hex');
-        return crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expectedHmac));
+        if (!stored || !stored.includes(':')) return false;
+        const [salt, hash] = stored.split(':');
+        const candidate = crypto.scryptSync(password, salt, SCRYPT_KEYLEN).toString('hex');
+        return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(candidate, 'hex'));
     } catch {
         return false;
     }
 }
 
-function authMiddleware(req, res, next) {
+// ---------- 无状态 token 管理（HMAC 签名，服务器重启不丢失）----------
+const TOKEN_SECRET = process.env.ADMIN_SECRET || ADMIN_PASSWORD;
+const TOKEN_TTL = 24 * 60 * 60 * 1000; // 24 小时
+
+function generateToken(username, role) {
+    const timestamp = Date.now();
+    const payload = `${timestamp}.${username}.${role}`;
+    const hmac = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
+    return Buffer.from(payload + '.' + hmac).toString('base64url');
+}
+
+function verifyToken(token) {
+    try {
+        const decoded = Buffer.from(token, 'base64url').toString('utf-8');
+        const parts = decoded.split('.');
+        if (parts.length !== 4) return null;
+        const [tsStr, username, role, hmac] = parts;
+        const timestamp = parseInt(tsStr, 10);
+        if (!timestamp || !username || !hmac) return null;
+        if (Date.now() - timestamp > TOKEN_TTL) return null;
+        const payload = `${tsStr}.${username}.${role}`;
+        const expectedHmac = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
+        if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expectedHmac))) return null;
+        return { username, role };
+    } catch {
+        return null;
+    }
+}
+
+// 从请求读取并解析 token（无/无效返回 null，不抛错）
+function readUser(req) {
     const auth = req.headers.authorization;
     const token = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null;
-    if (!token || !verifyToken(token)) {
+    if (!token) return null;
+    return verifyToken(token);
+}
+
+// 任意已登录角色可访问（super/user 也能通过）
+function authMiddleware(req, res, next) {
+    const user = readUser(req);
+    if (!user) {
         return res.status(401).json({ error: '未登录或 token 已过期' });
     }
+    req.user = user;
     next();
+}
+
+// 仅管理员可访问（所有写操作）
+function adminOnly(req, res, next) {
+    const user = readUser(req);
+    if (!user) {
+        return res.status(401).json({ error: '未登录或 token 已过期' });
+    }
+    if (user.role !== 'admin') {
+        return res.status(403).json({ error: '需要管理员权限' });
+    }
+    req.user = user;
+    next();
+}
+
+// ---------- 登录限流（内存版，按 IP：15 分钟 5 次失败）----------
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILS = 5;
+const loginAttempts = new Map(); // ip -> { count, resetAt }
+
+function loginBlocked(ip) {
+    const rec = loginAttempts.get(ip);
+    if (!rec) return false;
+    if (Date.now() > rec.resetAt) { loginAttempts.delete(ip); return false; }
+    return rec.count >= LOGIN_MAX_FAILS;
+}
+
+function recordLoginFail(ip) {
+    const rec = loginAttempts.get(ip);
+    if (!rec || Date.now() > rec.resetAt) {
+        loginAttempts.set(ip, { count: 1, resetAt: Date.now() + LOGIN_WINDOW_MS });
+    } else {
+        rec.count += 1;
+    }
+}
+
+function clearLoginFails(ip) {
+    loginAttempts.delete(ip);
 }
 
 // API 路由：统一 UTF-8 编码
@@ -103,19 +170,27 @@ app.use('/api', (_req, res, next) => {
     next();
 });
 
-// ==================== 认证相关（不变） ====================
+// ==================== 认证相关 ====================
 
-// 登录
+// 登录：{ username, password } 或旧格式 { password }（→ 默认管理员 admin）
 app.post('/api/login', (req, res) => {
-    const { password } = req.body;
+    const { username, password } = req.body || {};
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    if (loginBlocked(ip)) {
+        return res.status(429).json({ error: '尝试次数过多，请 15 分钟后再试' });
+    }
     if (!password) {
         return res.status(400).json({ error: '请输入密码' });
     }
-    if (password !== ADMIN_PASSWORD) {
-        return res.status(403).json({ error: '密码错误' });
+    const uname = (username || 'admin').toString().trim();
+    const user = db.getUserByUsername(uname);
+    if (!user || !verifyPassword(password, user.password_hash)) {
+        recordLoginFail(ip);
+        return res.status(403).json({ error: '用户名或密码错误' });
     }
-    const token = generateToken();
-    res.json({ token, message: '登录成功' });
+    clearLoginFails(ip);
+    const token = generateToken(user.username, user.role);
+    res.json({ token, username: user.username, role: user.role, message: '登录成功' });
 });
 
 // 登出（无状态 token，客户端删除即可）
@@ -123,9 +198,76 @@ app.post('/api/logout', authMiddleware, (req, res) => {
     res.json({ message: '已登出' });
 });
 
-// 验证 token
+// 验证 token（返回当前用户名与角色）
 app.get('/api/check', authMiddleware, (req, res) => {
-    res.json({ valid: true });
+    res.json({ valid: true, username: req.user.username, role: req.user.role });
+});
+
+// ==================== 用户管理（管理员专用） ====================
+
+app.get('/api/users', adminOnly, (_req, res) => {
+    try { res.json({ data: db.getUsers() }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/users', adminOnly, (req, res) => {
+    try {
+        const { username, password, role } = req.body || {};
+        const uname = (username || '').toString().trim();
+        if (!uname) return res.status(400).json({ error: '用户名不能为空' });
+        if (uname.length > 50) return res.status(400).json({ error: '用户名过长' });
+        if (!password || String(password).length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+        if (!db.USER_ROLES.includes(role)) return res.status(400).json({ error: '角色无效' });
+        if (db.getUserByUsername(uname)) return res.status(409).json({ error: '用户名已存在' });
+        const id = db.createUser({ username: uname, password_hash: hashPassword(String(password)), role });
+        res.status(201).json({ message: 'ok', id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/users/:id', adminOnly, (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const user = db.getUserById(id);
+        if (!user) return res.status(404).json({ error: '用户不存在' });
+        const { username, password, role } = req.body || {};
+        const patch = {};
+        if (username !== undefined) {
+            const uname = username.toString().trim();
+            if (!uname) return res.status(400).json({ error: '用户名不能为空' });
+            const dup = db.getUserByUsername(uname);
+            if (dup && dup.id !== id) return res.status(409).json({ error: '用户名已存在' });
+            patch.username = uname;
+        }
+        if (password !== undefined && password !== '') {
+            if (String(password).length < 6) return res.status(400).json({ error: '密码至少 6 位' });
+            patch.password_hash = hashPassword(String(password));
+        }
+        if (role !== undefined) {
+            if (!db.USER_ROLES.includes(role)) return res.status(400).json({ error: '角色无效' });
+            if (user.role === 'admin' && role !== 'admin' && db.countAdmins() <= 1) {
+                return res.status(400).json({ error: '不能降级最后一个管理员' });
+            }
+            patch.role = role;
+        }
+        db.updateUser(id, patch);
+        res.json({ message: 'ok' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/users/:id', adminOnly, (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const user = db.getUserById(id);
+        if (!user) return res.status(404).json({ error: '用户不存在' });
+        if (req.user && req.user.username === user.username) {
+            return res.status(400).json({ error: '不能删除自己' });
+        }
+        if (user.role === 'admin' && db.countAdmins() <= 1) {
+            return res.status(400).json({ error: '不能删除最后一个管理员' });
+        }
+        db.deleteUser(id);
+        res.json({ message: 'ok' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 高德地图 JS API Key + 安全密钥（从 .env 注入，不进仓库、不进 config.json）
@@ -150,7 +292,7 @@ app.get('/api/config', (req, res) => {
 });
 
 // 保存完整配置（需要认证）
-app.post('/api/config', authMiddleware, (req, res) => {
+app.post('/api/config', adminOnly, (req, res) => {
     const config = req.body;
     if (!config || typeof config !== 'object') {
         return res.status(400).json({ error: '无效的配置数据' });
@@ -181,7 +323,7 @@ app.get('/api/geo', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/geo', authMiddleware, (req, res) => {
+app.put('/api/geo', adminOnly, (req, res) => {
     try { db.updateGeo(req.body); res.json({ message: 'ok' }); }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -193,7 +335,7 @@ app.get('/api/scene', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/scene', authMiddleware, (req, res) => {
+app.put('/api/scene', adminOnly, (req, res) => {
     try { db.updateScene(req.body); res.json({ message: 'ok' }); }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -205,7 +347,7 @@ app.get('/api/buildings/main', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/buildings/main', authMiddleware, (req, res) => {
+app.put('/api/buildings/main', adminOnly, (req, res) => {
     try { db.updateBuildingMain(req.body); res.json({ message: 'ok' }); }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -215,21 +357,21 @@ app.get('/api/buildings/subs', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/buildings/subs', authMiddleware, (req, res) => {
+app.post('/api/buildings/subs', adminOnly, (req, res) => {
     try {
         const id = db.addBuildingSub(req.body);
         res.status(201).json({ message: 'ok', id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/buildings/subs/:id', authMiddleware, (req, res) => {
+app.put('/api/buildings/subs/:id', adminOnly, (req, res) => {
     try {
         db.updateBuildingSub(Number(req.params.id), req.body);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/buildings/subs/:id', authMiddleware, (req, res) => {
+app.delete('/api/buildings/subs/:id', adminOnly, (req, res) => {
     try {
         db.deleteBuildingSub(Number(req.params.id));
         res.json({ message: 'ok' });
@@ -251,21 +393,21 @@ app.get('/api/markers/:key', (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/markers', authMiddleware, (req, res) => {
+app.post('/api/markers', adminOnly, (req, res) => {
     try {
         db.addMarker(req.body);
         res.status(201).json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/markers/:key', authMiddleware, (req, res) => {
+app.put('/api/markers/:key', adminOnly, (req, res) => {
     try {
         db.updateMarker(req.params.key, req.body);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/markers/:key', authMiddleware, (req, res) => {
+app.delete('/api/markers/:key', adminOnly, (req, res) => {
     try {
         db.deleteMarker(req.params.key);
         res.json({ message: 'ok' });
@@ -287,21 +429,21 @@ app.get('/api/routes/:key', (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/routes', authMiddleware, (req, res) => {
+app.post('/api/routes', adminOnly, (req, res) => {
     try {
         db.addRoute(req.body);
         res.status(201).json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/routes/:key', authMiddleware, (req, res) => {
+app.put('/api/routes/:key', adminOnly, (req, res) => {
     try {
         db.updateRoute(req.params.key, req.body);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/routes/:key', authMiddleware, (req, res) => {
+app.delete('/api/routes/:key', adminOnly, (req, res) => {
     try {
         db.deleteRoute(req.params.key);
         res.json({ message: 'ok' });
@@ -315,21 +457,21 @@ app.get('/api/parking', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/parking', authMiddleware, (req, res) => {
+app.post('/api/parking', adminOnly, (req, res) => {
     try {
         const id = db.addParking(req.body);
         res.status(201).json({ message: 'ok', id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/parking/:id', authMiddleware, (req, res) => {
+app.put('/api/parking/:id', adminOnly, (req, res) => {
     try {
         db.updateParking(Number(req.params.id), req.body);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/parking/:id', authMiddleware, (req, res) => {
+app.delete('/api/parking/:id', adminOnly, (req, res) => {
     try {
         db.deleteParking(Number(req.params.id));
         res.json({ message: 'ok' });
@@ -343,7 +485,7 @@ app.get('/api/particles', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/particles', authMiddleware, (req, res) => {
+app.put('/api/particles', adminOnly, (req, res) => {
     try { db.updateParticles(req.body); res.json({ message: 'ok' }); }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -355,52 +497,59 @@ app.get('/api/camera', (req, res) => {
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/api/camera', authMiddleware, (req, res) => {
+app.put('/api/camera', adminOnly, (req, res) => {
     try { db.updateCamera(req.body); res.json({ message: 'ok' }); }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ==================== 路线图编辑器 ====================
 
-// 列出所有项目
+// 列出所有项目（按角色过滤：user/访客只见公开，super/admin 见全部）
 app.get('/api/editor/projects', (req, res) => {
-    try { res.json({ data: db.getEditorProjects() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try {
+        const user = readUser(req);
+        const role = user ? user.role : 'user';
+        res.json({ data: db.getEditorProjectsForRole(role) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 获取单个项目
+// 获取单个项目（受限方案对 user/访客隐藏）
 app.get('/api/editor/projects/:id', (req, res) => {
     try {
         const p = db.getEditorProject(Number(req.params.id));
         if (!p) return res.status(404).json({ error: '项目不存在' });
+        const user = readUser(req);
+        const role = user ? user.role : 'user';
+        if (!db.canViewProject(role, p)) return res.status(403).json({ error: '无权查看该项目' });
         res.json({ data: p });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 创建新项目
-app.post('/api/editor/projects', authMiddleware, (req, res) => {
+app.post('/api/editor/projects', adminOnly, (req, res) => {
     try {
-        const { name, data } = req.body;
-        const id = db.saveEditorProject(null, name || '未命名项目', data || {});
+        const { name, data, visibility } = req.body;
+        const id = db.saveEditorProject(null, name || '未命名项目', data || {}, visibility);
         res.status(201).json({ message: 'ok', id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// 更新项目（支持部分更新：只改名时保留已有 data）
-app.put('/api/editor/projects/:id', authMiddleware, (req, res) => {
+// 更新项目（支持部分更新：只改名时保留已有 data；可单独改可见性）
+app.put('/api/editor/projects/:id', adminOnly, (req, res) => {
     try {
-        const { name, data } = req.body;
+        const { name, data, visibility } = req.body;
         const existing = db.getEditorProject(Number(req.params.id));
         if (!existing) return res.status(404).json({ error: '项目不存在' });
         const nextName = name !== undefined ? name : existing.name;
         const nextData = data !== undefined ? data : existing.data;
-        db.saveEditorProject(Number(req.params.id), nextName, nextData);
+        const nextVis = visibility !== undefined ? visibility : existing.visibility;
+        db.saveEditorProject(Number(req.params.id), nextName, nextData, nextVis);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 删除项目
-app.delete('/api/editor/projects/:id', authMiddleware, (req, res) => {
+app.delete('/api/editor/projects/:id', adminOnly, (req, res) => {
     try {
         db.deleteEditorProject(Number(req.params.id));
         res.json({ message: 'ok' });
@@ -414,6 +563,11 @@ app.delete('/api/editor/projects/:id', authMiddleware, (req, res) => {
     try {
         await db.initDb();
         console.log('📦 数据库已就绪');
+        // 播种默认管理员（用户名 admin，密码 = ADMIN_PASSWORD），保持旧密码可继续登录后台
+        if (db.countAdmins() === 0) {
+            db.createUser({ username: 'admin', password_hash: hashPassword(ADMIN_PASSWORD), role: 'admin' });
+            console.log('👤 已创建默认管理员账号: admin');
+        }
     } catch (err) {
         console.error('❌ 数据库初始化失败:', err.message);
         process.exit(1);
