@@ -160,19 +160,25 @@
             opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(8px);
         }
         #weather-panel {
-            position: fixed; top: 70px; right: 20px; z-index: 20;
-            width: 220px; padding: 14px 16px; border-radius: 16px;
+            position: fixed; top: 68px; right: 20px; z-index: 20;
+            width: auto; min-width: 76px; max-width: 200px;
+            padding: 7px 12px; border-radius: 20px;
             background: rgba(12,18,30,0.9); backdrop-filter: blur(16px);
             border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 4px 16px rgba(0,0,0,0.3);
             color: #fff; display: none; font-family: inherit;
+            cursor: pointer; transition: all 0.2s ease;
         }
-        #weather-panel .w-city { font-size: 0.8rem; color: rgba(255,255,255,0.5); font-weight: 600; }
-        #weather-panel .w-live { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 2px; }
-        #weather-panel .w-temp { font-size: 2rem; font-weight: 700; }
-        #weather-panel .w-cond { font-size: 0.9rem; color: rgba(255,255,255,0.85); }
-        #weather-panel .w-meta { font-size: 0.7rem; color: rgba(255,255,255,0.45); }
-        #weather-panel .w-forecast { margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
-        #weather-panel .w-frow { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; }
+        #weather-panel:hover { border-color: rgba(255,255,255,0.16); }
+        #weather-panel .w-head { display: flex; align-items: center; gap: 7px; font-size: 0.85rem; font-weight: 600; }
+        #weather-panel .w-emoji { font-size: 1.15rem; line-height: 1; }
+        #weather-panel .w-temp { font-size: 1rem; font-weight: 700; }
+        #weather-panel .w-cond { font-size: 0.8rem; color: rgba(255,255,255,0.85); }
+        #weather-panel .w-detail { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+        #weather-panel.expanded .w-detail { display: block; }
+        #weather-panel .w-city { font-size: 0.75rem; color: rgba(255,255,255,0.5); font-weight: 600; margin-bottom: 4px; }
+        #weather-panel .w-meta { font-size: 0.68rem; color: rgba(255,255,255,0.45); }
+        #weather-panel .w-forecast { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+        #weather-panel .w-frow { display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; gap: 8px; }
         #weather-panel .w-fdate { color: rgba(255,255,255,0.5); }
         #weather-panel .w-fcond { color: rgba(255,255,255,0.85); flex: 1; text-align: center; }
         #weather-panel .w-ftemp { color: rgba(255,255,255,0.6); }
@@ -334,7 +340,7 @@
                 cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
             }
             #btn-auto-rotate { top: 12px; right: 12px; width: 44px; height: 44px; }
-            #weather-panel { top: 64px; right: 12px; width: 200px; }
+            #weather-panel { top: 64px; right: 12px; width: auto; max-width: 160px; }
             /* 底部控制条 → 底部居中、可横向滚动 */
             #bottom-controls {
                 bottom: 12px; left: 50%; right: auto;
@@ -360,6 +366,7 @@
             #toast { bottom: 84px; }
             #lb-prev { left: 8px; }
             #lb-next { right: 8px; }
+            .modal-box { min-width: auto; width: calc(100vw - 48px); padding: 22px 20px; }
         }
     </style>
 </head>
@@ -494,6 +501,18 @@
 
 <!-- 天气预报面板 -->
 <div id="weather-panel"></div>
+
+<!-- 管理员登录弹窗（编辑/删除需密码） -->
+<div class="modal-overlay" id="login-modal" style="display:none;">
+    <div class="modal-box">
+        <h2 id="login-title">需要管理员密码</h2>
+        <input type="password" id="login-pwd" placeholder="请输入管理员密码" autocomplete="current-password" />
+        <div class="modal-actions">
+            <button id="login-cancel" style="padding:8px 18px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:transparent;color:rgba(255,255,255,0.7);cursor:pointer;font-family:inherit;">取消</button>
+            <button id="login-submit" style="padding:8px 18px;border-radius:8px;border:none;background:var(--accent-main);color:#000;font-weight:600;cursor:pointer;font-family:inherit;">确定</button>
+        </div>
+    </div>
+</div>
 
 <!-- ============================================================
 Three.js Import Map
@@ -1397,36 +1416,58 @@ function initWeather() {
     if (!panel) return;
     const city = (CONFIG.weather && CONFIG.weather.city) || '成都市';
     const deg = (t) => String(t == null ? '--' : t).replace('℃', '').replace('°', '');
-    let liveHtml = '';
-    let forecastHtml = '';
+    const emoji = (w) => {
+        const s = (w || '');
+        if (s.includes('雪')) return '❄️';
+        if (s.includes('雷')) return '⛈️';
+        if (s.includes('雨')) return '🌧️';
+        if (s.includes('雾') || s.includes('霾')) return '🌫️';
+        if (s.includes('阴')) return '☁️';
+        if (s.includes('云')) return '⛅';
+        if (s.includes('晴')) return '☀️';
+        return '🌤️';
+    };
+    let live = null;
+    let forecasts = [];
     function render() {
-        panel.innerHTML = liveHtml + forecastHtml;
-        panel.style.display = (liveHtml || forecastHtml) ? 'block' : 'none';
+        if (!live && forecasts.length === 0) { panel.style.display = 'none'; return; }
+        let head, detail;
+        if (live) {
+            head = '<div class="w-head"><span class="w-emoji">' + emoji(live.weather) + '</span>' +
+                   '<span class="w-temp">' + deg(live.temperature) + '°</span>' +
+                   '<span class="w-cond">' + (live.weather || '') + '</span></div>';
+        } else {
+            head = '<div class="w-head"><span class="w-emoji">🌤️</span><span class="w-cond">' + city + '</span></div>';
+        }
+        let inner = '';
+        if (live) {
+            inner += '<div class="w-city">' + (live.city || city) + '</div>' +
+                     '<div class="w-meta">' + (live.windDirection || '') + '风 ' + (live.windPower || '') + ' · 湿度 ' + (live.humidity || '--') + '%</div>';
+        }
+        let fc = '';
+        forecasts.forEach(f => {
+            fc += '<div class="w-frow"><span class="w-fdate">' + (f.date || '').slice(5) + '</span>' +
+                  '<span class="w-fcond">' + emoji(f.dayweather) + ' ' + (f.dayweather || '') + '</span>' +
+                  '<span class="w-ftemp">' + deg(f.nighttemp) + '~' + deg(f.daytemp) + '°</span></div>';
+        });
+        if (fc) inner += '<div class="w-forecast">' + fc + '</div>';
+        if (inner) detail = '<div class="w-detail">' + inner + '</div>';
+        else detail = '';
+        panel.innerHTML = head + detail;
+        panel.style.display = 'block';
     }
     AMap.plugin('AMap.Weather', () => {
         const weather = new AMap.Weather();
-        weather.getLive(city, (err, live) => {
-            if (err || !live) { console.warn('⚠️ 天气实时数据获取失败', err); return; }
-            liveHtml =
-                '<div class="w-city">' + (live.city || city) + '</div>' +
-                '<div class="w-live"><span class="w-temp">' + deg(live.temperature) + '°</span>' +
-                '<span class="w-cond">' + (live.weather || '') + '</span></div>' +
-                '<div class="w-meta">' + (live.windDirection || '') + '风 ' + (live.windPower || '') + ' · 湿度 ' + (live.humidity || '--') + '%</div>';
-            render();
+        weather.getLive(city, (err, l) => {
+            if (!err && l) { live = l; render(); }
+            else console.warn('⚠️ 天气实时数据获取失败', err);
         });
-        weather.getForecast(city, (err, fc) => {
-            if (err || !fc || !fc.forecasts) { console.warn('⚠️ 天气预报数据获取失败', err); return; }
-            let rows = '';
-            fc.forecasts.slice(0, 3).forEach(f => {
-                rows +=
-                    '<div class="w-frow"><span class="w-fdate">' + (f.date || '').slice(5) + '</span>' +
-                    '<span class="w-fcond">' + (f.dayweather || '') + '</span>' +
-                    '<span class="w-ftemp">' + deg(f.nighttemp) + '~' + deg(f.daytemp) + '°</span></div>';
-            });
-            forecastHtml = '<div class="w-forecast">' + rows + '</div>';
-            render();
+        weather.getForecast(city, (err, f) => {
+            if (!err && f && f.forecasts) { forecasts = f.forecasts.slice(0, 3); render(); }
+            else console.warn('⚠️ 天气预报数据获取失败', err);
         });
     });
+    panel.addEventListener('click', () => panel.classList.toggle('expanded'));
 }
 
 // ========================================================
@@ -1756,42 +1797,62 @@ function renderOnePlanList(box, plans, active) {
         name.textContent = p.name || ('方案 ' + p.id);
         name.title = p.name || '';
         name.addEventListener('click', () => { cb.checked = !cb.checked; togglePlan(p.id, cb.checked); });
-        const edit = document.createElement('button');
-        edit.textContent = '✏️'; edit.title = '编辑此方案';
-        edit.style.cssText = btnStyle;
-        edit.addEventListener('click', e => { e.stopPropagation(); openPlanEditor(p); });
         const del = document.createElement('button');
         del.textContent = '🗑'; del.title = '删除此方案';
         del.style.cssText = btnStyle;
         del.addEventListener('click', e => { e.stopPropagation(); deletePlanFromHome(p); });
         item.appendChild(cb);
         item.appendChild(name);
-        item.appendChild(edit);
         item.appendChild(del);
         box.appendChild(item);
     });
 }
 
-function openPlanEditor(p) {
-    const editor = (p.data && p.data.kind === 'map') ? 'admin-map.html' : 'editor.html';
-    location.href = editor + '?project=' + encodeURIComponent(p.id);
+// —— 管理员密码门禁（编辑/删除前必须验证）——
+let loginResolve = null;
+function promptPassword(actionLabel) {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('login-modal');
+        const input = document.getElementById('login-pwd');
+        const title = document.getElementById('login-title');
+        if (!overlay || !input) { resolve(null); return; }
+        if (title) title.textContent = (actionLabel || '该操作') + '需要管理员密码';
+        input.value = '';
+        overlay.style.display = 'flex';
+        loginResolve = resolve;
+        setTimeout(() => input.focus(), 50);
+    });
+}
+function settleLogin(token) {
+    const overlay = document.getElementById('login-modal');
+    if (overlay) overlay.style.display = 'none';
+    if (loginResolve) { loginResolve(token); loginResolve = null; }
+}
+document.getElementById('login-cancel').addEventListener('click', () => settleLogin(null));
+document.getElementById('login-submit').addEventListener('click', async () => {
+    const pwd = document.getElementById('login-pwd').value;
+    if (!pwd) { alert('密码不能为空'); return; }
+    try {
+        const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
+        const j = await r.json();
+        if (!r.ok) { alert('登录失败：' + (j.error || ('HTTP ' + r.status))); return; }
+        localStorage.setItem('admin_token', j.token);
+        settleLogin(j.token);
+    } catch (e) { alert('登录失败：' + e.message); }
+});
+document.getElementById('login-modal').addEventListener('click', e => { if (e.target === e.currentTarget) settleLogin(null); });
+document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-submit').click(); });
+
+async function requireAdminToken(actionLabel) {
+    let token = localStorage.getItem('admin_token');
+    if (token) return token;
+    return await promptPassword(actionLabel);
 }
 
 async function deletePlanFromHome(p) {
     if (!confirm('确定删除方案「' + (p.name || ('方案 ' + p.id)) + '」？')) return;
-    let token = localStorage.getItem('admin_token');
-    if (!token) {
-        const pwd = prompt('删除需要管理员权限，请输入密码：');
-        if (pwd == null) return;
-        if (!pwd) { alert('密码不能为空'); return; }
-        try {
-            const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) });
-            const j = await r.json();
-            if (!r.ok) { alert('登录失败：' + (j.error || ('HTTP ' + r.status))); return; }
-            token = j.token;
-            localStorage.setItem('admin_token', token);
-        } catch (e) { alert('登录失败：' + e.message); return; }
-    }
+    const token = await requireAdminToken('删除');
+    if (!token) return;
     try {
         const r = await fetch('/api/editor/projects/' + p.id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
         if (!r.ok) { const j = await r.json().catch(() => ({})); alert('删除失败：' + (j.error || ('HTTP ' + r.status))); return; }
