@@ -234,6 +234,28 @@ function buildRectOv(bounds, rotation, d){
     }
     return new AMap.Rectangle({bounds:new AMap.Bounds(bounds[0],bounds[1]),strokeColor:d._color,strokeWeight:d._stroke||2,fillColor:d._color,fillOpacity:d._opacity??0.2,zIndex:5});
 }
+// —— 三点式画框：点1=角点A、点2=角点B（定义边长+方向）、点3=定义垂直宽度 ——
+// 返回轴对齐 bounds + rotation（绕中心顺时针度），供 buildRectOv / 持久化使用
+function threePointRect(path){
+    const A=path[0], B=path[1], C=path[2];
+    const lat0=(A[1]+B[1]+C[1])/3;
+    const mLng=111320*Math.cos(lat0*Math.PI/180);
+    const ax=A[0]*mLng, ay=A[1]*111320;
+    const bx=B[0]*mLng, by=B[1]*111320;
+    const cx=C[0]*mLng, cy=C[1]*111320;
+    const vx=bx-ax, vy=by-ay;
+    const vlen=Math.hypot(vx,vy);
+    if(vlen<1e-6) return {bounds:[[A[0],A[1]],[A[0],A[1]]], rotation:0};
+    const nx=-vy/vlen, ny=vx/vlen;                 // 基边的单位法向量（逆时针90°）
+    const w=(cx-ax)*nx+(cy-ay)*ny;                 // 有符号宽度（C 到基边的垂距）
+    const toLl=(x,y)=>[x/mLng, y/111320];
+    const corners=[toLl(ax,ay),toLl(bx,by),toLl(bx+nx*w,by+ny*w),toLl(ax+nx*w,ay+ny*w)];
+    const lngs=corners.map(p=>p[0]), lats=corners.map(p=>p[1]);
+    const bounds=[[Math.min.apply(null,lngs),Math.min.apply(null,lats)],[Math.max.apply(null,lngs),Math.max.apply(null,lats)]];
+    const rotation=-Math.atan2(vy,vx)*180/Math.PI; // 基边方向角取反，匹配 rectCorners 的顺时针约定
+    return {bounds, rotation};
+}
+
 function replaceRectOv(ov, rotation){
     const bounds=rectBoundsOf(ov);
     if(!bounds)return ov;
@@ -544,7 +566,7 @@ function setTool(tool){
     if(tool==='pointer')st.textContent='就绪';
     else if(tool==='polyline'){mouseTool.polyline({strokeColor:'#3b82f6',strokeWeight:3,strokeOpacity:0.9});st.textContent='📏 画路线 — 点击加顶点，双击完成'}
     else if(tool==='polygon'){mouseTool.polygon({strokeColor:'#10b981',strokeWeight:2,strokeOpacity:0.8,fillColor:'#10b981',fillOpacity:0.2});st.textContent='⬡ 画区域 — 点击加顶点，双击完成'}
-    else if(tool==='rectangle'){mouseTool.rectangle({strokeColor:'#8b5cf6',strokeWeight:2,strokeOpacity:0.8,fillColor:'#8b5cf6',fillOpacity:0.2});st.textContent='▭ 画框 — 按住拖拽拉出矩形'}
+    else if(tool==='rectangle'){mouseTool.polyline({strokeColor:'#8b5cf6',strokeWeight:2,strokeOpacity:0.8});st.textContent='▭ 画框(三点) — 点1角点、点2边长、点3宽度，双击完成'}
     else if(tool==='circle'){mouseTool.circle({strokeColor:'#ec4899',strokeWeight:2,strokeOpacity:0.8,fillColor:'#ec4899',fillOpacity:0.2});st.textContent='◯ 画圆 — 点击圆心，拖拽设定半径'}
     else if(tool==='ellipse'){mouseTool.circle({strokeColor:'#06b6d4',strokeWeight:2,strokeOpacity:0.8,fillColor:'#06b6d4',fillOpacity:0.2});st.textContent='⬭ 画椭圆 — 先画圆，松手后变成椭圆（可用选择工具拖动调整）'}
     else if(tool==='ranging'){if(rangingTool)rangingTool.turnOn();st.textContent='📐 测距 — 点击加测量点，双击结束'}
@@ -570,6 +592,23 @@ function onDraw(e){
         e.obj.setMap(null);
         setTool('pointer');
         toast('🧮 面积: '+formatArea(area));
+        return;
+    }
+    // 三点式画框：点1角点、点2边长方向、点3垂直宽度 → 转成旋转矩形
+    if(currentTool==='rectangle'){
+        const path=e.obj.getPath().map(p=>[p.lng,p.lat]);
+        e.obj.setMap(null);
+        if(path.length<3){setTool('pointer');toast('⚠️ 画框需要3个点');return;}
+        const rb=threePointRect(path);
+        saveSnapshot();
+        const cnt=overlays.filter(o=>o._type==='rect').length+1;
+        const ov=buildRectOv(rb.bounds,rb.rotation,{_color:TYPE_COLOR.rect,_stroke:2,_opacity:0.2});
+        ov.setMap(map);
+        ov._type='rect';ov._name='画框 '+cnt;ov._color=TYPE_COLOR.rect;ov._stroke=2;ov._opacity=0.2;ov._speed=0.9;ov._direction=1;ov._desc='';ov._images=[];
+        ov.on('click',()=>selectOv(ov));
+        overlays.push(ov);
+        updateUI();setTool('pointer');
+        toast('✅ 已添加: '+ov._name);
         return;
     }
     saveSnapshot();
@@ -688,6 +727,9 @@ function openEditorFor(ov){
     else if(ov._type==='rect'&&!ov._rotation&&AMap.RectangleEditor)ed=new AMap.RectangleEditor(map,ov);
     else if(ov._type==='ellipse'&&AMap.EllipseEditor)ed=new AMap.EllipseEditor(map,ov);
     if(ed){
+        // AMap 2.0 折线编辑器需显式 setTarget 指定要编辑的覆盖物，
+        // 否则 open() 后无目标、拖动顶点无效（表现为「路线不能编辑」）
+        try{ed.setTarget(ov)}catch(_){}
         ed.on('adjust',commitPreEdit);ed.on('addnode',commitPreEdit);ed.on('removenode',commitPreEdit);
         try{ed.open()}catch(_){}
         activeEditor=ed;

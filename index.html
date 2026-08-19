@@ -118,6 +118,7 @@
         }
         .sb-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
         .sb-btn.primary { background: var(--accent-main); border-color: var(--accent-main); color: #fff; font-weight: 600; }
+        .sb-btn.active { background: var(--accent-main); border-color: var(--accent-main); color: #fff; }
         .sb-status { font-size: 0.7rem; color: rgba(255,255,255,0.35); text-align: center; }
 .plan-list { display: flex; flex-direction: column; gap: 6px; }
 .plan-item { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 0; }
@@ -149,6 +150,13 @@
         }
         .ctrl-group button:hover { color: rgba(255,255,255,0.7); }
         .ctrl-group button.active { background: rgba(255,255,255,0.1); color: #fff; }
+        #toast {
+            position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
+            padding: 8px 16px; border-radius: 20px; z-index: 60;
+            background: rgba(12,18,30,0.92); border: 1px solid rgba(255,255,255,0.1);
+            color: #fff; font-size: 0.8rem; font-weight: 600;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s; backdrop-filter: blur(8px);
+        }
 
         
         @keyframes bannerIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
@@ -337,6 +345,16 @@
         <div style="display:none;margin-top:4px;font-size:0.72rem;color:var(--accent-main);" id="nav-info"></div>
     </div>
 
+    <!-- Measurement -->
+    <div class="sb-section">
+        <div class="sb-label">📏 测量工具</div>
+        <div style="display:flex;gap:6px;">
+            <button class="sb-btn" id="btn-measure-distance" style="flex:1;font-size:0.72rem;padding:6px 8px;">📏 测距</button>
+            <button class="sb-btn" id="btn-measure-area" style="flex:1;font-size:0.72rem;padding:6px 8px;">🧮 测面积</button>
+        </div>
+        <button class="sb-btn" id="btn-measure-clear" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除测量</button>
+    </div>
+
     <!-- Links -->
     <div class="sb-section sb-actions">
         <a href="/admin.html" class="sb-btn" style="text-decoration:none;display:block;margin-top:4px;">⚙️ 系统配置</a>
@@ -357,6 +375,9 @@
         <button data-layer="dark" class="active">暗黑</button>
         <button data-layer="normal">标准</button>
         <button data-layer="satellite">卫星</button>
+    </div>
+    <div class="ctrl-group" id="route-visibility" style="display:none;">
+        <button id="btn-hide-routes">🚫 隐藏路线</button>
     </div>
 </div>
 
@@ -380,6 +401,9 @@
 
 <!-- 图片灯箱：点击缩略图放大到页面三分之二 -->
 <div id="lightbox"><img id="lightbox-img" alt="图片" /></div>
+
+<!-- 测量结果提示 -->
+<div id="toast"></div>
 
 <!-- ============================================================
 Three.js Import Map
@@ -789,6 +813,39 @@ let flowCanvas = null;              // 流动虚线 canvas
 let flowCtx = null;                 // canvas 2D context
 let flowRoutes = [];                // 流动虚线路线 [{id, pts, color, width, speed, offset}]
 let flowLastT = 0;                  // 上一帧时间戳
+let hideRoutes = false;             // 卫星图「隐藏路线」开关：隐藏流动虚线 + 路线名称标签
+let routeOverlays = [];             // 路线相关 AMap 覆盖物（透明点击线 + 名称标签），供隐藏开关控制
+
+// —— 首页测量工具：测距（RangingTool）+ 测面积（MouseTool 多边形）——
+let measureMouseTool = null;        // AMap.MouseTool（测面积）
+let measureRanging = null;          // AMap.RangingTool（测距）
+let measureMode = null;             // 'distance' | 'area' | null
+let measureOverlays = [];           // 测量产生的临时覆盖物（清除用）
+
+function toast(msg){
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.opacity = '1';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { el.style.opacity = '0'; }, 2500);
+}
+
+// 测面积：等距圆柱局部近似 + shoelace（校园尺度精度足够）
+function polygonAreaMeters(path){
+    if (!path || path.length < 3) return 0;
+    const R = 6371000, k = R * Math.PI / 180;
+    let latSum = 0; path.forEach(p => latSum += p[1]);
+    const cos = Math.cos(latSum / path.length * Math.PI / 180);
+    const pts = path.map(p => [p[0] * k * cos, p[1] * k]);
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) { const j = (i + 1) % pts.length; area += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1]; }
+    return Math.abs(area / 2);
+}
+function formatArea(m2){
+    if (m2 >= 1e6) return (m2 / 1e6).toFixed(2) + ' 平方公里';
+    return Math.round(m2) + ' 平方米';
+}
 
 const FLOW_DASH = 12;               // 虚线实线段长度（px）
 const FLOW_GAP = 12;                // 虚线空隙长度（px）
@@ -843,6 +900,7 @@ function drawFlowLayer(map) {
     const dpr = window.devicePixelRatio || 1;
     const w = flowCanvas.width / dpr, h = flowCanvas.height / dpr;
     flowCtx.clearRect(0, 0, w, h);
+    if (hideRoutes) return;   // 卫星图隐藏路线：清空后不绘制流动虚线
     for (const r of flowRoutes) {
         if (!r.pts || r.pts.length < 2) continue;
         const px = [];
@@ -1070,7 +1128,7 @@ function displayRoutesAndAreas(map) {
             map.add(line);
             addFlowRoute('config:' + name, r.pts, r.color, 3, r.speed);
             const mid = r.pts[Math.floor(r.pts.length / 2)];
-            addNameLabel(map, name, mid, 'center');
+            routeOverlays.push(line, addNameLabel(map, name, mid, 'center'));
         });
     }
     if (CONFIG.areas) {
@@ -1173,6 +1231,8 @@ function rectCorners(bounds, rotation) {
 // 统一销毁图层/覆盖物：Layer 用 setMap(null)，Overlay 用 map.remove
 function disposeOverlay(o, map) {
     try {
+        const i = routeOverlays.indexOf(o);
+        if (i >= 0) routeOverlays.splice(i, 1);
         if (o && typeof o.setMap === 'function') o.setMap(null);
         else if (o) map.remove(o);
     } catch (_) {}
@@ -1234,7 +1294,9 @@ function applyPlan(map, plan) {
                 group.flowIds.push(flowId);
                 // 路线名称标签（中点）
                 const mid = r.pts[Math.floor(r.pts.length / 2)];
-                overlays.push(addNameLabel(map, name, mid, 'center'));
+                const lbl = addNameLabel(map, name, mid, 'center');
+                overlays.push(lbl);
+                routeOverlays.push(o, lbl);
             });
         }
         if (data.areas) {
@@ -1539,6 +1601,75 @@ async function initPlanSelector(map) {
 }
 
 
+// 首页测量工具：测距 + 测面积（复用高德官方 RangingTool / MouseTool）
+function initMeasureTools(map){
+    const btnDist = document.getElementById('btn-measure-distance');
+    const btnArea = document.getElementById('btn-measure-area');
+    const btnClear = document.getElementById('btn-measure-clear');
+    if (!btnDist || !btnArea || !btnClear) return;
+
+    function stopMeasure(){
+        measureMode = null;
+        if (measureRanging) { try { measureRanging.turnOff(); } catch(_){} }
+        if (measureMouseTool) { try { measureMouseTool.close(); } catch(_){} }
+        btnDist.classList.remove('active'); btnArea.classList.remove('active');
+    }
+    function clearMeasure(){
+        stopMeasure();
+        measureOverlays.forEach(o => { try { o.setMap(null); } catch(_){} });
+        measureOverlays = [];
+    }
+    function startDistance(){
+        if (measureMode === 'distance') { stopMeasure(); return; }
+        clearMeasure();
+        measureMode = 'distance';
+        btnDist.classList.add('active'); btnArea.classList.remove('active');
+        measureRanging.turnOn();
+        toast('📏 测距 — 点击加测量点，双击结束');
+    }
+    function startArea(){
+        if (measureMode === 'area') { stopMeasure(); return; }
+        clearMeasure();
+        measureMode = 'area';
+        btnArea.classList.add('active'); btnDist.classList.remove('active');
+        measureMouseTool.polygon({ strokeColor:'#f59e0b', strokeWeight:2, strokeOpacity:0.8, fillColor:'#f59e0b', fillOpacity:0.2 });
+        toast('🧮 测面积 — 点击加顶点，双击出面积');
+    }
+
+    AMap.plugin(['AMap.MouseTool', 'AMap.RangingTool'], () => {
+        measureMouseTool = new AMap.MouseTool(map);
+        measureMouseTool.on('draw', (e) => {
+            if (measureMode !== 'area') return;
+            const path = e.obj.getPath().map(p => [p.lng, p.lat]);
+            e.obj.setMap(null);
+            const area = polygonAreaMeters(path);
+            stopMeasure();
+            toast('🧮 面积: ' + formatArea(area));
+        });
+
+        // 与高德官方测距一致：起点/中间点/终点用官方图标，实线 + 虚线预览
+        const mkIcon = (n) => new AMap.Icon({ size:new AMap.Size(19,31), imageSize:new AMap.Size(19,31), image:'https://webapi.amap.com/theme/v1.3/markers/b/' + n + '.png' });
+        const mkOpt = (n) => ({ icon: mkIcon(n), offset: new AMap.Pixel(-9,-31) });
+        measureRanging = new AMap.RangingTool(map, {
+            lineOptions: { strokeColor:'#3366FF', strokeWeight:6, strokeStyle:'solid' },
+            tmpLineOptions: { strokeColor:'#3366FF', strokeWeight:3, strokeStyle:'dashed', strokeOpacity:0.6 },
+            startMarkerOptions: mkOpt('start'),
+            midMarkerOptions: mkOpt('mid'),
+            endMarkerOptions: mkOpt('end'),
+        });
+        measureRanging.on('end', (e) => {
+            if (measureMode !== 'distance') return;
+            const d = e && typeof e.distance === 'number' ? e.distance : null;
+            stopMeasure();
+            if (d != null) toast('📐 距离: ' + (d >= 1000 ? (d / 1000).toFixed(2) + ' 公里' : Math.round(d) + ' 米'));
+        });
+
+        btnDist.addEventListener('click', startDistance);
+        btnArea.addEventListener('click', startArea);
+        btnClear.addEventListener('click', clearMeasure);
+    });
+}
+
 async function boot() {
     ui = new UIController();
     ui.setProgress('加载配置...', 5);
@@ -1572,6 +1703,9 @@ async function boot() {
 
     // 加载「导览方案」下拉并支持叠加渲染
     initPlanSelector(map);
+
+    // 首页测量工具：测距 + 测面积
+    initMeasureTools(map);
 
     // 搜索：优先匹配本地场馆标记，其次高德 POI
     AMap.plugin('AMap.AutoComplete', () => {
@@ -1771,18 +1905,40 @@ async function boot() {
     // Map style switching (bottom-right controls)
     const layerStyles = { dark: 'amap://styles/dark', normal: 'amap://styles/light', satellite: 'amap://styles/light' };
     let satelliteLayer = null;
+
+    // 卫星图「隐藏路线」：切换流动虚线 + 路线名称标签的显隐
+    function applyHideRoutes() {
+        routeOverlays.forEach(o => {
+            try {
+                if (hideRoutes) o.setMap(null);
+                else o.setMap(map);
+            } catch (_) {}
+        });
+        const btn = document.getElementById('btn-hide-routes');
+        if (btn) btn.textContent = hideRoutes ? '🛣️ 显示路线' : '🚫 隐藏路线';
+    }
+    const btnHideRoutes = document.getElementById('btn-hide-routes');
+    if (btnHideRoutes) btnHideRoutes.addEventListener('click', () => { hideRoutes = !hideRoutes; applyHideRoutes(); });
+
     document.querySelectorAll('#bottom-controls button[data-layer]').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('#bottom-controls button[data-layer]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             const layer = btn.dataset.layer;
+            const visGroup = document.getElementById('route-visibility');
             if (layer === 'satellite') {
                 if (!satelliteLayer) satelliteLayer = new AMap.TileLayer.Satellite();
                 map.setLayers([new AMap.TileLayer(), satelliteLayer]);
+                if (visGroup) visGroup.style.display = '';   // 卫星图下显示「隐藏路线」开关
             } else {
-                map.setLayers([new AMap.TileLayer()]);
+                // 非卫星：移除卫星层，只走 setMapStyle（setLayers(new TileLayer()) 会覆盖成默认浅色底图，
+                // 导致「标准→暗黑」切不回去）
+                if (satelliteLayer) { try { satelliteLayer.setMap(null); } catch (_) {} satelliteLayer = null; }
+                map.setMapStyle(layerStyles[layer] || 'amap://styles/dark');
+                if (visGroup) visGroup.style.display = 'none';
+                // 离开卫星图自动恢复显示路线
+                if (hideRoutes) { hideRoutes = false; applyHideRoutes(); }
             }
-            map.setMapStyle(layerStyles[layer] || 'amap://styles/dark');
         });
     });
 
