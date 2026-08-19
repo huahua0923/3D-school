@@ -351,17 +351,6 @@
         </div>
     </div>
 
-    <!-- Location & Navigation -->
-    <div class="sb-section">
-        <div class="sb-label">📍 室内定位</div>
-        <button class="sb-btn" id="btn-my-location" style="margin-bottom:6px;">📍 设置我的位置</button>
-        <div id="location-info" style="display:none;font-size:0.72rem;color:rgba(255,255,255,0.5);">
-            <span id="loc-coords"></span>
-            <button class="sb-btn" id="btn-clear-location" style="margin-top:4px;font-size:0.7rem;">清除位置</button>
-        </div>
-        <div style="display:none;margin-top:4px;font-size:0.72rem;color:var(--accent-main);" id="nav-info"></div>
-    </div>
-
     <!-- Measurement -->
     <div class="sb-section">
         <div class="sb-label">📏 测量工具</div>
@@ -417,7 +406,6 @@
     <div id="info-images"></div>
     <div class="info-features" id="info-features"></div>
     <div class="info-action">
-        <button class="info-btn primary" id="info-btn-nav">📍 导航至此</button>
         <button class="info-btn ghost" id="info-btn-close">关闭</button>
     </div>
 </div>
@@ -996,11 +984,6 @@ class UIController {
         document.getElementById('info-desc').textContent = m.desc;
         const featEl = document.getElementById('info-features');
         featEl.innerHTML = (m.features || []).map(f => `<span class="info-feature">${f}</span>`).join('');
-        document.getElementById('info-btn-nav').style.display = '';
-        document.getElementById('info-btn-nav').onclick = () => {
-            this._onNavigate && this._onNavigate(key);
-            this.hideInfo();
-        };
         this.infoCard.classList.add('show');
         this.infoBackdrop.classList.add('show');
     }
@@ -1027,7 +1010,6 @@ class UIController {
         } else {
             imgBox.style.display = 'none';
         }
-        document.getElementById('info-btn-nav').style.display = 'none';
         this.infoCard.classList.add('show');
         this.infoBackdrop.classList.add('show');
     }
@@ -1259,7 +1241,7 @@ function initLoca(map) {
 
             const pulseLayer = new Loca.PulseLineLayer({ zIndex: 111 });
             pulseLayer.setSource(src);
-            pulseLayer.setStyle({ lineWidth: 3, altitude: 1, color: (...a) => locaColorOf(...a), headColor: '#ffffff', duration: 1800 });
+            pulseLayer.setStyle({ lineWidth: 3, altitude: 1, trailColor: (...a) => locaColorOf(...a), headColor: '#ffffff', duration: 1800 });
             loca.add(pulseLayer);
         }
 
@@ -1272,7 +1254,7 @@ function initLoca(map) {
             loca.add(layer);
         }
 
-        loca.animate();
+        loca.animate.start();
         locaContainer = loca;
     } catch (e) {
         console.error('❌ Loca 特效初始化失败', e);
@@ -1960,92 +1942,6 @@ async function boot() {
         document.addEventListener('click', (e) => { if (!e.target.closest('.sb-search')) searchResults.style.display = 'none'; });
     });
 
-    // ====== Indoor Positioning & Navigation ======
-    let myLocation = null;       // {lng, lat}
-    let locationMarker = null;   // blue dot on map
-    let navLine = null;          // route line
-
-    document.getElementById('btn-my-location').addEventListener('click', function() {
-        this.textContent = '👆 请点击地图设置位置';
-        this.style.background = '#f59e0b';
-        this.style.borderColor = '#f59e0b';
-        this.style.color = '#fff';
-    });
-
-    document.getElementById('btn-clear-location').addEventListener('click', () => {
-        myLocation = null;
-        if (locationMarker) { map.remove(locationMarker); locationMarker = null; }
-        if (navLine) { map.remove(navLine); navLine = null; }
-        document.getElementById('location-info').style.display = 'none';
-        document.getElementById('nav-info').style.display = 'none';
-        const btn = document.getElementById('btn-my-location');
-        btn.textContent = '📍 设置我的位置';
-        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
-    });
-
-    // Map click handler for location setting
-    map.on('click', (e) => {
-        const btn = document.getElementById('btn-my-location');
-        if (btn.textContent.includes('请点击')) {
-            // User is setting their location
-            myLocation = { lng: e.lnglat.lng, lat: e.lnglat.lat };
-            if (locationMarker) map.remove(locationMarker);
-            locationMarker = new AMap.Marker({
-                position: [myLocation.lng, myLocation.lat],
-                icon: new AMap.Icon({
-                    size: new AMap.Size(24, 24),
-                    image: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png',
-                    imageSize: new AMap.Size(24, 24),
-                }),
-                zIndex: 100,
-                title: '我的位置'
-            });
-            map.add(locationMarker);
-            document.getElementById('location-info').style.display = 'block';
-            document.getElementById('loc-coords').textContent = '已定位: ' + myLocation.lng.toFixed(5) + ', ' + myLocation.lat.toFixed(5);
-            btn.textContent = '📍 我的位置';
-            btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
-        }
-    });
-
-    // 导航到指定标记：绘制步行路线并计算距离/时间
-    function navigateTo(key) {
-        const info = document.getElementById('nav-info');
-        if (!myLocation) {
-            info.style.display = 'block';
-            info.textContent = '⚠️ 请先点击「设置我的位置」';
-            return;
-        }
-        const md = markerData.find(m => m.key === key);
-        if (!md || !md.lngLat) return;
-
-        // Draw walking route
-        if (navLine) map.remove(navLine);
-        navLine = new AMap.Polyline({
-            path: [[myLocation.lng, myLocation.lat], [md.lngLat[0], md.lngLat[1]]],
-            strokeColor: '#f59e0b', strokeWeight: 3, strokeOpacity: 0.8,
-            strokeStyle: 'dashed', lineJoin: 'round', zIndex: 50,
-            showDir: true,
-        });
-        map.add(navLine);
-
-        // Calculate distance
-        const dist = AMap.GeometryUtil.distance(
-            [myLocation.lng, myLocation.lat],
-            [md.lngLat[0], md.lngLat[1]]
-        );
-        const walkTime = Math.ceil(dist / 80); // 80m/min walking speed
-        info.style.display = 'block';
-        info.textContent = '📍 ' + dist.toFixed(0) + 'm · 步行约 ' + (walkTime < 1 ? '<1' : walkTime) + ' 分钟';
-    }
-    ui._onNavigate = navigateTo;
-
-    // 打开信息卡时若已定位，自动绘制路线
-    const origShowInfo = ui.showInfo;
-    ui.showInfo = function(key) {
-        origShowInfo.call(this, key);
-        if (myLocation) navigateTo(key);
-    };
     map.on('click', (e) => {
         // 刚点击了路线/区域覆盖物时，不触发这里的 hideInfo（避免信息卡闪退）
         if (performance.now() < suppressMapClickUntil) return;

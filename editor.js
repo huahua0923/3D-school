@@ -601,14 +601,21 @@
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        if (scale >= 1) { resolve(dataUrl); return; }
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(c.toDataURL('image/jpeg', 0.85));
+        try {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          if (scale >= 1) { resolve(dataUrl); return; }
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          // 保持原图格式：PNG 带透明通道，JPEG 会把透明区域压成黑底，透明底图会看起来「导入坏了」
+          const png = dataUrl.indexOf('image/png') !== -1;
+          resolve(c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.85));
+        } catch (e) {
+          console.error('⚠️ 背景图压缩失败，回退原图', e);
+          resolve(dataUrl);
+        }
       };
       img.onerror = () => resolve(dataUrl);
       img.src = dataUrl;
