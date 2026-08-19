@@ -135,6 +135,8 @@
             transition: all 0.2s; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
         }
         #btn-auto-rotate:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
+        #btn-menu { display: none; }
+        #sidebar-backdrop { display: none; }
         #bottom-controls {
             position: fixed; bottom: 24px; right: 24px; z-index: 20; display: flex; gap: 8px;
         }
@@ -304,9 +306,60 @@
 
         /* Responsive */
         @media (max-width: 768px) {
-            #sidebar { width: 200px; top: 8px; left: 8px; max-height: calc(100vh - 16px); }
-            #info-card { bottom: 100px; width: calc(100vw - 24px); }
-            #bottom-controls { bottom: 12px; right: 12px; flex-direction: column; }
+            /* 侧边栏 → 左侧抽屉（默认隐藏，汉堡菜单呼出） */
+            #sidebar {
+                top: 0; left: 0; bottom: 0;
+                width: 288px; max-width: 84vw;
+                height: 100vh; max-height: 100vh;
+                border-radius: 0 18px 18px 0;
+                transform: translateX(-105%);
+                transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+                z-index: 60;
+            }
+            #sidebar.open { transform: translateX(0); }
+            #sidebar-backdrop {
+                display: block;
+                position: fixed; inset: 0; z-index: 55;
+                background: rgba(0,0,0,0.5);
+                opacity: 0; visibility: hidden;
+                transition: opacity 0.3s ease, visibility 0.3s ease;
+            }
+            #sidebar-backdrop.show { opacity: 1; visibility: visible; }
+            #btn-menu {
+                display: flex; align-items: center; justify-content: center;
+                position: fixed; top: 12px; left: 12px; z-index: 50;
+                width: 44px; height: 44px; border-radius: 50%;
+                border: 1px solid rgba(255,255,255,0.1); background: rgba(12,18,30,0.9);
+                backdrop-filter: blur(16px); color: #fff; font-size: 1.25rem;
+                cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            }
+            #btn-auto-rotate { top: 12px; right: 12px; width: 44px; height: 44px; }
+            #weather-panel { top: 64px; right: 12px; width: 200px; }
+            /* 底部控制条 → 底部居中、可横向滚动 */
+            #bottom-controls {
+                bottom: 12px; left: 50%; right: auto;
+                transform: translateX(-50%);
+                flex-direction: row; flex-wrap: nowrap;
+                gap: 6px; max-width: calc(100vw - 24px);
+                overflow-x: auto; padding-bottom: 4px;
+                scrollbar-width: none;
+            }
+            #bottom-controls::-webkit-scrollbar { display: none; }
+            .ctrl-group { flex-shrink: 0; }
+            .ctrl-group button { padding: 9px 13px; font-size: 0.72rem; }
+            /* 信息卡 → 底部抽屉 */
+            #info-card {
+                bottom: 0; left: 0; right: 0;
+                width: 100%; max-width: 100%;
+                transform: translateY(105%);
+                border-radius: 18px 18px 0 0;
+                padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+                max-height: 72vh; overflow-y: auto;
+            }
+            #info-card.show { transform: translateY(0); }
+            #toast { bottom: 84px; }
+            #lb-prev { left: 8px; }
+            #lb-next { right: 8px; }
         }
     </style>
 </head>
@@ -389,7 +442,9 @@
 </div>
 
 <!-- ====== Top Right Controls ====== -->
+<button id="btn-menu" title="菜单" aria-label="打开菜单">☰</button>
 <button id="btn-auto-rotate" title="自动旋转">⟳</button>
+<div id="sidebar-backdrop"></div>
 
 <!-- ====== Bottom Right Controls ====== -->
 <div id="bottom-controls">
@@ -2159,6 +2214,29 @@ async function boot() {
         const btn = document.getElementById('btn-auto-rotate');
         if (autoRotate) { btn.textContent = '⏸'; btn.style.color = 'var(--accent-main)'; }
         else { btn.textContent = '⟳'; btn.style.color = ''; }
+    });
+
+    // —— 手机端侧边栏抽屉 ——
+    const sidebarEl = document.getElementById('sidebar');
+    const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+    const btnMenu = document.getElementById('btn-menu');
+    function closeSidebar() {
+        if (sidebarEl) sidebarEl.classList.remove('open');
+        if (sidebarBackdrop) sidebarBackdrop.classList.remove('show');
+    }
+    function toggleSidebar() {
+        if (sidebarEl && sidebarEl.classList.contains('open')) closeSidebar();
+        else {
+            if (sidebarEl) sidebarEl.classList.add('open');
+            if (sidebarBackdrop) sidebarBackdrop.classList.add('show');
+        }
+    }
+    if (btnMenu) btnMenu.addEventListener('click', toggleSidebar);
+    if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeSidebar);
+    // 选中方案/搜索结果后自动收起抽屉
+    document.addEventListener('click', e => {
+        if (window.innerWidth > 768) return;
+        if (e.target.closest('.plan-item') || e.target.closest('.search-item')) closeSidebar();
     });
 
     // Animation loop — update objects, trigger GLCustomLayer render
