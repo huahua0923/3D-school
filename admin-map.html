@@ -416,12 +416,12 @@ function addRoutesAreas(routes,areas,target){
     if(routes)Object.entries(routes).forEach(([n,r])=>{
         if(!r.pts||r.pts.length<2)return;
         const ov=new AMap.Polyline({strokeColor:r.color||'#3b82f6',strokeWeight:r.strokeWidth||3,strokeOpacity:r.opacity??0.9,zIndex:10,path:r.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov._speed=r.speed??0.9;ov._direction=r.direction??1;ov._desc=r.desc||'';ov._images=r.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='route';ov._name=n;ov._color=r.color||'#3b82f6';ov._stroke=r.strokeWidth||3;ov._opacity=r.opacity??0.9;ov._speed=r.speed??0.9;ov._direction=r.direction??1;ov._desc=r.desc||'';ov._images=r.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindWholeDrag(ov)}arr.push(ov);
     });
     if(areas)Object.entries(areas).forEach(([n,a])=>{
         if(!a.pts||a.pts.length<3)return;
         const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity??0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';ov._images=a.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindAreaHover(ov)}arr.push(ov);
+        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';ov._images=a.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindAreaHover(ov);bindWholeDrag(ov)}arr.push(ov);
     });
 }
 
@@ -679,6 +679,7 @@ function onDraw(e){
     ov.setMap(map);  // 确保图形在地图上显示
     ov.on('click',()=>selectOv(ov));
     if(type==='area')bindAreaHover(ov);
+    bindWholeDrag(ov);
     overlays.push(ov);
     updateUI();setTool('pointer');
     toast('✅ 已添加: '+ov._name);
@@ -727,6 +728,7 @@ function selectOv(ov){
         ov.setOptions({strokeWeight:base+3,strokeColor:'#ffd400'});
     }
     openEditorFor(ov);
+    setShapeDraggable(ov,false);   // 编辑器负责顶点编辑，选中时关整体拖拽避免冲突
     document.getElementById('btn-delete').disabled=false;
     document.getElementById('btn-duplicate').disabled=false;
     document.getElementById('status-text').textContent='已选中: '+(ov._name||'');
@@ -741,6 +743,7 @@ function deselectOv(){
         const base=selectedOv._stroke||(selectedOv instanceof AMap.Polyline?3:2);
         selectedOv.setOptions({strokeWeight:base,strokeColor:selectedOv._color});
     }
+    setShapeDraggable(selectedOv,true);   // 取消选中后恢复整体拖拽
     closeEditor();
     selectedOv=null;
     document.getElementById('btn-delete').disabled=true;
@@ -802,12 +805,27 @@ function bindMarkerDrag(ov){
     ov.on('dragstart',()=>{preEditSnapshot=captureOverlays()});
     ov.on('dragend',commitPreEdit);
 }
+// 整体拖动：区域/路线等形状可整体拖动移动（选中后由编辑器负责顶点编辑，故选中时关掉拖拽避免冲突）
+const DRAG_SHAPES=new Set(['route','area']);
+function bindWholeDrag(ov){
+    if(!ov||!ov.setOptions||!DRAG_SHAPES.has(ov._type))return;
+    ov.setOptions({draggable:true});
+    ov.on('dragstart',()=>{preEditSnapshot=captureOverlays()});
+    ov.on('dragend',commitPreEdit);
+}
+function setShapeDraggable(ov,on){
+    if(!ov||!ov.setOptions||!DRAG_SHAPES.has(ov._type))return;
+    ov.setOptions({draggable:on});
+}
 
 // Delete
 document.getElementById('btn-delete').addEventListener('click',()=>{
     if(!selectedOv)return;
-    stopReplay();saveSnapshot();map.remove(selectedOv);
-    overlays=overlays.filter(o=>o!==selectedOv);selectedOv=null;
+    const ov=selectedOv;
+    stopReplay();saveSnapshot();
+    deselectOv();                    // 先关编辑器（清掉顶点手柄/高亮），避免删除后残留图形
+    map.remove(ov);
+    overlays=overlays.filter(o=>o!==ov);
     document.getElementById('btn-delete').disabled=true;
     updateUI();toast('已删除');
 });
@@ -818,33 +836,37 @@ function duplicateOverlay(source){
     saveSnapshot();
     const type=source._type;
     const sw=source._stroke||(type==='route'?3:2),op=source._opacity;
+    const D=0.00015;   // 副本偏移（约 15 米），避免与原图完全重叠，便于选中后拖动
     let ov;
     if(type==='marker'){
         const pos=source.getPosition();
-        ov=new AMap.Marker({map,position:[pos.lng,pos.lat],content:markerContent(source._color,false),offset:new AMap.Pixel(-8,-8),title:source._name+' 副本'});
+        ov=new AMap.Marker({map,position:[pos.lng+D,pos.lat+D],content:markerContent(source._color,false),offset:new AMap.Pixel(-8,-8),title:source._name+' 副本'});
         ov._stroke=0;ov._opacity=1;
     }else if(type==='rect'){
         const b=rectBoundsOf(source);
         ov=buildRectOv(b, source._rotation||0, {_color:source._color,_stroke:sw,_opacity:op});
         ov.setMap(map);
+        try{const bb=ov.getBounds();ov.setBounds(new AMap.Bounds([bb.getSouthWest().lng+D,bb.getSouthWest().lat+D],[bb.getNorthEast().lng+D,bb.getNorthEast().lat+D]))}catch(_){}
     }else if(type==='circle'){
         const c=source.getCenter();
-        ov=new AMap.Circle({map,center:[c.lng,c.lat],radius:source.getRadius(),strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
+        ov=new AMap.Circle({map,center:[c.lng+D,c.lat+D],radius:source.getRadius(),strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
     }else if(type==='ellipse'){
         const c=source.getCenter(),r=source.getRadius();
-        ov=new AMap.Ellipse({map,center:[c.lng,c.lat],radius:Array.isArray(r)?r:[r,r],strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
+        ov=new AMap.Ellipse({map,center:[c.lng+D,c.lat+D],radius:Array.isArray(r)?r:[r,r],strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
     }else if(type==='text'){
         const pos=source.getPosition();
-        ov=new AMap.Text({map,text:source._name+' 副本',position:[pos.lng,pos.lat],anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
+        ov=new AMap.Text({map,text:source._name+' 副本',position:[pos.lng+D,pos.lat+D],anchor:'center',style:{'color':'#ffffff','font-size':'14px','background-color':'rgba(0,0,0,0.55)','padding':'3px 8px','border-radius':'4px','border':'1px solid rgba(255,255,255,0.25)'},zIndex:20});
     }else{
-        const path=source.getPath().map(p=>[p.lng,p.lat]);
+        const path=source.getPath().map(p=>[p.lng+D,p.lat+D]);
         if(type==='route')ov=new AMap.Polyline({map,path,strokeColor:source._color,strokeWeight:sw,strokeOpacity:op??0.9,zIndex:10});
         else ov=new AMap.Polygon({map,path,strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
     }
     ov._type=type;ov._name=source._name+' 副本';ov._color=source._color;ov._stroke=sw;ov._opacity=op;ov._speed=source._speed;ov._direction=source._direction;ov._desc=source._desc;ov._rotation=source._rotation||0;ov._images=(source._images||[]).slice();
     ov.on('click',()=>selectOv(ov));
     if(type==='marker')bindMarkerDrag(ov);
-    overlays.push(ov);updateUI();toast('已复制');
+    else bindWholeDrag(ov);
+    overlays.push(ov);updateUI();
+    toast('已复制（已偏移 15 米，直接拖动即可移动）');
 }
 document.getElementById('btn-duplicate').addEventListener('click',()=>{ if(selectedOv)duplicateOverlay(selectedOv); });
 

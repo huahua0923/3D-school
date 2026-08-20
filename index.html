@@ -2147,7 +2147,7 @@ document.getElementById('btn-auth').addEventListener('click', () => { viewerAuth
 
 async function refreshPlanList() {
     try {
-        const res = await fetch('/api/editor/projects', { headers: authHeaders() });
+        const res = await fetch('/api/editor/projects', { headers: authHeaders(), cache: 'no-store' });
         const json = await res.json();
         planProjects = json.data || [];
     } catch (e) {}
@@ -2177,7 +2177,7 @@ async function fetchPlanData(id) {
     if (planFetching[id]) return planFetching[id];
     planFetching[id] = (async () => {
         try {
-            const res = await fetch('/api/editor/projects/' + id, { headers: authHeaders() });
+            const res = await fetch('/api/editor/projects/' + id, { headers: authHeaders(), cache: 'no-store' });
             if (!res.ok) throw new Error('HTTP ' + res.status);
             const json = await res.json();
             return json.data;
@@ -2194,7 +2194,7 @@ async function fetchPlanData(id) {
 async function initPlanSelector(map) {
     planMap = map;
     try {
-        const res = await fetch('/api/editor/projects', { headers: authHeaders() });
+        const res = await fetch('/api/editor/projects', { headers: authHeaders(), cache: 'no-store' });
         const json = await res.json();
         planProjects = json.data || [];
     } catch (err) {
@@ -2232,6 +2232,26 @@ async function initPlanSelector(map) {
     }
 }
 
+
+// 活动方案自动刷新：后台删除/编辑路线、区域后，切回首页（focus/visibility）或定时轮询时立即同步，不保留旧数据
+async function refreshActivePlans() {
+    if (!planMap) return;
+    const ids = getActivePlanIds();
+    let changed = false;
+    for (const id of ids) {
+        try {
+            const plan = await fetchPlanData(id);
+            if (!plan) continue;
+            const prev = JSON.stringify(activePlanData[id] || null);
+            const next = JSON.stringify(plan.data || null);
+            if (prev !== next) { applyPlan(planMap, plan); changed = true; }
+        } catch (_) {}
+    }
+    if (changed) rebuildLocaIfActive();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshActivePlans(); });
+window.addEventListener('focus', refreshActivePlans);
+setInterval(refreshActivePlans, 30000);
 
 // 首页测量工具：测距 + 测面积（复用高德官方 RangingTool / MouseTool）
 function initMeasureTools(map){
