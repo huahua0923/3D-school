@@ -930,7 +930,9 @@ function deleteEditorProject(id) {
 
 // ---------- 用户管理 ----------
 
-const USER_ROLES = ['admin', 'super', 'user'];
+// 账号角色仅两类：admin（全部功能）、super（看全部数据）。
+// 「普通用户」= 未登录访客（服务端 readUser 返回 null 时按 'user' 处理），无需账号。
+const USER_ROLES = ['admin', 'super'];
 
 function getUsers() {
   const rows = db.exec('SELECT id, username, role, created_at, updated_at FROM users ORDER BY id');

@@ -863,7 +863,9 @@ async function deletePlan(id) {
 }
 
 // ---------- 用户管理（/api/users） ----------
-const ROLE_LIST = [['admin', '管理员'], ['super', '超级用户'], ['user', '普通用户']];
+// 账号仅两类：管理员（全部功能）、超级用户（看全部数据）。
+// 「普通用户」= 未登录访客，无需用户名/密码，靠方案「公开/受限」开关控制其首页可见范围。
+const ROLE_LIST = [['admin', '管理员'], ['super', '超级用户']];
 
 async function renderUsers() {
     const box = document.getElementById('form-users');
@@ -889,7 +891,7 @@ async function renderUsers() {
             <div class="form-grid">
                 <div class="form-group"><label>用户名</label><input id="new-user-name" type="text" placeholder="登录用户名" autocomplete="off" /></div>
                 <div class="form-group"><label>密码</label><input id="new-user-pwd" type="password" placeholder="至少 6 位" autocomplete="new-password" /></div>
-                <div class="form-group"><label>角色</label><select id="new-user-role">${roleOptions('user')}</select></div>
+                <div class="form-group"><label>角色</label><select id="new-user-role">${roleOptions('super')}</select></div>
             </div>
             <button class="btn-add-feat" style="margin-top:12px" onclick="addUser()">➕ 创建用户</button>
         </div>
