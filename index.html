@@ -383,6 +383,29 @@
             50% { transform: translateY(-8px); }
         }
         .loca-float { animation: loca-float 2.2s ease-in-out infinite; }
+        /* Loca 标牌点：紧凑深色玻璃胶囊（彩色发光圆点 + 白字，小尺寸高对比） */
+        .loca-sign {
+            width: 100%; height: 100%;
+            box-sizing: border-box;
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px; padding: 0 12px;
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)), rgba(13,16,28,0.88);
+            border: 1px solid rgba(255,255,255,0.16);
+            backdrop-filter: blur(6px);
+            white-space: nowrap;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.42);
+        }
+        .loca-sign-dot {
+            width: 9px; height: 9px; border-radius: 50%; flex: none;
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.14), 0 0 10px currentColor;
+        }
+        .loca-sign-text {
+            font-size: 13px; font-weight: 600; color: #fff;
+            letter-spacing: 0.4px; line-height: 1;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+            max-width: 116px; overflow: hidden; text-overflow: ellipsis;
+        }
         /* 轨迹回放：移动光点 */
         @keyframes replay-pulse {
             0%, 100% { transform: scale(1); }
@@ -1439,41 +1462,23 @@ function initLoca(map) {
             loca.add(glowLayer);
         }
 
-        // 标牌点：立牌卡片（渐变底 + 描边 + 圆角 + 阴影，参照「北京房价标牌点」demo）+ 浮动三角
+        // 标牌点：紧凑深色玻璃胶囊（彩色发光圆点 + 白字），小尺寸高对比，不再用大渐变立牌
         if (pts.length && locaEffects.markers) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
-
-            // 1) 文字主体立牌：渐变卡片，颜色随 marker
-            const bannerLayer = new Loca.ZMarkerLayer({ zIndex: 120, depth: false });
-            bannerLayer.setSource(src);
-            bannerLayer.setStyle({
-                unit: 'px', size: [300, 90], anchor: 'center', altitude: 0, rotation: 0, alwaysFront: true,
+            const signLayer = new Loca.ZMarkerLayer({ zIndex: 120, depth: false });
+            signLayer.setSource(src);
+            signLayer.setStyle({
+                unit: 'px', size: [160, 36], anchor: 'center', altitude: 0, rotation: 0, alwaysFront: true,
                 content: (...args) => {
                     const p = locaFeatureProps(...args);
                     const c = p.color || '#f59e0b';
-                    const a = hexToRgba(c, 0.55);
-                    return '<div style="box-sizing:border-box;padding:12px 24px;background:linear-gradient(90deg,' + a + ' 0%,' + c + ' 55%,rgba(0,0,0,0.35) 100%);' +
-                        'border:3px solid ' + c + ';border-radius:16px;color:#fff;font-size:26px;font-weight:700;text-align:center;white-space:nowrap;' +
-                        'letter-spacing:1px;box-shadow:0 6px 26px ' + a + ';">' + escHtml(p.name || '') + '</div>';
+                    return '<div class="loca-sign">' +
+                        '<span class="loca-sign-dot" style="background:' + c + ';color:' + c + '"></span>' +
+                        '<span class="loca-sign-text">' + escHtml(p.name || '') + '</span>' +
+                        '</div>';
                 },
             });
-            loca.add(bannerLayer);
-
-            // 2) 浮动三角：向下指示地面位置，addAnimate 上下浮动（yoyo 无限循环，增加灵动感）
-            const triLayer = new Loca.ZMarkerLayer({ zIndex: 119, depth: false });
-            triLayer.setSource(src);
-            triLayer.setStyle({
-                unit: 'px', size: [44, 44], anchor: 'center', altitude: 15, rotation: 0, alwaysFront: true,
-                content: (...args) => {
-                    const p = locaFeatureProps(...args);
-                    const c = p.color || '#f59e0b';
-                    return '<div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;">' +
-                        '<svg width="40" height="40" viewBox="0 0 24 24" style="display:block;filter:drop-shadow(0 0 12px ' + c + ');">' +
-                        '<polygon points="3,4 21,4 12,20" fill="' + c + '"/></svg></div>';
-                },
-            });
-            triLayer.addAnimate({ key: 'altitude', value: [0, 1], random: true, transform: 800, delay: 0, yoyo: true, repeat: 999999 });
-            loca.add(triLayer);
+            loca.add(signLayer);
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
