@@ -1244,7 +1244,7 @@ async function initAmap() {
         rotation: geo.rotation || 20,
         mapStyle: geo.mapStyle || 'amap://styles/dark',
         features: ['bg', 'road', 'building', 'point'],
-        showBuildingBlock: true,
+        showBuildingBlock: false,
         showLabel: true,
         buildingAnimation: true,
         // 允许 WebGL 内容
@@ -1340,7 +1340,6 @@ function displayRoutesAndAreas(map) {
 // ========================================================
 function buildLocaFeatures() {
     const features = [];
-    let routeSeq = 0;   // 路线分层序号（跨方案全局递增，保证每条路线独立海拔）
     // 数据源 = 首页勾选的「地图方案」（admin-map.html 绘制）。config.json 的旧 markers/routes/areas 已废弃。
     Object.entries(activePlanData).forEach(([, data]) => {
         if (!data || data.kind !== 'map') return;
@@ -1350,11 +1349,11 @@ function buildLocaFeatures() {
             features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [m.lng, m.lat] },
                 properties: { name, icon: m.icon || '📍', color: colorToHex(m.color, '#f59e0b') } });
         });
-        // 路线 → LineString（altIndex 用于按海拔分层）
+        // 路线 → LineString（贴地，无海拔分层）
         Object.entries(data.routes || {}).forEach(([name, r]) => {
             if (!r.pts || r.pts.length < 2) return;
             features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.pts },
-                properties: { name, color: colorToHex(r.color, '#3b82f6'), altIndex: routeSeq++ } });
+                properties: { name, color: colorToHex(r.color, '#3b82f6') } });
         });
         // 区域 → Polygon
         Object.entries(data.areas || {}).forEach(([name, a]) => {
@@ -1415,22 +1414,17 @@ function glowTexture(hex) {
     return glowTexCache[hex];
 }
 
-// 路线按海拔分层堆叠的层高（米）：重叠路线在 3D 里纵向拉开，避免互相遮挡
-const ROUTE_ALT_STEP = 12;
-
-// 取路线 feature 的分层序号 → 海拔高度（米）
-function locaAltOf(...args) {
-    for (const a of args) {
-        if (a && a.properties && a.properties.altIndex != null) return a.properties.altIndex * ROUTE_ALT_STEP;
-    }
-    return 0;
-}
-
 function initLoca(map) {
     if (!window.Loca) { toast('⚠️ Loca SDK 未加载'); return; }
     if (locaContainer) return;
     try {
         const loca = new Loca.Container({ map });
+        // 光照：参照 cadmall 剖面图案例（环境光 + 平行光 + 点光），让 3D 面图层有明暗立体感
+        loca.ambLight = { intensity: 0.2, color: '#fff' };
+        loca.dirLight = { intensity: 0.2, color: '#fff', target: [0, 0, 0], position: [0, -1, 1] };
+        let plLng = 116.3894, plLat = 39.9976;
+        try { const _mc = map.getCenter(); plLng = _mc.getLng(); plLat = _mc.getLat(); } catch (_) {}
+        loca.pointLight = { color: '#c2beff', position: [plLng, plLat, 120], intensity: 2.5, distance: 300 };
         const all = buildLocaFeatures();
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
@@ -1445,78 +1439,62 @@ function initLoca(map) {
             loca.add(glowLayer);
         }
 
-        // 标牌点：呼吸圈 + 主文字牌 + 浮动三角（颜色用 marker 自己的颜色，牌子只显示名称）
+        // 标牌点：立牌卡片（渐变底 + 描边 + 圆角 + 阴影，参照「北京房价标牌点」demo）+ 浮动三角
         if (pts.length && locaEffects.markers) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
 
-            // 1) 呼吸圈：地面扫描光圈，脉冲动画（CSS）
-            const ringLayer = new Loca.ZMarkerLayer({ zIndex: 118 });
-            ringLayer.setSource(src);
-            ringLayer.setStyle({
-                unit: 'px', size: [72, 72], anchor: 'center', altitude: 0, rotation: 0, alwaysFront: true,
-                content: (...args) => {
-                    const p = locaFeatureProps(...args);
-                    const c = p.color || '#f59e0b';
-                    return '<div style="display:flex;align-items:center;justify-content:center;width:72px;height:72px;">' +
-                        '<div class="loca-ring" style="border-color:' + c + ';box-shadow:0 0 14px ' + c + ', inset 0 0 14px ' + c + ';"></div></div>';
-                },
-            });
-            loca.add(ringLayer);
-
-            // 2) 主文字牌：只显示名称
-            const bannerLayer = new Loca.ZMarkerLayer({ zIndex: 120 });
+            // 1) 文字主体立牌：渐变卡片，颜色随 marker
+            const bannerLayer = new Loca.ZMarkerLayer({ zIndex: 120, depth: false });
             bannerLayer.setSource(src);
             bannerLayer.setStyle({
-                unit: 'px', size: [150, 40], anchor: 'center', altitude: 3, rotation: 0, alwaysFront: true,
+                unit: 'px', size: [300, 90], anchor: 'center', altitude: 0, rotation: 0, alwaysFront: true,
                 content: (...args) => {
                     const p = locaFeatureProps(...args);
                     const c = p.color || '#f59e0b';
-                    return '<div style="padding:6px 14px;border-radius:8px;background:' + c +
-                        ';color:#fff;font-size:13px;font-weight:700;box-shadow:0 2px 14px ' + c +
-                        ';white-space:nowrap;">' + escHtml(p.name || '') + '</div>';
+                    const a = hexToRgba(c, 0.55);
+                    return '<div style="box-sizing:border-box;padding:12px 24px;background:linear-gradient(90deg,' + a + ' 0%,' + c + ' 55%,rgba(0,0,0,0.35) 100%);' +
+                        'border:3px solid ' + c + ';border-radius:16px;color:#fff;font-size:26px;font-weight:700;text-align:center;white-space:nowrap;' +
+                        'letter-spacing:1px;box-shadow:0 6px 26px ' + a + ';">' + escHtml(p.name || '') + '</div>';
                 },
             });
             loca.add(bannerLayer);
 
-            // 3) 浮动三角：上下浮动（CSS 动画），增加灵动感
-            const triLayer = new Loca.ZMarkerLayer({ zIndex: 119 });
+            // 2) 浮动三角：向下指示地面位置，addAnimate 上下浮动（yoyo 无限循环，增加灵动感）
+            const triLayer = new Loca.ZMarkerLayer({ zIndex: 119, depth: false });
             triLayer.setSource(src);
             triLayer.setStyle({
-                unit: 'px', size: [22, 22], anchor: 'center', altitude: 12, rotation: 0, alwaysFront: true,
+                unit: 'px', size: [44, 44], anchor: 'center', altitude: 15, rotation: 0, alwaysFront: true,
                 content: (...args) => {
                     const p = locaFeatureProps(...args);
                     const c = p.color || '#f59e0b';
-                    return '<div class="loca-float" style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;">' +
-                        '<svg width="18" height="18" viewBox="0 0 24 24" style="display:block;filter:drop-shadow(0 0 6px ' + c + ');">' +
-                        '<polygon points="2,4 22,4 12,20" fill="' + c + '"/></svg></div>';
+                    return '<div style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;">' +
+                        '<svg width="40" height="40" viewBox="0 0 24 24" style="display:block;filter:drop-shadow(0 0 12px ' + c + ');">' +
+                        '<polygon points="3,4 21,4 12,20" fill="' + c + '"/></svg></div>';
                 },
             });
+            triLayer.addAnimate({ key: 'altitude', value: [0, 1], random: true, transform: 800, delay: 0, yoyo: true, repeat: 999999 });
             loca.add(triLayer);
         }
 
-        // 线（Line）+ 脉冲线（PulseLine）
+        // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
         if (lines.length && locaEffects.routes) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: lines } });
-            const lineLayer = new Loca.LineLayer({ zIndex: 110 });
-            lineLayer.setSource(src);
-            lineLayer.setStyle({ lineWidth: 3, altitude: (...a) => locaAltOf(...a), dash: [10, 6], color: (...a) => locaColorOf(...a) });
-            loca.add(lineLayer);
-
             const pulseLayer = new Loca.PulseLineLayer({ zIndex: 111 });
             pulseLayer.setSource(src);
-            pulseLayer.setStyle({ lineWidth: 3, altitude: (...a) => locaAltOf(...a) + 1, trailColor: (...a) => locaColorOf(...a), headColor: '#ffffff', duration: 1800 });
+            pulseLayer.setStyle({ lineWidth: 4, trailColor: (...a) => locaColorOf(...a), headColor: '#ffffff', duration: 1800 });
             loca.add(pulseLayer);
         }
 
-        // 面（Polygon）3D 挤出 + 顶部文字标注（label = AMap.LabelMarker 配置）
+        // 面（Polygon）：贴地薄片 + 高光（参照 cadmall：altitude 底高 + height 厚度 + shininess，而非悬空高墙）
         if (polys.length && locaEffects.areas) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: polys } });
-            const layer = new Loca.PolygonLayer({ zIndex: 105 });
+            const layer = new Loca.PolygonLayer({ zIndex: 105, shininess: 10 });
             layer.setSource(src);
             layer.setStyle({
                 topColor: (...a) => locaColorOf(...a, '#8889ff'),
                 sideColor: (...a) => locaColorOf(...a, '#5C57B8'),
-                altitude: 15,
+                altitude: 0,
+                height: 4,
                 label: {
                     text: {
                         content: (...args) => locaFeatureProps(...args).name || '',
@@ -1524,7 +1502,7 @@ function initLoca(map) {
                         style: { fontSize: 12, fontWeight: 'bold', fillColor: '#ffffff', strokeColor: '#000000', strokeWidth: 2, padding: '2, 5' },
                     },
                 },
-                labelAltitude: 0,
+                labelAltitude: 5,
             });
             loca.add(layer);
         }

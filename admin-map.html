@@ -51,6 +51,10 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
 .layer-copy{color:rgba(255,255,255,0.5);font-size:0.75rem;padding:2px 5px;border-radius:3px;cursor:pointer}
 .layer-copy:hover{color:#fff;background:rgba(255,255,255,0.08)}
 .layer-time{font-size:0.66rem;color:rgba(255,255,255,0.35);flex-shrink:0;font-variant-numeric:tabular-nums}
+.layer-replay{color:rgba(255,255,255,0.45);font-size:0.8rem;padding:2px 5px;border-radius:3px;cursor:pointer;flex-shrink:0}
+.layer-replay:hover{color:#ffd400;background:rgba(255,212,0,0.12)}
+.replay-dot{width:18px;height:18px;border-radius:50%;background:#ffd400;box-shadow:0 0 12px #ffd400;animation:replay-pulse 1.2s ease-in-out infinite}
+@keyframes replay-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.6);opacity:0.6}}
 
 /* Props inputs */
 .prop-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
@@ -802,7 +806,7 @@ function bindMarkerDrag(ov){
 // Delete
 document.getElementById('btn-delete').addEventListener('click',()=>{
     if(!selectedOv)return;
-    saveSnapshot();map.remove(selectedOv);
+    stopReplay();saveSnapshot();map.remove(selectedOv);
     overlays=overlays.filter(o=>o!==selectedOv);selectedOv=null;
     document.getElementById('btn-delete').disabled=true;
     updateUI();toast('已删除');
@@ -1079,8 +1083,9 @@ document.getElementById('color-presets').addEventListener('click',e=>{
 document.getElementById('layer-list').addEventListener('click',e=>{
     const row=e.target.closest('.layer-row');if(!row)return;
     if(e.target.classList.contains('layer-vis')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){const o=overlays[idx];o._hidden=!o._hidden;if(o._hidden){o.hide()}else{o.show()}updateUI()}return}
+    if(e.target.classList.contains('layer-replay')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length)playRoute(overlays[idx]);return}
     if(e.target.classList.contains('layer-copy')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length)duplicateOverlay(overlays[idx]);return}
-    if(e.target.classList.contains('layer-del')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){saveSnapshot();map.remove(overlays[idx]);overlays.splice(idx,1);deselectOv();updateUI();toast('已删除')}return}
+    if(e.target.classList.contains('layer-del')){const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length){stopReplay();saveSnapshot();map.remove(overlays[idx]);overlays.splice(idx,1);deselectOv();updateUI();toast('已删除')}return}
     const idx=parseInt(row.dataset.index);if(idx>=0&&idx<overlays.length)selectOv(overlays[idx]);
 });
 
@@ -1271,9 +1276,11 @@ function updateUI(){
             if(o._hidden)dot.style.opacity='0.3';
             const name=document.createElement('span');name.className='layer-name';name.textContent=o._name||'';if(o._hidden)name.style.opacity='0.4';
             const vis=document.createElement('span');vis.className='layer-vis';vis.textContent=o._hidden?'👁‍🗗':'👁';
+            row.appendChild(dot);row.appendChild(name);row.appendChild(vis);
+            if(o._type==='route'){const rp=document.createElement('span');rp.className='layer-replay';rp.dataset.index=i;rp.textContent='▶';rp.title='轨迹回放';row.appendChild(rp);}
             const cp=document.createElement('span');cp.className='layer-copy';cp.textContent='⧉';cp.title='复制图层';
             const del=document.createElement('span');del.className='layer-del';del.textContent='✕';
-            row.appendChild(dot);row.appendChild(name);row.appendChild(vis);row.appendChild(cp);row.appendChild(del);
+            row.appendChild(cp);row.appendChild(del);
             list.appendChild(row);
         });
     }
@@ -1286,6 +1293,87 @@ function updateUI(){
 }
 
 function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e.style.opacity='1';setTimeout(()=>{e.style.opacity='0'},2000)}
+
+// ========================================================
+// 轨迹回放：逐条播放路线（图层列表每条路线一个 ▶，点击播放 / 再点停止）
+// ========================================================
+let replay = { active: false, raf: null, marker: null, trail: null, route: null };
+
+function _distMeters(a, b) {
+    const R = 6371000, k = R * Math.PI / 180;
+    const dx = (b[0] - a[0]) * k * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180);
+    const dy = (b[1] - a[1]) * k;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+function stopReplay() {
+    replay.active = false;
+    if (replay.raf) { cancelAnimationFrame(replay.raf); replay.raf = null; }
+    if (replay.marker) { try { replay.marker.setMap(null); } catch (_) {} replay.marker = null; }
+    if (replay.trail) { try { replay.trail.setMap(null); } catch (_) {} replay.trail = null; }
+    replay.route = null;
+    updateReplayUI();
+}
+
+function playRoute(ov) {
+    if (!ov || ov._type !== 'route' || !ov.getPath) return;
+    // 再次点击同一条 → 停止
+    if (replay.active && replay.route === ov) { stopReplay(); return; }
+    let pts = ov.getPath().map(p => [p.lng, p.lat]);
+    if (pts.length < 2) { toast('⚠️ 路线点不足'); return; }
+    if (ov._direction === -1) pts = pts.slice().reverse();
+    stopReplay();
+
+    const segments = []; let total = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+        const len = _distMeters(pts[i], pts[i + 1]);
+        total += len;
+        segments.push({ p0: pts[i], p1: pts[i + 1], len, cum: total });
+    }
+    if (!segments.length || total <= 0) { toast('⚠️ 路线无有效点'); return; }
+
+    const color = ov._color || '#ffd400';
+    replay.marker = new AMap.Marker({
+        map, position: segments[0].p0,
+        content: '<div class="replay-dot" style="background:' + color + ';box-shadow:0 0 12px ' + color + ';"></div>',
+        offset: new AMap.Pixel(-9, -9), zIndex: 300,
+    });
+    replay.trail = new AMap.Polyline({ map, path: [segments[0].p0], strokeColor: color, strokeWeight: 4, strokeOpacity: 0.85, zIndex: 299 });
+    replay.route = ov;
+    replay.active = true;
+    updateReplayUI();
+
+    const speed = Math.max(0.2, Number(ov._speed) || 0.9);
+    const DURATION = Math.max(5000, Math.min(30000, total * 0.35 / speed));
+    const t0 = performance.now();
+    const step = (now) => {
+        if (!replay.active) return;
+        const t = Math.min(1, (now - t0) / DURATION);
+        const cut = t * total;
+        let pos = null;
+        for (const s of segments) { if (cut <= s.cum) { const f = s.len ? (cut - (s.cum - s.len)) / s.len : 0; pos = [s.p0[0] + (s.p1[0] - s.p0[0]) * f, s.p0[1] + (s.p1[1] - s.p0[1]) * f]; break; } }
+        if (!pos) pos = segments[segments.length - 1].p1;
+        replay.marker.setPosition(pos);
+        const trailPts = [];
+        for (const s of segments) { if (s.cum < cut) trailPts.push(s.p0); }
+        trailPts.push(pos);
+        replay.trail.setPath(trailPts);
+        if (t >= 1) { stopReplay(); return; }
+        replay.raf = requestAnimationFrame(step);
+    };
+    replay.raf = requestAnimationFrame(step);
+}
+
+function updateReplayUI() {
+    document.querySelectorAll('#layer-list .layer-replay').forEach(b => {
+        const idx = parseInt(b.dataset.index, 10);
+        const ov = overlays[idx];
+        const playing = replay.active && replay.route === ov;
+        b.textContent = playing ? '⏹' : '▶';
+        b.style.color = playing ? '#ef4444' : 'rgba(255,255,255,0.45)';
+        b.title = playing ? '停止回放' : '轨迹回放';
+    });
+}
 
 initMap().catch(err=>{document.getElementById('map-wrap').textContent='地图加载失败: '+err.message});
 })();
