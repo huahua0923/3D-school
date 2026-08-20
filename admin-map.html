@@ -440,7 +440,7 @@ function addRectsCircles(rects,circles,target){
     if(rects)Object.entries(rects).forEach(([n,r])=>{
         if(!r.bounds||!r.bounds[0]||!r.bounds[1])return;
         const ov=buildRectOv(r.bounds, r.rotation||0, {_color:r.color||'#8b5cf6',_stroke:r.strokeWidth||2,_opacity:r.opacity??0.2});
-        ov.setMap(map);ov._type='rect';ov._name=n;ov._color=r.color||'#8b5cf6';ov._stroke=r.strokeWidth||2;ov._opacity=r.opacity??0.2;ov._desc=r.desc||'';ov._images=r.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='rect';ov._name=n;ov._color=r.color||'#8b5cf6';ov._stroke=r.strokeWidth||2;ov._opacity=r.opacity??0.2;ov._desc=r.desc||'';ov._images=r.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindWholeDrag(ov)}arr.push(ov);
     });
     if(circles)Object.entries(circles).forEach(([n,c])=>{
         if(!c.center||c.radius==null)return;
@@ -646,6 +646,7 @@ function onDraw(e){
         ov.setMap(map);
         ov._type='rect';ov._name='画框 '+cnt;ov._color=TYPE_COLOR.rect;ov._stroke=2;ov._opacity=0.2;ov._speed=0.9;ov._direction=1;ov._desc='';ov._images=[];
         ov.on('click',()=>selectOv(ov));
+        bindWholeDrag(ov);
         overlays.push(ov);
         updateUI();setTool('pointer');
         toast('✅ 已添加: '+ov._name);
@@ -728,7 +729,7 @@ function selectOv(ov){
         ov.setOptions({strokeWeight:base+3,strokeColor:'#ffd400'});
     }
     openEditorFor(ov);
-    setShapeDraggable(ov,false);   // 编辑器负责顶点编辑，选中时关整体拖拽避免冲突
+    if(activeEditor)setShapeDraggable(ov,false);   // 只有开了编辑器(顶点编辑)才关整体拖拽；画框无编辑器，选中仍可拖
     document.getElementById('btn-delete').disabled=false;
     document.getElementById('btn-duplicate').disabled=false;
     document.getElementById('status-text').textContent='已选中: '+(ov._name||'');
@@ -806,12 +807,27 @@ function bindMarkerDrag(ov){
     ov.on('dragend',commitPreEdit);
 }
 // 整体拖动：区域/路线等形状可整体拖动移动（选中后由编辑器负责顶点编辑，故选中时关掉拖拽避免冲突）
-const DRAG_SHAPES=new Set(['route','area']);
+const DRAG_SHAPES=new Set(['route','area','rect']);   // 画框(rect)是旋转矩形(AMap.Polygon)，同样支持整体拖动
 function bindWholeDrag(ov){
     if(!ov||!ov.setOptions||!DRAG_SHAPES.has(ov._type))return;
     ov.setOptions({draggable:true});
-    ov.on('dragstart',()=>{preEditSnapshot=captureOverlays()});
-    ov.on('dragend',commitPreEdit);
+    ov.on('dragstart',()=>{
+        preEditSnapshot=captureOverlays();
+        // 记录拖动前路径：画框(rect)以 _bounds 为持久化源，dragend 需据此同步平移量
+        ov._dragPath0 = ov.getPath ? ov.getPath().map(p=>[p.lng,p.lat]) : null;
+    });
+    ov.on('dragend',()=>{
+        if(ov._type==='rect' && ov._dragPath0 && ov._bounds && ov.getPath){
+            const np=ov.getPath().map(p=>[p.lng,p.lat]);
+            if(np.length && ov._dragPath0.length){
+                const dx=np[0][0]-ov._dragPath0[0][0];
+                const dy=np[0][1]-ov._dragPath0[0][1];
+                ov._bounds=[[ov._bounds[0][0]+dx,ov._bounds[0][1]+dy],[ov._bounds[1][0]+dx,ov._bounds[1][1]+dy]];
+            }
+        }
+        ov._dragPath0=null;
+        commitPreEdit();
+    });
 }
 function setShapeDraggable(ov,on){
     if(!ov||!ov.setOptions||!DRAG_SHAPES.has(ov._type))return;
