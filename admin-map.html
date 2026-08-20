@@ -292,6 +292,7 @@ function replaceRectOv(ov, rotation){
     nv._rotation=rotation;
     nv.setMap(map);
     nv.on('click',()=>selectOv(nv));
+    bindWholeDrag(nv);
     if(idx>=0)overlays[idx]=nv; else overlays.push(nv);
     map.remove(ov);
     return nv;
@@ -359,6 +360,8 @@ function restoreSnapshot(snap){
         ov._type=d._type;ov._name=d._name;ov._color=d._color;ov._stroke=d._stroke;ov._opacity=d._opacity;ov._speed=d._speed;ov._direction=d._direction;ov._desc=d._desc;ov._rotation=d._rotation||0;ov._images=d._images||[];
         ov.on('click',()=>selectOv(ov));
         if(d._type==='marker')bindMarkerDrag(ov);
+        else bindWholeDrag(ov);
+        if(d._type==='area')bindAreaHover(ov);
         overlays.push(ov);
     });
 }
@@ -860,9 +863,9 @@ function duplicateOverlay(source){
         ov._stroke=0;ov._opacity=1;
     }else if(type==='rect'){
         const b=rectBoundsOf(source);
-        ov=buildRectOv(b, source._rotation||0, {_color:source._color,_stroke:sw,_opacity:op});
+        const nb=[[b[0][0]+D,b[0][1]+D],[b[1][0]+D,b[1][1]+D]];   // 直接偏移轴对齐包围盒，旋转矩形也能正确偏移
+        ov=buildRectOv(nb, source._rotation||0, {_color:source._color,_stroke:sw,_opacity:op});
         ov.setMap(map);
-        try{const bb=ov.getBounds();ov.setBounds(new AMap.Bounds([bb.getSouthWest().lng+D,bb.getSouthWest().lat+D],[bb.getNorthEast().lng+D,bb.getNorthEast().lat+D]))}catch(_){}
     }else if(type==='circle'){
         const c=source.getCenter();
         ov=new AMap.Circle({map,center:[c.lng+D,c.lat+D],radius:source.getRadius(),strokeColor:source._color,strokeWeight:sw,fillColor:source._color,fillOpacity:op??0.2,zIndex:5});
@@ -881,6 +884,7 @@ function duplicateOverlay(source){
     ov.on('click',()=>selectOv(ov));
     if(type==='marker')bindMarkerDrag(ov);
     else bindWholeDrag(ov);
+    if(type==='area')bindAreaHover(ov);
     overlays.push(ov);updateUI();
     toast('已复制（已偏移 15 米，直接拖动即可移动）');
 }
