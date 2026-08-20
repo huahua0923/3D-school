@@ -494,9 +494,7 @@
         <button class="sb-btn" id="btn-loca-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🎆 开启 3D 特效</button>
         <div id="loca-effects" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">
             <button class="sb-btn active" data-effect="routes" style="flex:1;font-size:0.66rem;padding:5px 4px;">🛣️ 路线</button>
-            <button class="sb-btn active" data-effect="markers" style="flex:1;font-size:0.66rem;padding:5px 4px;">📍 标牌</button>
             <button class="sb-btn active" data-effect="breathing" style="flex:1;font-size:0.66rem;padding:5px 4px;">💨 呼吸点</button>
-            <button class="sb-btn active" data-effect="areas" style="flex:1;font-size:0.66rem;padding:5px 4px;">🗺️ 区域</button>
         </div>
         <button class="sb-btn" id="btn-replay" style="width:100%;font-size:0.72rem;padding:6px 8px;margin-top:6px;">▶ 轨迹回放</button>
     </div>
@@ -1007,7 +1005,7 @@ let measureOverlays = [];           // 测量产生的临时覆盖物（清除�
 let locaContainer = null;           // Loca.Container 实例
 let locaActive = false;             // 特效总开关状态
 // 每个特效独立开关（选择性展示）：routes=路线分层 / markers=标牌点 / breathing=呼吸点 / areas=区域标注
-let locaEffects = { routes: true, markers: true, breathing: true, areas: true };
+let locaEffects = { routes: true, markers: false, breathing: true, areas: false };   // 标牌/区域立体暂时隐藏（需要时改回 true 即可）
 
 // —— 轨迹回放：移动光点沿路线行进 ——
 let replayActive = false;
