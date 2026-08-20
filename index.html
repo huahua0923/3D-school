@@ -383,28 +383,31 @@
             50% { transform: translateY(-8px); }
         }
         .loca-float { animation: loca-float 2.2s ease-in-out infinite; }
-        /* Loca 标牌点：紧凑深色玻璃胶囊（彩色发光圆点 + 白字，小尺寸高对比） */
+        /* Loca 标牌点：路牌样式（实色牌面 + 白字 + 底部尖角），颜色随 marker */
         .loca-sign {
             width: 100%; height: 100%;
-            box-sizing: border-box;
-            display: flex; align-items: center; justify-content: center;
-            gap: 8px; padding: 0 12px;
-            border-radius: 18px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)), rgba(13,16,28,0.88);
-            border: 1px solid rgba(255,255,255,0.16);
-            backdrop-filter: blur(6px);
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+        }
+        .loca-sign-board {
+            max-width: 120px;
+            padding: 5px 11px;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            line-height: 1.25;
             white-space: nowrap;
-            box-shadow: 0 4px 14px rgba(0,0,0,0.42);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -1px 0 rgba(0,0,0,0.18);
         }
-        .loca-sign-dot {
-            width: 9px; height: 9px; border-radius: 50%; flex: none;
-            box-shadow: 0 0 0 3px rgba(255,255,255,0.14), 0 0 10px currentColor;
-        }
-        .loca-sign-text {
-            font-size: 13px; font-weight: 600; color: #fff;
-            letter-spacing: 0.4px; line-height: 1;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-            max-width: 116px; overflow: hidden; text-overflow: ellipsis;
+        .loca-sign-tail {
+            width: 0; height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 7px solid #3D7DFF;
         }
         /* 轨迹回放：移动光点 */
         @keyframes replay-pulse {
@@ -1462,19 +1465,19 @@ function initLoca(map) {
             loca.add(glowLayer);
         }
 
-        // 标牌点：紧凑深色玻璃胶囊（彩色发光圆点 + 白字），小尺寸高对比，不再用大渐变立牌
+        // 标牌点：路牌样式（实色牌面 + 白字 + 底部尖角，颜色随 marker）
         if (pts.length && locaEffects.markers) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
             const signLayer = new Loca.ZMarkerLayer({ zIndex: 120, depth: false });
             signLayer.setSource(src);
             signLayer.setStyle({
-                unit: 'px', size: [160, 36], anchor: 'center', altitude: 0, rotation: 0, alwaysFront: true,
+                unit: 'px', size: [120, 40], anchor: 'bottom-center', altitude: 0, rotation: 0, alwaysFront: true,
                 content: (...args) => {
                     const p = locaFeatureProps(...args);
-                    const c = p.color || '#f59e0b';
+                    const c = p.color || '#3D7DFF';
                     return '<div class="loca-sign">' +
-                        '<span class="loca-sign-dot" style="background:' + c + ';color:' + c + '"></span>' +
-                        '<span class="loca-sign-text">' + escHtml(p.name || '') + '</span>' +
+                        '<div class="loca-sign-board" style="background:' + c + '">' + escHtml(p.name || '') + '</div>' +
+                        '<div class="loca-sign-tail" style="border-top-color:' + c + '"></div>' +
                         '</div>';
                 },
             });
