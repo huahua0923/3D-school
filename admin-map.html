@@ -417,7 +417,7 @@ function addRoutesAreas(routes,areas,target){
     if(areas)Object.entries(areas).forEach(([n,a])=>{
         if(!a.pts||a.pts.length<3)return;
         const ov=new AMap.Polygon({strokeColor:a.color||'#10b981',strokeWeight:a.strokeWidth||2,fillColor:a.color||'#10b981',fillOpacity:a.opacity??0.2,zIndex:5,path:a.pts.map(p=>[p[0],p[1]])});
-        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';ov._images=a.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='area';ov._name=n;ov._color=a.color||'#10b981';ov._stroke=a.strokeWidth||2;ov._opacity=a.opacity??0.2;ov._desc=a.desc||'';ov._images=a.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindAreaHover(ov)}arr.push(ov);
     });
 }
 
@@ -674,6 +674,7 @@ function onDraw(e){
     ov._images=[];
     ov.setMap(map);  // 确保图形在地图上显示
     ov.on('click',()=>selectOv(ov));
+    if(type==='area')bindAreaHover(ov);
     overlays.push(ov);
     updateUI();setTool('pointer');
     toast('✅ 已添加: '+ov._name);
@@ -751,7 +752,12 @@ function openEditorFor(ov){
     // 编辑前快照：真正发生编辑时才提交到历史，避免「只选中不改」污染撤销栈
     preEditSnapshot=captureOverlays();
     let ed=null;
-    if(ov._type==='area'&&AMap.PolygonEditor)ed=new AMap.PolygonEditor(map,ov);
+    if(ov._type==='area'&&AMap.PolygonEditor){
+        ed=new AMap.PolygonEditor(map,ov);
+        // 吸附：编辑时顶点自动吸附到其它区域多边形的边/顶点，避免重叠或留缝
+        const others=overlays.filter(o=>o!==ov&&o._type==='area');
+        if(others.length&&typeof ed.addAdsorbPolygons==='function'){try{ed.addAdsorbPolygons(others)}catch(_){}}
+    }
     else if(ov._type==='route'&&AMap.PolylineEditor)ed=new AMap.PolylineEditor(map,ov);
     else if(ov._type==='circle'&&AMap.CircleEditor)ed=new AMap.CircleEditor(map,ov);
     else if(ov._type==='rect'&&!ov._rotation&&AMap.RectangleEditor)ed=new AMap.RectangleEditor(map,ov);
@@ -778,6 +784,13 @@ function commitPreEdit(){
     historyIdx=history.length-1;
     preEditSnapshot=null;
     updateUI();
+}
+// 多边形 hover 高亮：鼠标悬停时提高填充透明度 + 加粗描边，移出还原
+function bindAreaHover(ov){
+    if(!ov||!ov.setOptions)return;
+    const base=ov._opacity??0.2;
+    ov.on('mouseover',()=>{if(currentTool!=='pointer'||selectedOv===ov)return;ov.setOptions({fillOpacity:Math.min(0.6,base+0.35),strokeWeight:(ov._stroke||2)+1})});
+    ov.on('mouseout',()=>{if(selectedOv===ov)return;ov.setOptions({fillOpacity:base,strokeWeight:ov._stroke||2})});
 }
 function bindMarkerDrag(ov){
     if(!ov||!ov.setDraggable)return;
