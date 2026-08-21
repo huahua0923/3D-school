@@ -448,7 +448,7 @@ function addRectsCircles(rects,circles,target){
     if(circles)Object.entries(circles).forEach(([n,c])=>{
         if(!c.center||c.radius==null)return;
         const ov=new AMap.Circle({center:c.center,radius:c.radius,strokeColor:c.color||'#ec4899',strokeWeight:c.strokeWidth||2,fillColor:c.color||'#ec4899',fillOpacity:c.opacity??0.2,zIndex:5});
-        ov.setMap(map);ov._type='circle';ov._name=n;ov._color=c.color||'#ec4899';ov._stroke=c.strokeWidth||2;ov._opacity=c.opacity??0.2;ov._desc=c.desc||'';ov._images=c.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='circle';ov._name=n;ov._color=c.color||'#ec4899';ov._stroke=c.strokeWidth||2;ov._opacity=c.opacity??0.2;ov._desc=c.desc||'';ov._images=c.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindWholeDrag(ov)}arr.push(ov);
     });
 }
 
@@ -458,7 +458,7 @@ function addEllipsesTexts(ellipses,texts,target){
         if(!e.center)return;
         const rr=Array.isArray(e.radius)?e.radius:[e.radius||80,e.radius||80];
         const ov=new AMap.Ellipse({center:e.center,radius:rr,strokeColor:e.color||'#06b6d4',strokeWeight:e.strokeWidth||2,fillColor:e.color||'#06b6d4',fillOpacity:e.opacity??0.2,zIndex:5});
-        ov.setMap(map);ov._type='ellipse';ov._name=n;ov._color=e.color||'#06b6d4';ov._stroke=e.strokeWidth||2;ov._opacity=e.opacity??0.2;ov._desc=e.desc||'';ov._images=e.images||[];if(arr===overlays)ov.on('click',()=>selectOv(ov));arr.push(ov);
+        ov.setMap(map);ov._type='ellipse';ov._name=n;ov._color=e.color||'#06b6d4';ov._stroke=e.strokeWidth||2;ov._opacity=e.opacity??0.2;ov._desc=e.desc||'';ov._images=e.images||[];if(arr===overlays){ov.on('click',()=>selectOv(ov));bindWholeDrag(ov)}arr.push(ov);
     });
     if(texts)Object.entries(texts).forEach(([n,t])=>{
         if(t.lng==null||t.lat==null)return;
@@ -809,8 +809,8 @@ function bindMarkerDrag(ov){
     ov.on('dragstart',()=>{preEditSnapshot=captureOverlays()});
     ov.on('dragend',commitPreEdit);
 }
-// 整体拖动：区域/路线等形状可整体拖动移动（选中后由编辑器负责顶点编辑，故选中时关掉拖拽避免冲突）
-const DRAG_SHAPES=new Set(['route','area','rect']);   // 画框(rect)是旋转矩形(AMap.Polygon)，同样支持整体拖动
+// 整体拖动：区域/路线/画框/圆/椭圆等形状可整体拖动移动（选中后由编辑器负责顶点编辑，故选中时关掉拖拽避免冲突）
+const DRAG_SHAPES=new Set(['route','area','rect','circle','ellipse']);   // 圆/椭圆的中心点即 getCenter()，持久化时读活值，无需像 rect 那样同步 _bounds
 function bindWholeDrag(ov){
     if(!ov||!ov.setOptions||!DRAG_SHAPES.has(ov._type))return;
     ov.setOptions({draggable:true});
