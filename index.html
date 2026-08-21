@@ -368,58 +368,6 @@
             #lb-next { right: 8px; }
             .modal-box { min-width: auto; width: calc(100vw - 48px); padding: 22px 20px; }
         }
-        /* Loca 标牌点特效：呼吸圈 + 浮动三角（颜色由 marker 自身颜色内联注入） */
-        @keyframes loca-ring-pulse {
-            0% { transform: scale(0.4); opacity: 0.85; }
-            100% { transform: scale(1.5); opacity: 0; }
-        }
-        .loca-ring {
-            width: 46px; height: 46px; border-radius: 50%;
-            border: 2px solid #f59e0b;
-            animation: loca-ring-pulse 1.8s ease-out infinite;
-        }
-        @keyframes loca-float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-8px); }
-        }
-        .loca-float { animation: loca-float 2.2s ease-in-out infinite; }
-        /* Loca 标牌点：路牌样式（实色牌面 + 白字 + 底部尖角），颜色随 marker */
-        .loca-sign {
-            width: 100%; height: 100%;
-            display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
-            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
-        }
-        .loca-sign-board {
-            max-width: 120px;
-            padding: 5px 11px;
-            border-radius: 4px;
-            color: #fff;
-            font-size: 13px;
-            font-weight: 600;
-            letter-spacing: 1px;
-            line-height: 1.25;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -1px 0 rgba(0,0,0,0.18);
-        }
-        .loca-sign-tail {
-            width: 0; height: 0;
-            border-left: 5px solid transparent;
-            border-right: 5px solid transparent;
-            border-top: 7px solid #3D7DFF;
-        }
-        /* 轨迹回放：移动光点 */
-        @keyframes replay-pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.3); }
-        }
-        .replay-dot {
-            width: 20px; height: 20px; border-radius: 50%;
-            background: #ffd400; border: 2px solid #fff;
-            box-shadow: 0 0 12px #ffd400, 0 0 26px rgba(255, 212, 0, 0.6);
-            animation: replay-pulse 1s ease-in-out infinite;
-        }
     </style>
 </head>
 <body>
@@ -1000,17 +948,11 @@ let measureRanging = null;          // AMap.RangingTool（测距）
 let measureMode = null;             // 'distance' | 'area' | null
 let measureOverlays = [];           // 测量产生的临时覆盖物（清除用）
 
-// —— Loca v2 可视化特效：标牌(ZMarker) + 线(Line) + 面(Polygon) + 脉冲线(PulseLine) ——
+// —— Loca v2 可视化特效：呼吸点(Scatter) + 脉冲线(PulseLine) ——
 let locaContainer = null;           // Loca.Container 实例
 let locaActive = false;             // 特效总开关状态
-// 每个特效独立开关（选择性展示）：routes=路线分层 / markers=标牌点 / breathing=呼吸点 / areas=区域标注
-let locaEffects = { routes: true, markers: false, breathing: true, areas: false };   // 标牌/区域立体暂时隐藏（需要时改回 true 即可）
-
-// —— 轨迹回放：移动光点沿路线行进 ——
-let replayActive = false;
-let replayRaf = null;
-let replayMarker = null;
-let replayTrail = null;
+// 每个特效独立开关（选择性展示）：routes=路线分层 / breathing=呼吸点
+let locaEffects = { routes: true, breathing: true };
 
 function toast(msg){
     const el = document.getElementById('toast');
@@ -1358,7 +1300,7 @@ function displayRoutesAndAreas(map) {
 }
 
 // ========================================================
-// Loca v2 可视化特效：标牌(ZMarker) + 线(Line) + 面(Polygon) + 脉冲线(PulseLine)
+// Loca v2 可视化特效：呼吸点(Scatter) + 脉冲线(PulseLine)
 // 叠加在现有 2D 覆盖物之上，由开关控制；Loca 与 GLCustomLayer 共用 WebGL 上下文
 // ========================================================
 function buildLocaFeatures() {
@@ -1377,12 +1319,6 @@ function buildLocaFeatures() {
             if (!r.pts || r.pts.length < 2) return;
             features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.pts },
                 properties: { name, color: colorToHex(r.color, '#3b82f6') } });
-        });
-        // 区域 → Polygon
-        Object.entries(data.areas || {}).forEach(([name, a]) => {
-            if (!a.pts || a.pts.length < 3) return;
-            features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [a.pts] },
-                properties: { name, color: colorToHex(a.color, '#10b981') } });
         });
     });
     return features;
@@ -1405,11 +1341,6 @@ function locaFeatureProps(...args) {
         if (a && a.properties) return a.properties;
     }
     return {};
-}
-
-// HTML 转义：标牌 content 直接拼用户输入的 name，防 XSS
-function escHtml(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // hex → rgba() 字符串（canvas 渐变用）
@@ -1451,7 +1382,6 @@ function initLoca(map) {
         const all = buildLocaFeatures();
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
-        const polys = all.filter(f => f.geometry.type === 'Polygon');
 
         // 呼吸点：地面发光光环（ScatterLayer 贴图动画，参照深圳路口延误指数 demo）
         if (pts.length && locaEffects.breathing) {
@@ -1462,25 +1392,6 @@ function initLoca(map) {
             loca.add(glowLayer);
         }
 
-        // 标牌点：路牌样式（实色牌面 + 白字 + 底部尖角，颜色随 marker）
-        if (pts.length && locaEffects.markers) {
-            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
-            const signLayer = new Loca.ZMarkerLayer({ zIndex: 120, depth: false });
-            signLayer.setSource(src);
-            signLayer.setStyle({
-                unit: 'px', size: [120, 40], anchor: 'bottom-center', altitude: 0, rotation: 0, alwaysFront: true,
-                content: (...args) => {
-                    const p = locaFeatureProps(...args);
-                    const c = p.color || '#3D7DFF';
-                    return '<div class="loca-sign">' +
-                        '<div class="loca-sign-board" style="background:' + c + '">' + escHtml(p.name || '') + '</div>' +
-                        '<div class="loca-sign-tail" style="border-top-color:' + c + '"></div>' +
-                        '</div>';
-                },
-            });
-            loca.add(signLayer);
-        }
-
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
         if (lines.length && locaEffects.routes) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: lines } });
@@ -1488,28 +1399,6 @@ function initLoca(map) {
             pulseLayer.setSource(src);
             pulseLayer.setStyle({ lineWidth: 4, trailColor: (...a) => locaColorOf(...a), headColor: '#ffffff', duration: 1800 });
             loca.add(pulseLayer);
-        }
-
-        // 面（Polygon）：贴地薄片 + 高光（参照 cadmall：altitude 底高 + height 厚度 + shininess，而非悬空高墙）
-        if (polys.length && locaEffects.areas) {
-            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: polys } });
-            const layer = new Loca.PolygonLayer({ zIndex: 105, shininess: 10 });
-            layer.setSource(src);
-            layer.setStyle({
-                topColor: (...a) => locaColorOf(...a, '#8889ff'),
-                sideColor: (...a) => locaColorOf(...a, '#5C57B8'),
-                altitude: 0,
-                height: 4,
-                label: {
-                    text: {
-                        content: (...args) => locaFeatureProps(...args).name || '',
-                        offset: [0, 0],
-                        style: { fontSize: 12, fontWeight: 'bold', fillColor: '#ffffff', strokeColor: '#000000', strokeWidth: 2, padding: '2, 5' },
-                    },
-                },
-                labelAltitude: 5,
-            });
-            loca.add(layer);
         }
 
         loca.animate.start();
@@ -1555,104 +1444,6 @@ function rebuildLocaIfActive() {
     if (!locaActive || !planMap) return;
     destroyLoca();
     initLoca(planMap);
-}
-
-// ========================================================
-// 轨迹回放：沿路线路径移动光点，模拟访客行进
-// ========================================================
-function distMeters(a, b) {
-    const R = 6371000, k = R * Math.PI / 180;
-    const dx = (b[0] - a[0]) * k * Math.cos((a[1] + b[1]) / 2 * Math.PI / 180);
-    const dy = (b[1] - a[1]) * k;
-    return Math.sqrt(dx * dx + dy * dy);
-}
-
-// 收集当前已勾选方案里的全部路线
-function collectReplayRoutes() {
-    const tracks = [];
-    Object.values(activePlanData).forEach(data => {
-        if (!data || data.kind !== 'map' || !data.routes) return;
-        Object.entries(data.routes).forEach(([name, r]) => {
-            if (r.pts && r.pts.length >= 2) tracks.push({ name, pts: r.pts, color: colorToHex(r.color, '#3b82f6') });
-        });
-    });
-    return tracks;
-}
-
-// 计算距起点 dist 米处的经纬度点（沿折线插值）
-function pointAtDistance(segments, total, dist) {
-    if (!segments.length) return null;
-    const d = Math.max(0, Math.min(dist, total));
-    for (const s of segments) {
-        if (d <= s.cum) {
-            const t = s.len ? (d - (s.cum - s.len)) / s.len : 0;
-            return [s.p0[0] + (s.p1[0] - s.p0[0]) * t, s.p0[1] + (s.p1[1] - s.p0[1]) * t];
-        }
-    }
-    return segments[segments.length - 1].p1;
-}
-
-function updateReplayBtn() {
-    const btn = document.getElementById('btn-replay');
-    if (btn) { btn.textContent = replayActive ? '⏹ 停止回放' : '▶ 轨迹回放'; btn.classList.toggle('active', replayActive); }
-}
-
-function stopReplay() {
-    replayActive = false;
-    if (replayRaf) { cancelAnimationFrame(replayRaf); replayRaf = null; }
-    if (replayMarker) { try { replayMarker.setMap(null); } catch (_) {} replayMarker = null; }
-    if (replayTrail) { try { replayTrail.setMap(null); } catch (_) {} replayTrail = null; }
-    updateReplayBtn();
-}
-
-function toggleReplay() {
-    if (replayActive) { stopReplay(); return; }
-    if (!planMap) { toast('⚠️ 地图尚未就绪'); return; }
-    const tracks = collectReplayRoutes();
-    if (!tracks.length) { toast('⚠️ 暂无路线可回放'); return; }
-    startReplay(tracks);
-}
-
-function startReplay(tracks) {
-    // 把所有路线拼成连续折线段，按实际距离匀速行进
-    const segments = [];
-    let total = 0;
-    tracks.forEach(tr => {
-        for (let i = 0; i < tr.pts.length - 1; i++) {
-            const len = distMeters(tr.pts[i], tr.pts[i + 1]);
-            total += len;
-            segments.push({ p0: tr.pts[i], p1: tr.pts[i + 1], len, cum: total });
-        }
-    });
-    if (!segments.length || total <= 0) { toast('⚠️ 路线无有效点'); return; }
-
-    const first = segments[0].p0;
-    replayMarker = new AMap.Marker({
-        map: planMap, position: first,
-        content: '<div class="replay-dot"></div>',
-        offset: new AMap.Pixel(-10, -10), zIndex: 200,
-    });
-    replayTrail = new AMap.Polyline({ map: planMap, path: [first], strokeColor: '#ffd400', strokeWeight: 3, strokeOpacity: 0.85, zIndex: 199 });
-    replayActive = true;
-    updateReplayBtn();
-
-    const DURATION = Math.max(6000, Math.min(30000, total * 0.35)); // 6~30 秒
-    const t0 = performance.now();
-    function step(now) {
-        if (!replayActive) return;
-        const t = Math.min(1, (now - t0) / DURATION);
-        const pos = pointAtDistance(segments, total, t * total);
-        if (pos) replayMarker.setPosition(pos);
-        // 已走过的路径作为尾迹
-        const cut = t * total;
-        const trailPts = [];
-        for (const s of segments) { if (s.cum < cut) trailPts.push(s.p0); }
-        trailPts.push(pos);
-        replayTrail.setPath(trailPts);
-        if (t >= 1) { stopReplay(); return; }
-        replayRaf = requestAnimationFrame(step);
-    }
-    replayRaf = requestAnimationFrame(step);
 }
 
 // ========================================================
@@ -2369,15 +2160,11 @@ async function boot() {
     const btnLoca = document.getElementById('btn-loca-toggle');
     if (btnLoca) btnLoca.addEventListener('click', () => toggleLoca(map));
 
-    // 单个特效选择性展示（路线/标牌/呼吸点/区域）
+    // 单个特效选择性展示（路线/呼吸点）
     document.querySelectorAll('#loca-effects button[data-effect]').forEach(b => {
         b.addEventListener('click', () => toggleLocaEffect(b.dataset.effect, !locaEffects[b.dataset.effect]));
     });
     updateLocaEffectButtons();
-
-    // 轨迹回放
-    const btnReplay = document.getElementById('btn-replay');
-    if (btnReplay) btnReplay.addEventListener('click', () => toggleReplay());
 
     // 天气预报（AMap.Weather）
     initWeather();
