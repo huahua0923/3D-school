@@ -1370,26 +1370,26 @@ function glowTexture(hex) {
 
 // 水波纹扩散：预渲染多帧同心圆环（从中心一圈圈向外扩散并淡出），按颜色缓存帧序列
 const rippleFrameCache = {};
-function rippleFrames(hex, frames = 24) {
+function rippleFrames(hex, frames = 48) {
     const key = hex + '@' + frames;
     if (rippleFrameCache[key]) return rippleFrameCache[key];
     const size = 160, cx = size / 2, cy = size / 2, R = size / 2;
-    const ringCount = 4;
+    const ringCount = 5;
     const list = [];
     try {
         for (let f = 0; f < frames; f++) {
             const phase = f / frames;                // 0..1 一个扩散周期
             const c = document.createElement('canvas'); c.width = c.height = size;
             const ctx = c.getContext('2d');
-            // 一圈圈向外扩散：每个环随 phase 前移，越靠外越淡
+            // 一圈圈向外扩散：sin 波形让环从中心淡入、到边缘淡出（无突然闪烁）
             for (let i = 0; i < ringCount; i++) {
                 const t = (phase + i / ringCount) % 1;   // 0..1，从中心到边缘
                 const r = R * t;
-                const alpha = 0.85 * (1 - t);            // 扩散到边缘时淡出
+                const alpha = 0.8 * Math.sin(Math.PI * t); // 平滑淡入淡出
                 ctx.beginPath();
                 ctx.arc(cx, cy, Math.max(r, 1), 0, Math.PI * 2);
                 ctx.strokeStyle = hexToRgba(hex, Math.max(0, alpha));
-                ctx.lineWidth = 3;
+                ctx.lineWidth = 2.5;
                 ctx.stroke();
             }
             list.push(c.toDataURL());
@@ -1421,7 +1421,7 @@ function initLoca(map) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
             const glowLayer = new Loca.ScatterLayer({ zIndex: 117 });
             glowLayer.setSource(src);
-            const FRAMES = 24;
+            const FRAMES = 48;
             const framesByColor = {};                       // color -> 帧数组（懒生成并缓存）
             let rippleFrame = 0;                            // 当前帧索引
             const textureFor = (...a) => {
@@ -1432,11 +1432,11 @@ function initLoca(map) {
             const rippleStyle = () => ({ unit: 'meter', size: [70, 70], borderWidth: 0, texture: textureFor, opacity: 1 });
             glowLayer.setStyle(rippleStyle());
             loca.add(glowLayer);
-            // 动态扩散：每 66ms 推进一帧（24 帧 ≈ 1.6s 一圈），destroy 时清定时器
+            // 动态扩散：每 33ms 推进一帧（48 帧 ≈ 1.6s 一圈，30fps 平滑不闪），destroy 时清定时器
             loca.__rippleTimer = setInterval(() => {
                 rippleFrame = (rippleFrame + 1) % FRAMES;
                 try { glowLayer.setStyle(rippleStyle()); } catch (_) {}
-            }, 66);
+            }, 33);
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
