@@ -988,6 +988,7 @@ function formatArea(m2){
 const FLOW_DASH = 12;               // 虚线实线段长度（px）
 const FLOW_GAP = 12;                // 虚线空隙长度（px）
 const FLOW_SPEED_BASE = 40;         // speed=1 时的滚动速度（px/秒）
+const FLOW_TRAIL_FADE = 0.08;       // 拖尾淡出速度（每帧 destination-out 的 alpha，越大尾巴越短）
 
 function initFlowLayer(map) {
     if (flowCanvas) return;
@@ -1037,8 +1038,12 @@ function drawFlowLayer(map) {
     if (!flowCtx) return;
     const dpr = window.devicePixelRatio || 1;
     const w = flowCanvas.width / dpr, h = flowCanvas.height / dpr;
-    flowCtx.clearRect(0, 0, w, h);
-    if (hideRoutes) return;   // 卫星图隐藏路线：清空后不绘制流动虚线
+    // 拖尾：用 destination-out 每帧淡出残影（而不是 clearRect 瞬间清空），流光会留下彗星尾巴
+    flowCtx.globalCompositeOperation = 'destination-out';
+    flowCtx.fillStyle = 'rgba(0, 0, 0, ' + FLOW_TRAIL_FADE + ')';
+    flowCtx.fillRect(0, 0, w, h);
+    flowCtx.globalCompositeOperation = 'source-over';
+    if (hideRoutes) return;   // 卫星图隐藏路线：只淡出残影，不再画新虚线
     for (const r of flowRoutes) {
         if (!r.pts || r.pts.length < 2) continue;
         const px = [];
@@ -1104,6 +1109,27 @@ const RIPPLE_PERIOD = 1800;       // 一圈扩散的周期（ms）
 const RIPPLE_MAX_R_M = 60;        // 最大扩散半径（米，贴地）
 const RIPPLE_RINGS = 3;           // 同时存在的圈数
 const RIPPLE_SEGMENTS = 24;       // 每圈采样点数（地面圆投影成椭圆）
+const RIPPLE_GLOW_R_M = 16;       // 中心光晕半径（米，贴地）
+const RIPPLE_GLOW_ALPHA = 0.25;   // 光晕中心不透明度
+
+// 把以 (lng,lat) 为中心、地面半径 Rm 的圆采样成屏幕折线路径，3D 俯仰/旋转下自然压成椭圆
+function projectGroundEllipse(map, lng, lat, Rm, dLatPerM, dLngPerM) {
+    const path = new Path2D();
+    let started = false;
+    for (let s = 0; s < RIPPLE_SEGMENTS; s++) {
+        const th = (s / RIPPLE_SEGMENTS) * Math.PI * 2;
+        const c = map.lngLatToContainer(new AMap.LngLat(
+            lng + Rm * dLngPerM * Math.cos(th),
+            lat + Rm * dLatPerM * Math.sin(th)
+        ));
+        if (!c) continue;
+        if (!started) { path.moveTo(c.x, c.y); started = true; }
+        else path.lineTo(c.x, c.y);
+    }
+    if (!started) return null;
+    path.closePath();
+    return path;
+}
 
 function drawRipple(map, now) {
     if (!rippleCtx) return;
@@ -1111,36 +1137,41 @@ function drawRipple(map, now) {
     const w = rippleCanvas.width / dpr, h = rippleCanvas.height / dpr;
     rippleCtx.clearRect(0, 0, w, h);
     if (!rippleOn || !ripplePoints.length) return;
+    rippleCtx.globalCompositeOperation = 'lighter';   // 加法混合：重叠发光互相叠亮
     rippleCtx.lineWidth = 2.5;
     for (const p of ripplePoints) {
         // 地面半径 → 经纬度偏移（经度方向除以 cos(lat) 做球面修正）
         const cosLat = Math.cos(p.lat * Math.PI / 180);
         const dLatPerM = 1 / METERS_PER_DEG_LAT;
         const dLngPerM = 1 / (METERS_PER_DEG_LAT * cosLat);
+        const c0 = map.lngLatToContainer(new AMap.LngLat(p.lng, p.lat));
+        if (!c0) continue;
+
+        // 中心光晕：软径向渐变填充贴地椭圆，让标记点有发光感（无硬点）
+        const glow = projectGroundEllipse(map, p.lng, p.lat, RIPPLE_GLOW_R_M, dLatPerM, dLngPerM);
+        if (glow) {
+            const ce = map.lngLatToContainer(new AMap.LngLat(p.lng + RIPPLE_GLOW_R_M * dLngPerM, p.lat));
+            const gradR = ce ? Math.hypot(ce.x - c0.x, ce.y - c0.y) : RIPPLE_GLOW_R_M;
+            const grad = rippleCtx.createRadialGradient(c0.x, c0.y, 0, c0.x, c0.y, gradR);
+            grad.addColorStop(0, hexToRgba(p.color, RIPPLE_GLOW_ALPHA));
+            grad.addColorStop(1, hexToRgba(p.color, 0));
+            rippleCtx.fillStyle = grad;
+            rippleCtx.fill(glow);
+        }
+
+        // 扩散圆环
         for (let i = 0; i < RIPPLE_RINGS; i++) {
             const t = ((now / RIPPLE_PERIOD) + i / RIPPLE_RINGS) % 1;   // 0..1
             const R = RIPPLE_MAX_R_M * t;
             const alpha = 0.75 * Math.sin(Math.PI * t);                  // 平滑淡入淡出
             if (R < 1) continue;                                         // 刚冒出时太小不画
-            // 把地面圆采样成多段折线并投影，3D 俯仰/旋转下自然变成椭圆
-            rippleCtx.beginPath();
-            let started = false;
-            for (let s = 0; s < RIPPLE_SEGMENTS; s++) {
-                const th = (s / RIPPLE_SEGMENTS) * Math.PI * 2;
-                const c = map.lngLatToContainer(new AMap.LngLat(
-                    p.lng + R * dLngPerM * Math.cos(th),
-                    p.lat + R * dLatPerM * Math.sin(th)
-                ));
-                if (!c) continue;
-                if (!started) { rippleCtx.moveTo(c.x, c.y); started = true; }
-                else rippleCtx.lineTo(c.x, c.y);
-            }
-            if (!started) continue;
-            rippleCtx.closePath();
+            const ring = projectGroundEllipse(map, p.lng, p.lat, R, dLatPerM, dLngPerM);
+            if (!ring) continue;
             rippleCtx.strokeStyle = hexToRgba(p.color, Math.max(0, alpha));
-            rippleCtx.stroke();
+            rippleCtx.stroke(ring);
         }
     }
+    rippleCtx.globalCompositeOperation = 'source-over';
 }
 
 function animateRipple(map, now) {
