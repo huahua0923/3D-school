@@ -1368,35 +1368,42 @@ function glowTexture(hex) {
     return glowTexCache[hex];
 }
 
-// 水波纹扩散贴图：同心圆环（一圈圈向外），按 marker 颜色生成（缓存）
-const rippleTexCache = {};
-function rippleTexture(hex) {
-    if (rippleTexCache[hex]) return rippleTexCache[hex];
+// 水波纹扩散：预渲染多帧同心圆环（从中心一圈圈向外扩散并淡出），按颜色缓存帧序列
+const rippleFrameCache = {};
+function rippleFrames(hex, frames = 24) {
+    const key = hex + '@' + frames;
+    if (rippleFrameCache[key]) return rippleFrameCache[key];
+    const size = 160, cx = size / 2, cy = size / 2, R = size / 2;
+    const ringCount = 4;
+    const list = [];
     try {
-        const size = 160;
-        const c = document.createElement('canvas'); c.width = c.height = size;
-        const ctx = c.getContext('2d');
-        const cx = size / 2, cy = size / 2, R = size / 2;
-        // 中心亮斑
-        ctx.beginPath();
-        ctx.arc(cx, cy, R * 0.1, 0, Math.PI * 2);
-        ctx.fillStyle = hexToRgba(hex, 1);
-        ctx.fill();
-        // 同心圆环：从内到外半径递增、透明度递减
-        const ringCount = 5;
-        for (let i = 0; i < ringCount; i++) {
-            const t = (i + 1) / ringCount;          // 1/5 .. 1
-            const r = t * R;
-            const alpha = 0.9 * (1 - t * 0.85);      // 内圈亮、外圈淡
+        for (let f = 0; f < frames; f++) {
+            const phase = f / frames;                // 0..1 一个扩散周期
+            const c = document.createElement('canvas'); c.width = c.height = size;
+            const ctx = c.getContext('2d');
+            // 中心亮斑（锚定标记点位置）
             ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.strokeStyle = hexToRgba(hex, alpha);
-            ctx.lineWidth = 3;
-            ctx.stroke();
+            ctx.arc(cx, cy, R * 0.08, 0, Math.PI * 2);
+            ctx.fillStyle = hexToRgba(hex, 1);
+            ctx.fill();
+            // 一圈圈向外扩散：每个环随 phase 前移，越靠外越淡
+            for (let i = 0; i < ringCount; i++) {
+                const t = (phase + i / ringCount) % 1;   // 0..1，从中心到边缘
+                const r = R * t;
+                const alpha = 0.85 * (1 - t);            // 扩散到边缘时淡出
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.max(r, 1), 0, Math.PI * 2);
+                ctx.strokeStyle = hexToRgba(hex, Math.max(0, alpha));
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+            list.push(c.toDataURL());
         }
-        rippleTexCache[hex] = c.toDataURL();
-    } catch (e) { rippleTexCache[hex] = ''; }
-    return rippleTexCache[hex];
+    } catch (e) {
+        for (let f = 0; f < frames; f++) list.push('');
+    }
+    rippleFrameCache[key] = list;
+    return list;
 }
 
 function initLoca(map) {
@@ -1414,13 +1421,27 @@ function initLoca(map) {
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
 
-        // 呼吸点：地面发光光环（ScatterLayer 贴图动画，参照深圳路口延误指数 demo）
+        // 呼吸点 → 水波纹扩散：预渲染多帧圆环，定时推进帧让一圈圈向外扩散
         if (pts.length && locaEffects.breathing) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
             const glowLayer = new Loca.ScatterLayer({ zIndex: 117 });
             glowLayer.setSource(src);
-            glowLayer.setStyle({ unit: 'meter', size: [70, 70], borderWidth: 0, texture: (...a) => rippleTexture(locaFeatureProps(...a).color || '#f59e0b'), duration: 1600, animate: true });
+            const FRAMES = 24;
+            const framesByColor = {};                       // color -> 帧数组（懒生成并缓存）
+            let rippleFrame = 0;                            // 当前帧索引
+            const textureFor = (...a) => {
+                const col = locaFeatureProps(...a).color || '#f59e0b';
+                if (!framesByColor[col]) framesByColor[col] = rippleFrames(col, FRAMES);
+                return framesByColor[col][rippleFrame];
+            };
+            const rippleStyle = () => ({ unit: 'meter', size: [70, 70], borderWidth: 0, texture: textureFor, opacity: 1 });
+            glowLayer.setStyle(rippleStyle());
             loca.add(glowLayer);
+            // 动态扩散：每 66ms 推进一帧（24 帧 ≈ 1.6s 一圈），destroy 时清定时器
+            loca.__rippleTimer = setInterval(() => {
+                rippleFrame = (rippleFrame + 1) % FRAMES;
+                try { glowLayer.setStyle(rippleStyle()); } catch (_) {}
+            }, 66);
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
@@ -1441,7 +1462,12 @@ function initLoca(map) {
 }
 
 function destroyLoca() {
-    try { if (locaContainer && typeof locaContainer.destroy === 'function') locaContainer.destroy(); } catch (_) {}
+    try {
+        if (locaContainer) {
+            if (locaContainer.__rippleTimer) { clearInterval(locaContainer.__rippleTimer); locaContainer.__rippleTimer = null; }
+            if (typeof locaContainer.destroy === 'function') locaContainer.destroy();
+        }
+    } catch (_) {}
     locaContainer = null;
 }
 
