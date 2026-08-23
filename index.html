@@ -443,6 +443,7 @@
         <div id="loca-effects" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">
             <button class="sb-btn active" data-effect="routes" style="flex:1;font-size:0.66rem;padding:5px 4px;">🛣️ 路线</button>
             <button class="sb-btn active" data-effect="breathing" style="flex:1;font-size:0.66rem;padding:5px 4px;">💨 呼吸点</button>
+            <button class="sb-btn active" data-effect="areas" style="flex:1;font-size:0.66rem;padding:5px 4px;">🏢 区域</button>
         </div>
     </div>
 
@@ -957,8 +958,8 @@ let measureOverlays = [];           // 测量产生的临时覆盖物（清除�
 // —— Loca v2 可视化特效：呼吸点(Scatter) + 脉冲线(PulseLine) ——
 let locaContainer = null;           // Loca.Container 实例
 let locaActive = false;             // 特效总开关状态
-// 每个特效独立开关（选择性展示）：routes=路线分层 / breathing=呼吸点
-let locaEffects = { routes: true, breathing: true };
+// 每个特效独立开关（选择性展示）：routes=路线脉冲 / breathing=呼吸点 / areas=区域3D体块
+let locaEffects = { routes: true, breathing: true, areas: true };
 
 function toast(msg){
     const el = document.getElementById('toast');
@@ -1427,6 +1428,15 @@ function buildLocaFeatures() {
             features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.pts },
                 properties: { name, color: colorToHex(r.color, '#3b82f6') } });
         });
+        // 区域 → Polygon（GeoJSON 外环需闭合，编辑器存的 pts 可能未闭合，这里补齐）
+        Object.entries(data.areas || {}).forEach(([name, a]) => {
+            if (!a.pts || a.pts.length < 3) return;
+            const ring = a.pts.map(p => [p[0], p[1]]);
+            const f0 = ring[0], fl = ring[ring.length - 1];
+            if (f0[0] !== fl[0] || f0[1] !== fl[1]) ring.push([f0[0], f0[1]]);
+            features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] },
+                properties: { name, color: colorToHex(a.color, '#10b981') } });
+        });
     });
     return features;
 }
@@ -1450,6 +1460,17 @@ function hexToRgba(hex, alpha) {
     return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
 }
 
+// hex 颜色明暗调整（amount 负=变暗，正=变亮），用于 3D 体块侧面
+function shadeHex(hex, amount) {
+    const h = String(hex || '#10b981').replace('#', '');
+    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : (h.length === 6 ? h : '10b981');
+    const n = parseInt(full, 16);
+    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    if (amount < 0) { r = Math.round(r * (1 + amount)); g = Math.round(g * (1 + amount)); b = Math.round(b * (1 + amount)); }
+    else { r = Math.round(r + (255 - r) * amount); g = Math.round(g + (255 - g) * amount); b = Math.round(b + (255 - b) * amount); }
+    return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+
 function initLoca(map) {
     if (!window.Loca) { toast('⚠️ Loca SDK 未加载'); return; }
     if (locaContainer) return;
@@ -1464,6 +1485,7 @@ function initLoca(map) {
         const all = buildLocaFeatures();
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
+        const polys = all.filter(f => f.geometry.type === 'Polygon');
 
         // 呼吸点 → 水波纹扩散：用独立 Canvas 覆盖层画扩散圆环（rAF 平滑，不闪）
         if (pts.length && locaEffects.breathing) {
@@ -1474,6 +1496,20 @@ function initLoca(map) {
             }));
             initRippleLayer(map);
             rippleOn = true;
+        }
+
+        // 区域 → 3D 体块挤出（参照 cadmall：topColor 顶面 + sideColor 侧面 + 光照立体感）
+        if (polys.length && locaEffects.areas) {
+            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: polys } });
+            const areaLayer = new Loca.PolygonLayer({ zIndex: 105, opacity: 0.9, shininess: 8 });
+            areaLayer.setSource(src);
+            areaLayer.setStyle({
+                topColor: (...a) => locaColorOf(...a),
+                sideColor: (...a) => shadeHex(locaColorOf(...a), -0.35),
+                height: 8,
+                altitude: 0,
+            });
+            loca.add(areaLayer);
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
