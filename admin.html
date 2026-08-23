@@ -796,6 +796,9 @@ async function renderPlans() {
     box.innerHTML = rows.map(p => {
         const name = p.name || ('方案 ' + p.id);
         const vis = p.visibility || 'public';
+        const floor = (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 1;
+        const floorOptions = [1, 2, 3, 4, 5, 6].map(f =>
+            `<option value="${f}" ${floor === f ? 'selected' : ''}>${f}F</option>`).join('');
         return `<div class="section">
             <h3>🗂️ ${escHtml(name)}</h3>
             <div class="form-grid">
@@ -805,6 +808,9 @@ async function renderPlans() {
                         <option value="public" ${vis === 'public' ? 'selected' : ''}>公开（普通用户可见）</option>
                         <option value="restricted" ${vis === 'restricted' ? 'selected' : ''}>受限（仅超级用户/管理员）</option>
                     </select>
+                </div>
+                <div class="form-group"><label>楼层</label>
+                    <select onchange="updatePlanFloor(${p.id}, this.value)">${floorOptions}</select>
                 </div>
             </div>
             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -827,6 +833,20 @@ async function updatePlanVisibility(id, visibility) {
         if (resp.status === 401) { logout(); return; }
         const data = await resp.json();
         if (resp.ok) showToast('✅ 可见性已更新', 'ok');
+        else showToast('❌ ' + (data.error || '更新失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
+async function updatePlanFloor(id, floor) {
+    try {
+        const resp = await fetch('/api/editor/projects/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ floor: Number(floor) }),
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) showToast('✅ 楼层已更新', 'ok');
         else showToast('❌ ' + (data.error || '更新失败'), 'err');
     } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
 }

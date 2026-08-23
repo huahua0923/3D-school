@@ -554,8 +554,8 @@ app.get('/api/editor/projects/:id', (req, res) => {
 // 创建新项目
 app.post('/api/editor/projects', adminOnly, (req, res) => {
     try {
-        const { name, data, visibility } = req.body;
-        const id = db.saveEditorProject(null, name || '未命名项目', data || {}, visibility);
+        const { name, data, visibility, floor } = req.body;
+        const id = db.saveEditorProject(null, name || '未命名项目', data || {}, visibility, floor);
         res.status(201).json({ message: 'ok', id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -563,13 +563,14 @@ app.post('/api/editor/projects', adminOnly, (req, res) => {
 // 更新项目（支持部分更新：只改名时保留已有 data；可单独改可见性）
 app.put('/api/editor/projects/:id', adminOnly, (req, res) => {
     try {
-        const { name, data, visibility } = req.body;
+        const { name, data, visibility, floor } = req.body;
         const existing = db.getEditorProject(Number(req.params.id));
         if (!existing) return res.status(404).json({ error: '项目不存在' });
         const nextName = name !== undefined ? name : existing.name;
         const nextData = data !== undefined ? data : existing.data;
         const nextVis = visibility !== undefined ? visibility : existing.visibility;
-        db.saveEditorProject(Number(req.params.id), nextName, nextData, nextVis);
+        const nextFloor = floor !== undefined ? floor : existing.floor;
+        db.saveEditorProject(Number(req.params.id), nextName, nextData, nextVis, nextFloor);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

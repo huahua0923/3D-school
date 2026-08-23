@@ -125,6 +125,10 @@
 .plan-item { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 0; }
 .plan-item input { accent-color: var(--accent-main); cursor: pointer; flex-shrink: 0; }
 .plan-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.floor-switcher { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.floor-btn { flex: 0 0 auto; padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.6); font-size: 0.74rem; font-family: inherit; cursor: pointer; white-space: nowrap; }
+.floor-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.floor-btn.active { background: var(--accent-main); border-color: var(--accent-main); color: #fff; font-weight: 600; }
 
         /* ====== Top-Right & Bottom-Right ====== */
         #btn-auto-rotate {
@@ -411,6 +415,12 @@
             <input type="text" id="search-input" placeholder="搜索地点..." autocomplete="off" />
             <div id="search-results"></div>
         </div>
+    </div>
+
+    <!-- Floor Switcher (楼层切换) -->
+    <div class="sb-section" id="floor-section">
+        <div class="sb-label">🏬 楼层</div>
+        <div class="floor-switcher" id="floor-switcher"></div>
     </div>
 
     <!-- Plans (路线图方案) -->
@@ -1799,6 +1809,8 @@ function initWeather() {
 const PLAN_DEFAULT_W = 1200, PLAN_DEFAULT_H = 800;
 const PLAN_HALF_LNG = 0.002, PLAN_HALF_LAT = 0.0014;
 const PLAN_MEMORY_KEY = 'active_plans';
+const FLOOR_MEMORY_KEY = 'current_floor';
+let currentFloor = parseInt(localStorage.getItem(FLOOR_MEMORY_KEY) || '1', 10) || 1;  // 当前楼层（1=1F）
 let planMap = null;                     // 当前地图实例
 let planProjects = [];                  // 方案列表缓存 {id,name}
 let planOverlayGroups = {};             // planId -> { overlays:[], route:0, area:0 }
@@ -2092,12 +2104,48 @@ function saveActivePlanIds(ids) {
     try { localStorage.setItem(PLAN_MEMORY_KEY, JSON.stringify(ids)); } catch (_) {}
 }
 
+// 方案楼层：取 floor 字段，非法/缺失回退 1F
+function floorOf(p) { return (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 1; }
+
 function renderPlanList() {
     const active = new Set(getActivePlanIds().map(String));
-    const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map');
-    const indoorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map'));
+    const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map' && floorOf(p) === currentFloor);
+    const indoorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map') && floorOf(p) === currentFloor);
     renderOnePlanList(document.getElementById('plan-list-map'), mapPlans, active);
     renderOnePlanList(document.getElementById('plan-list-indoor'), indoorPlans, active);
+    renderFloorSwitcher();
+}
+
+// 渲染楼层切换器：从方案收集去重排序的楼层，生成 1F/2F/... 按钮
+function renderFloorSwitcher() {
+    const box = document.getElementById('floor-switcher');
+    if (!box) return;
+    const floors = [...new Set(planProjects.map(floorOf))].sort((a, b) => a - b);
+    box.innerHTML = '';
+    if (floors.length === 0) return;
+    floors.forEach(f => {
+        const btn = document.createElement('button');
+        btn.className = 'floor-btn' + (f === currentFloor ? ' active' : '');
+        btn.textContent = f + 'F';
+        btn.addEventListener('click', () => switchFloor(f));
+        box.appendChild(btn);
+    });
+}
+
+// 切换楼层：跨层互斥（清空其他层、激活当前层全部方案）
+function switchFloor(floor) {
+    currentFloor = floor;
+    localStorage.setItem(FLOOR_MEMORY_KEY, String(floor));
+    if (planMap) getActivePlanIds().forEach(id => removePlanOverlay(planMap, Number(id)));
+    const ids = planProjects.filter(p => floorOf(p) === floor).map(p => String(p.id));
+    saveActivePlanIds(ids);
+    if (planMap) {
+        Promise.all(ids.map(id => fetchPlanData(id))).then(plans => {
+            plans.forEach(plan => { if (plan) applyPlan(planMap, plan); });
+            rebuildLocaIfActive();
+        });
+    }
+    renderPlanList();
 }
 
 function renderOnePlanList(box, plans, active) {
@@ -2210,11 +2258,14 @@ async function refreshPlansAfterAuthChange() {
     saveActivePlanIds([]);
     await refreshPlanList();
     rebuildLocaIfActive();
-    if (planProjects.length > 0) {
-        const first = planProjects[0];
-        saveActivePlanIds([String(first.id)]);
-        renderPlanList();
-        fetchPlanData(first.id).then(plan => { if (plan) applyPlan(planMap, plan); });
+    const floorIds = planProjects.filter(p => floorOf(p) === currentFloor).map(p => String(p.id));
+    saveActivePlanIds(floorIds);
+    renderPlanList();
+    if (planMap && floorIds.length > 0) {
+        Promise.all(floorIds.map(id => fetchPlanData(id))).then(plans => {
+            plans.forEach(plan => { if (plan) applyPlan(planMap, plan); });
+            rebuildLocaIfActive();
+        });
     }
 }
 
@@ -2290,26 +2341,21 @@ async function initPlanSelector(map) {
         rebuildLocaIfActive();
     });
 
-    // 恢复上次勾选的方案（跨页面刷新记忆）
-    getActivePlanIds().forEach(id => {
+    // 楼层模型：只激活当前楼层方案（跨层互斥）
+    // 已有勾选记忆且属于当前楼层则恢复之；否则激活当前楼层全部方案
+    const floorIds = planProjects.filter(p => floorOf(p) === currentFloor).map(p => String(p.id));
+    const savedIds = getActivePlanIds().filter(id => floorIds.includes(String(id)));
+    const toActivate = (savedIds.length > 0) ? savedIds : floorIds;
+    saveActivePlanIds(toActivate);
+    toActivate.forEach(id => {
         fetchPlanData(id).then(plan => {
             if (!plan) return;
             applyPlan(map, plan);
-            console.log(`✅ 已恢复方案「${plan.name}」`);
+            console.log(`✅ 已激活方案「${plan.name}」（${currentFloor}F）`);
         });
     });
-
-    // 无勾选方案时，自动激活最新保存的方案（保存后首页立即可见）
-    if (getActivePlanIds().length === 0 && planProjects.length > 0) {
-        const first = planProjects[0];
-        saveActivePlanIds([String(first.id)]);
-        renderPlanList();
-        fetchPlanData(first.id).then(plan => {
-            if (!plan) return;
-            applyPlan(map, plan);
-            console.log(`✅ 已自动激活最新方案「${plan.name}」`);
-        });
-    }
+    renderPlanList();
+    rebuildLocaIfActive();
 }
 
 

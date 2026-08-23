@@ -290,6 +290,8 @@ function migrateSchema() {
   addColumn('buildings_main', 'road_visible', 'INTEGER NOT NULL DEFAULT 1');
   // 方案可见性：public（普通用户可见）/ restricted（仅超级用户与管理员）
   addColumn('editor_projects', 'visibility', "TEXT NOT NULL DEFAULT 'public'");
+  // 楼层：方案归属楼层（1=1F, 2=2F…），默认 1F，向后兼容
+  addColumn('editor_projects', 'floor', 'INTEGER NOT NULL DEFAULT 1');
 }
 
 // ---------- 数据填充 ----------
@@ -881,7 +883,7 @@ function getEditorProjects() {
   const rows = db.exec('SELECT * FROM editor_projects ORDER BY updated_at DESC');
   if (rows.length === 0) return [];
   return rows[0].values.map(r => ({
-    id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3], visibility: r[4] || 'public'
+    id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3], visibility: r[4] || 'public', floor: r[5] || 1
   }));
 }
 
@@ -889,7 +891,7 @@ function getEditorProject(id) {
   const rows = db.exec('SELECT * FROM editor_projects WHERE id = ?', [id]);
   if (rows.length === 0 || rows[0].values.length === 0) return null;
   const r = rows[0].values[0];
-  return { id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3], visibility: r[4] || 'public' };
+  return { id: r[0], name: r[1], data: JSON.parse(r[2]), updated_at: r[3], visibility: r[4] || 'public', floor: r[5] || 1 };
 }
 
 // 按角色过滤方案列表：user（含访客）只见公开方案；super/admin 见全部
@@ -906,17 +908,20 @@ function canViewProject(role, project) {
   return (project.visibility || 'public') === 'public';
 }
 
-function saveEditorProject(id, name, data, visibility) {
+function saveEditorProject(id, name, data, visibility, floor) {
   const now = new Date().toISOString();
   const vis = visibility === 'restricted' ? 'restricted' : 'public';
   if (id) {
-    db.run('UPDATE editor_projects SET name = ?, data = ?, updated_at = ?, visibility = ? WHERE id = ?',
-      [name, JSON.stringify(data), now, vis, id]);
+    // 部分更新：floor 未传时保留原值（editor.js 只传 name/data 不会抹掉楼层）
+    const existing = getEditorProject(id);
+    const nextFloor = floor !== undefined ? floor : (existing ? existing.floor : 1);
+    db.run('UPDATE editor_projects SET name = ?, data = ?, updated_at = ?, visibility = ?, floor = ? WHERE id = ?',
+      [name, JSON.stringify(data), now, vis, nextFloor, id]);
     saveDbToDisk();
     return id;
   } else {
-    db.run('INSERT INTO editor_projects (name, data, updated_at, visibility) VALUES (?, ?, ?, ?)',
-      [name, JSON.stringify(data), now, vis]);
+    db.run('INSERT INTO editor_projects (name, data, updated_at, visibility, floor) VALUES (?, ?, ?, ?, ?)',
+      [name, JSON.stringify(data), now, vis, floor !== undefined ? floor : 1]);
     saveDbToDisk();
     const result = db.exec('SELECT MAX(id) as id FROM editor_projects');
     return result[0].values[0][0];
