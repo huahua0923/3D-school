@@ -939,6 +939,7 @@ let flowCanvas = null;              // 流动虚线 canvas
 let flowCtx = null;                 // canvas 2D context
 let flowRoutes = [];                // 流动虚线路线 [{id, pts, color, width, speed, offset}]
 let flowLastT = 0;                  // 上一帧时间戳
+let flowViewMoving = false;         // 地图视图是否在移动（pan/zoom/rotate），移动中不留拖尾
 let hideRoutes = false;             // 卫星图「隐藏路线」开关：隐藏流动虚线 + 路线名称标签
 let routeOverlays = [];             // 路线相关 AMap 覆盖物（透明点击线 + 名称标签），供隐藏开关控制
 
@@ -999,6 +1000,9 @@ function initFlowLayer(map) {
     container.appendChild(canvas);
     flowCanvas = canvas;
     flowCtx = canvas.getContext('2d');
+    // 视图移动时整屏清（不留拖尾），避免拖尾跟着地图走、看着晕
+    for (const ev of ['movestart', 'zoomstart', 'rotatestart']) map.on(ev, () => { flowViewMoving = true; });
+    for (const ev of ['moveend', 'zoomend', 'rotateend']) map.on(ev, () => { flowViewMoving = false; });
     resizeFlowLayer();
     requestAnimationFrame((t) => animateFlow(map, t));
 }
@@ -1038,11 +1042,16 @@ function drawFlowLayer(map) {
     if (!flowCtx) return;
     const dpr = window.devicePixelRatio || 1;
     const w = flowCanvas.width / dpr, h = flowCanvas.height / dpr;
-    // 拖尾：用 destination-out 每帧淡出残影（而不是 clearRect 瞬间清空），流光会留下彗星尾巴
-    flowCtx.globalCompositeOperation = 'destination-out';
-    flowCtx.fillStyle = 'rgba(0, 0, 0, ' + FLOW_TRAIL_FADE + ')';
-    flowCtx.fillRect(0, 0, w, h);
-    flowCtx.globalCompositeOperation = 'source-over';
+    if (flowViewMoving) {
+        // 地图正在移动：直接清屏，不留拖尾（否则残影跟着地图走，看着晕）
+        flowCtx.clearRect(0, 0, w, h);
+    } else {
+        // 静止时拖尾：用 destination-out 每帧淡出残影（而不是 clearRect 瞬间清空），流光会留下彗星尾巴
+        flowCtx.globalCompositeOperation = 'destination-out';
+        flowCtx.fillStyle = 'rgba(0, 0, 0, ' + FLOW_TRAIL_FADE + ')';
+        flowCtx.fillRect(0, 0, w, h);
+        flowCtx.globalCompositeOperation = 'source-over';
+    }
     if (hideRoutes) return;   // 卫星图隐藏路线：只淡出残影，不再画新虚线
     for (const r of flowRoutes) {
         if (!r.pts || r.pts.length < 2) continue;
