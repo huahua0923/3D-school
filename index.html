@@ -1383,13 +1383,25 @@ function initLoca(map) {
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
 
-        // 呼吸点：地面发光光环（ScatterLayer 贴图动画，参照深圳路口延误指数 demo）
+        // 呼吸点：地面发光光环（ScatterLayer）—— 改为「一闪一闪」硬闪烁
         if (pts.length && locaEffects.breathing) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
             const glowLayer = new Loca.ScatterLayer({ zIndex: 117 });
             glowLayer.setSource(src);
-            glowLayer.setStyle({ unit: 'meter', size: [45, 45], borderWidth: 0, texture: (...a) => glowTexture(locaFeatureProps(...a).color || '#f59e0b'), duration: 900, animate: true });
+            // 完整样式模板：闪烁时只改 opacity，其余保持一致（避免 setStyle 替换丢字段）
+            const glowStyle = (opacity) => ({
+                unit: 'meter', size: [45, 45], borderWidth: 0,
+                texture: (...a) => glowTexture(locaFeatureProps(...a).color || '#f59e0b'),
+                opacity,
+            });
+            glowLayer.setStyle(glowStyle(1));
             loca.add(glowLayer);
+            // 交替透明度实现硬闪烁；destroyLoca 时清定时器，防止 rebuild 泄漏
+            let blinkOn = true;
+            loca.__blinkTimer = setInterval(() => {
+                blinkOn = !blinkOn;
+                try { glowLayer.setStyle(glowStyle(blinkOn ? 1 : 0.08)); } catch (_) {}
+            }, 500);
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
@@ -1410,7 +1422,12 @@ function initLoca(map) {
 }
 
 function destroyLoca() {
-    try { if (locaContainer && typeof locaContainer.destroy === 'function') locaContainer.destroy(); } catch (_) {}
+    try {
+        if (locaContainer) {
+            if (locaContainer.__blinkTimer) { clearInterval(locaContainer.__blinkTimer); locaContainer.__blinkTimer = null; }
+            if (typeof locaContainer.destroy === 'function') locaContainer.destroy();
+        }
+    } catch (_) {}
     locaContainer = null;
 }
 
