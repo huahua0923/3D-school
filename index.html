@@ -942,6 +942,12 @@ let flowLastT = 0;                  // 上一帧时间戳
 let hideRoutes = false;             // 卫星图「隐藏路线」开关：隐藏流动虚线 + 路线名称标签
 let routeOverlays = [];             // 路线相关 AMap 覆盖物（透明点击线 + 名称标签），供隐藏开关控制
 
+// —— 水波纹扩散：独立 Canvas 覆盖层（rAF 平滑动画，不闪）——
+let rippleCanvas = null;
+let rippleCtx = null;
+let ripplePoints = [];              // [{lng, lat, color}]
+let rippleOn = false;               // 是否绘制（受「呼吸点」开关控制）
+
 // —— 首页测量工具：测距（RangingTool）+ 测面积（MouseTool 多边形）——
 let measureMouseTool = null;        // AMap.MouseTool（测面积）
 let measureRanging = null;          // AMap.RangingTool（测距）
@@ -1065,6 +1071,64 @@ function animateFlow(map, now) {
     flowLastT = now;
     drawFlowLayer(map);
     requestAnimationFrame((t) => animateFlow(map, t));
+}
+
+// —— 水波纹扩散：独立 Canvas 覆盖层，用 rAF 平滑画扩散圆环（不用 Loca setStyle，避免闪）——
+function initRippleLayer(map) {
+    if (rippleCanvas) return;
+    const container = document.getElementById('map-container');
+    if (!container) return;
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'position:absolute;left:0;top:0;pointer-events:none;z-index:10;';
+    container.appendChild(canvas);
+    rippleCanvas = canvas;
+    rippleCtx = canvas.getContext('2d');
+    resizeRippleLayer();
+    requestAnimationFrame((t) => animateRipple(map, t));
+}
+
+function resizeRippleLayer() {
+    if (!rippleCanvas) return;
+    const container = document.getElementById('map-container');
+    if (!container) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = container.clientWidth, h = container.clientHeight;
+    rippleCanvas.width = Math.round(w * dpr);
+    rippleCanvas.height = Math.round(h * dpr);
+    rippleCanvas.style.width = w + 'px';
+    rippleCanvas.style.height = h + 'px';
+    rippleCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+const RIPPLE_PERIOD = 1800;     // 一圈扩散的周期（ms）
+const RIPPLE_MAX_R = 64;        // 最大扩散半径（px）
+const RIPPLE_RINGS = 3;         // 同时存在的圈数
+
+function drawRipple(map, now) {
+    if (!rippleCtx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = rippleCanvas.width / dpr, h = rippleCanvas.height / dpr;
+    rippleCtx.clearRect(0, 0, w, h);
+    if (!rippleOn || !ripplePoints.length) return;
+    rippleCtx.lineWidth = 2.5;
+    for (const p of ripplePoints) {
+        const c = map.lngLatToContainer(new AMap.LngLat(p.lng, p.lat));
+        if (!c) continue;
+        for (let i = 0; i < RIPPLE_RINGS; i++) {
+            const t = ((now / RIPPLE_PERIOD) + i / RIPPLE_RINGS) % 1;   // 0..1
+            const r = RIPPLE_MAX_R * t;
+            const alpha = 0.75 * Math.sin(Math.PI * t);                  // 平滑淡入淡出
+            rippleCtx.beginPath();
+            rippleCtx.arc(c.x, c.y, Math.max(r, 0.5), 0, Math.PI * 2);
+            rippleCtx.strokeStyle = hexToRgba(p.color, Math.max(0, alpha));
+            rippleCtx.stroke();
+        }
+    }
+}
+
+function animateRipple(map, now) {
+    drawRipple(map, now);
+    requestAnimationFrame((t) => animateRipple(map, t));
 }
 
 // ========================================================
@@ -1335,70 +1399,12 @@ function locaColorOf(...args) {
     return fallback;
 }
 
-// 从 Loca 回调参数里安全取 feature 的 properties（回调签名可能是 (feature) 或 (index, feature)）
-function locaFeatureProps(...args) {
-    for (const a of args) {
-        if (a && a.properties) return a.properties;
-    }
-    return {};
-}
-
 // hex → rgba() 字符串（canvas 渐变用）
 function hexToRgba(hex, alpha) {
     const h = String(hex || '#f59e0b').replace('#', '');
     const full = h.length === 3 ? h.split('').map(c => c + c).join('') : (h.length === 6 ? h : 'f59e0b');
     const r = parseInt(full.slice(0, 2), 16), g = parseInt(full.slice(2, 4), 16), b = parseInt(full.slice(4, 6), 16);
     return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-}
-
-// 呼吸点发光贴图：按 marker 颜色生成径向渐变（缓存，避免重复 canvas）
-const glowTexCache = {};
-function glowTexture(hex) {
-    if (glowTexCache[hex]) return glowTexCache[hex];
-    try {
-        const c = document.createElement('canvas'); c.width = c.height = 128;
-        const ctx = c.getContext('2d');
-        const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-        g.addColorStop(0, hexToRgba(hex, 1));
-        g.addColorStop(0.35, hexToRgba(hex, 0.55));
-        g.addColorStop(1, hexToRgba(hex, 0));
-        ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
-        glowTexCache[hex] = c.toDataURL();
-    } catch (e) { glowTexCache[hex] = ''; }
-    return glowTexCache[hex];
-}
-
-// 水波纹扩散：预渲染多帧同心圆环（从中心一圈圈向外扩散并淡出），按颜色缓存帧序列
-const rippleFrameCache = {};
-function rippleFrames(hex, frames = 48) {
-    const key = hex + '@' + frames;
-    if (rippleFrameCache[key]) return rippleFrameCache[key];
-    const size = 160, cx = size / 2, cy = size / 2, R = size / 2;
-    const ringCount = 5;
-    const list = [];
-    try {
-        for (let f = 0; f < frames; f++) {
-            const phase = f / frames;                // 0..1 一个扩散周期
-            const c = document.createElement('canvas'); c.width = c.height = size;
-            const ctx = c.getContext('2d');
-            // 一圈圈向外扩散：sin 波形让环从中心淡入、到边缘淡出（无突然闪烁）
-            for (let i = 0; i < ringCount; i++) {
-                const t = (phase + i / ringCount) % 1;   // 0..1，从中心到边缘
-                const r = R * t;
-                const alpha = 0.8 * Math.sin(Math.PI * t); // 平滑淡入淡出
-                ctx.beginPath();
-                ctx.arc(cx, cy, Math.max(r, 1), 0, Math.PI * 2);
-                ctx.strokeStyle = hexToRgba(hex, Math.max(0, alpha));
-                ctx.lineWidth = 2.5;
-                ctx.stroke();
-            }
-            list.push(c.toDataURL());
-        }
-    } catch (e) {
-        for (let f = 0; f < frames; f++) list.push('');
-    }
-    rippleFrameCache[key] = list;
-    return list;
 }
 
 function initLoca(map) {
@@ -1416,27 +1422,15 @@ function initLoca(map) {
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
 
-        // 呼吸点 → 水波纹扩散：预渲染多帧圆环，定时推进帧让一圈圈向外扩散
+        // 呼吸点 → 水波纹扩散：用独立 Canvas 覆盖层画扩散圆环（rAF 平滑，不闪）
         if (pts.length && locaEffects.breathing) {
-            const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
-            const glowLayer = new Loca.ScatterLayer({ zIndex: 117 });
-            glowLayer.setSource(src);
-            const FRAMES = 48;
-            const framesByColor = {};                       // color -> 帧数组（懒生成并缓存）
-            let rippleFrame = 0;                            // 当前帧索引
-            const textureFor = (...a) => {
-                const col = locaFeatureProps(...a).color || '#f59e0b';
-                if (!framesByColor[col]) framesByColor[col] = rippleFrames(col, FRAMES);
-                return framesByColor[col][rippleFrame];
-            };
-            const rippleStyle = () => ({ unit: 'meter', size: [70, 70], borderWidth: 0, texture: textureFor, opacity: 1 });
-            glowLayer.setStyle(rippleStyle());
-            loca.add(glowLayer);
-            // 动态扩散：每 33ms 推进一帧（48 帧 ≈ 1.6s 一圈，30fps 平滑不闪），destroy 时清定时器
-            loca.__rippleTimer = setInterval(() => {
-                rippleFrame = (rippleFrame + 1) % FRAMES;
-                try { glowLayer.setStyle(rippleStyle()); } catch (_) {}
-            }, 33);
+            ripplePoints = pts.map(f => ({
+                lng: f.geometry.coordinates[0],
+                lat: f.geometry.coordinates[1],
+                color: (f.properties && f.properties.color) || '#f59e0b',
+            }));
+            initRippleLayer(map);
+            rippleOn = true;
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
@@ -1457,11 +1451,9 @@ function initLoca(map) {
 }
 
 function destroyLoca() {
+    rippleOn = false;
     try {
-        if (locaContainer) {
-            if (locaContainer.__rippleTimer) { clearInterval(locaContainer.__rippleTimer); locaContainer.__rippleTimer = null; }
-            if (typeof locaContainer.destroy === 'function') locaContainer.destroy();
-        }
+        if (locaContainer && typeof locaContainer.destroy === 'function') locaContainer.destroy();
     } catch (_) {}
     locaContainer = null;
 }
@@ -2500,6 +2492,7 @@ async function boot() {
         renderer.setSize(window.innerWidth, window.innerHeight);
         labelRenderer.setSize(window.innerWidth, window.innerHeight);
         resizeFlowLayer();
+        resizeRippleLayer();
     });
 
     console.log('✅ ' + (CONFIG.brand?.name||'3D 智慧导览') + ' 已就绪');
