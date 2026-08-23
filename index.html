@@ -2418,16 +2418,21 @@ async function boot() {
         }
 
 
-        // Pulse marker rings & cones
+        // Blink marker rings & cones (一闪一闪)
         scene.children.forEach(child => {
+            const ph = child.userData.phase || 0;
+            // sharp on/off envelope: positive half of sin squared → brief bright pulse, then dim
+            const sharp = Math.pow(Math.max(0, Math.sin(elapsed * 5.0 + ph)), 2);
             if (child.isMesh && child.geometry.type === 'RingGeometry' && child.userData.phase !== undefined) {
-                const s = 1 + 0.25 * Math.sin(elapsed * 2.2 + child.userData.phase);
+                const s = 1 + 0.5 * sharp;
                 child.scale.set(s, s, 1);
-                child.material.opacity = 0.25 + 0.2 * Math.sin(elapsed * 2.2 + child.userData.phase);
+                child.material.opacity = 0.08 + 0.5 * sharp;
+                child.material.emissiveIntensity = 0.1 + 1.0 * sharp;
             }
             if (child.isMesh && child.geometry.type === 'ConeGeometry' && child.userData.baseEmissive !== undefined) {
                 const base = child.userData.baseEmissive;
-                child.material.emissiveIntensity = base + 0.3 * Math.sin(elapsed * 2.5 + (child.userData.phase || 0));
+                child.material.emissiveIntensity = base + 1.6 * sharp;
+                child.material.opacity = 0.2 + 0.8 * sharp;
             }
         });
 
