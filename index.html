@@ -34,6 +34,7 @@
         /* Map + Canvas containers */
         #map-container { position: fixed; inset: 0; z-index: 0; }
         #app-canvas { display: block; position: fixed; top: 0; left: 0; z-index: 1; pointer-events: none; }
+        #atmosphere { position: fixed; inset: 0; z-index: 2; pointer-events: none; transition: background 2.5s linear; }
 
         /* Loading */
         #loading-screen {
@@ -393,6 +394,7 @@
 
 <!-- Map container (Amap) -->
 <div id="map-container"></div>
+<div id="atmosphere"></div>
 
 <!-- ====== Left Sidebar Panel ====== -->
 <div id="sidebar">
@@ -949,6 +951,10 @@ let rippleCtx = null;
 let ripplePoints = [];              // [{lng, lat, color}]
 let rippleOn = false;               // 是否绘制（受「呼吸点」开关控制）
 
+// —— 路线引导动画：点击路线后一个发光点从起点匀速滑到终点 ——
+let guide = null;                   // { pts, color, t } t∈[0,1]，走完自动清除
+const GUIDE_DURATION = 6;           // 完整走完一条路线所需秒数
+
 // —— 首页测量工具：测距（RangingTool）+ 测面积（MouseTool 多边形）——
 let measureMouseTool = null;        // AMap.MouseTool（测面积）
 let measureRanging = null;          // AMap.RangingTool（测距）
@@ -1039,26 +1045,28 @@ function drawFlowLayer(map) {
     const dpr = window.devicePixelRatio || 1;
     const w = flowCanvas.width / dpr, h = flowCanvas.height / dpr;
     flowCtx.clearRect(0, 0, w, h);
-    if (hideRoutes) return;   // 卫星图隐藏路线：清空后不绘制流动虚线
-    for (const r of flowRoutes) {
-        if (!r.pts || r.pts.length < 2) continue;
-        const px = [];
-        for (const p of r.pts) {
-            const c = map.lngLatToContainer(new AMap.LngLat(p[0], p[1]));
-            if (c) px.push([c.x, c.y]);
+    if (!hideRoutes) {   // 卫星图隐藏路线：清空后不绘制流动虚线
+        for (const r of flowRoutes) {
+            if (!r.pts || r.pts.length < 2) continue;
+            const px = [];
+            for (const p of r.pts) {
+                const c = map.lngLatToContainer(new AMap.LngLat(p[0], p[1]));
+                if (c) px.push([c.x, c.y]);
+            }
+            if (px.length < 2) continue;
+            flowCtx.beginPath();
+            flowCtx.moveTo(px[0][0], px[0][1]);
+            for (let i = 1; i < px.length; i++) flowCtx.lineTo(px[i][0], px[i][1]);
+            flowCtx.strokeStyle = r.color;
+            flowCtx.lineWidth = r.width;
+            flowCtx.lineCap = 'round';
+            flowCtx.lineJoin = 'round';
+            flowCtx.setLineDash([FLOW_DASH, FLOW_GAP]);
+            flowCtx.lineDashOffset = -r.offset * (r.dir || 1);   // dir=1 正向滚，dir=-1 反向滚（每条路线可单独调方向）
+            flowCtx.stroke();
         }
-        if (px.length < 2) continue;
-        flowCtx.beginPath();
-        flowCtx.moveTo(px[0][0], px[0][1]);
-        for (let i = 1; i < px.length; i++) flowCtx.lineTo(px[i][0], px[i][1]);
-        flowCtx.strokeStyle = r.color;
-        flowCtx.lineWidth = r.width;
-        flowCtx.lineCap = 'round';
-        flowCtx.lineJoin = 'round';
-        flowCtx.setLineDash([FLOW_DASH, FLOW_GAP]);
-        flowCtx.lineDashOffset = -r.offset * (r.dir || 1);   // dir=1 正向滚，dir=-1 反向滚（每条路线可单独调方向）
-        flowCtx.stroke();
     }
+    drawGuide(map);   // 引导光点：最上层，独立于「隐藏路线」开关
 }
 
 function animateFlow(map, now) {
@@ -1068,10 +1076,134 @@ function animateFlow(map, now) {
             r.offset += FLOW_SPEED_BASE * r.speed * dt;
             if (r.offset > 100000) r.offset = 0;
         }
+        if (guide) {
+            guide.t += dt / GUIDE_DURATION;
+            if (guide.t >= 1) guide = null;   // 走完全程自动清除
+        }
     }
     flowLastT = now;
     drawFlowLayer(map);
     requestAnimationFrame((t) => animateFlow(map, t));
+}
+
+// —— 路线引导动画：折线弧长参数化 + 发光点绘制 ——
+function pathLength(pts) {
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) {
+        len += AMap.GeometryUtil.distance([pts[i - 1][0], pts[i - 1][1]], [pts[i][0], pts[i][1]]);
+    }
+    return len;
+}
+
+// 按弧长比例 t∈[0,1] 取折线上的点（分段线性插值，匀速滑过整条路线）
+function pathPointAt(pts, t) {
+    if (!pts || !pts.length) return null;
+    if (pts.length === 1) return [pts[0][0], pts[0][1]];
+    const total = pathLength(pts);
+    if (total <= 0) return [pts[0][0], pts[0][1]];
+    let target = Math.max(0, Math.min(1, t)) * total, acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+        const seg = AMap.GeometryUtil.distance([pts[i - 1][0], pts[i - 1][1]], [pts[i][0], pts[i][1]]);
+        if (acc + seg >= target) {
+            const k = seg > 0 ? (target - acc) / seg : 0;
+            return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k];
+        }
+        acc += seg;
+    }
+    return [pts[pts.length - 1][0], pts[pts.length - 1][1]];
+}
+
+function startGuide(pts, color, name) {
+    if (!pts || pts.length < 2) return;
+    guide = { pts: pts.map(p => [p[0], p[1]]), color: colorToHex(color, '#f59e0b'), t: 0 };
+    toast('✨ 路线引导中' + (name ? '：' + name : ''));
+}
+
+// 在流动层画一个发光点（白心 + 颜色光环 + 渐隐拖尾），沿路线滑动
+function drawGuide(map) {
+    if (!flowCtx || !guide || !guide.pts) return;
+    const pt = pathPointAt(guide.pts, guide.t);
+    if (!pt) return;
+    const c = map.lngLatToContainer(new AMap.LngLat(pt[0], pt[1]));
+    if (!c) return;
+    flowCtx.globalCompositeOperation = 'lighter';   // 加法混合，让光点更亮
+    // 拖尾：沿路向后采样几个点，渐隐缩小
+    const TRAIL = 7;
+    for (let i = 1; i <= TRAIL; i++) {
+        const tt = guide.t - i * 0.015;
+        if (tt < 0) break;
+        const tp = pathPointAt(guide.pts, tt);
+        if (!tp) continue;
+        const tc = map.lngLatToContainer(new AMap.LngLat(tp[0], tp[1]));
+        if (!tc) continue;
+        const k = 1 - i / (TRAIL + 1);
+        const rad = 2 + 9 * k;
+        const g = flowCtx.createRadialGradient(tc.x, tc.y, 0, tc.x, tc.y, rad);
+        g.addColorStop(0, hexToRgba(guide.color, 0.45 * k));
+        g.addColorStop(1, hexToRgba(guide.color, 0));
+        flowCtx.fillStyle = g;
+        flowCtx.beginPath();
+        flowCtx.arc(tc.x, tc.y, rad, 0, Math.PI * 2);
+        flowCtx.fill();
+    }
+    // 主光点：白心 + 颜色光环
+    const head = flowCtx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 14);
+    head.addColorStop(0, 'rgba(255,255,255,0.95)');
+    head.addColorStop(0.35, hexToRgba(guide.color, 0.85));
+    head.addColorStop(1, hexToRgba(guide.color, 0));
+    flowCtx.fillStyle = head;
+    flowCtx.beginPath();
+    flowCtx.arc(c.x, c.y, 14, 0, Math.PI * 2);
+    flowCtx.fill();
+    flowCtx.globalCompositeOperation = 'source-over';
+}
+
+// —— 搜索定位：从当前勾选的「地图方案」里收集可搜索地物（标记/区域/路线/画框/圆/椭圆） ——
+function buildSearchIndex() {
+    const items = [];
+    const push = (type, badge, icon, name, lng, lat, desc, images, color, pts) => {
+        if (lng == null || lat == null) return;
+        items.push({ type, badge, icon, name, lng, lat, desc: desc || '', images: images || [], color, pts });
+    };
+    Object.entries(activePlanData).forEach(([, data]) => {
+        if (!data || data.kind !== 'map') return;
+        Object.entries(data.markers || {}).forEach(([name, m]) => push('marker', '标记点', '📍', name, m.lng, m.lat, m.desc, m.images, m.color));
+        Object.entries(data.areas || {}).forEach(([name, a]) => {
+            if (!a.pts || !a.pts.length) return;
+            let cx = 0, cy = 0; a.pts.forEach(p => { cx += p[0]; cy += p[1]; });
+            push('area', '区域', '🗺️', name, cx / a.pts.length, cy / a.pts.length, a.desc, a.images, a.color);
+        });
+        Object.entries(data.routes || {}).forEach(([name, r]) => {
+            if (!r.pts || r.pts.length < 2) return;
+            const mid = r.pts[Math.floor(r.pts.length / 2)];
+            push('route', '路线', '🛣️', name, mid[0], mid[1], r.desc, r.images, r.color, r.pts);
+        });
+        Object.entries(data.rects || {}).forEach(([name, r]) => {
+            if (r.bounds && r.bounds[0] && r.bounds[1]) push('rect', '画框', '▭', name, (r.bounds[0][0] + r.bounds[1][0]) / 2, (r.bounds[0][1] + r.bounds[1][1]) / 2, r.desc, r.images, r.color);
+        });
+        Object.entries(data.circles || {}).forEach(([name, c]) => { if (c.center) push('circle', '画圆', '◯', name, c.center[0], c.center[1], c.desc, c.images, c.color); });
+        Object.entries(data.ellipses || {}).forEach(([name, e]) => { if (e.center) push('ellipse', '椭圆', '⬭', name, e.center[0], e.center[1], e.desc, e.images, e.color); });
+    });
+    return items;
+}
+
+// —— 时段氛围：根据当前小时给地图叠加一层色调 + 暗角，营造昼夜氛围 ——
+function updateAtmosphere() {
+    const el = document.getElementById('atmosphere');
+    if (!el) return;
+    const h = new Date().getHours();
+    // 每段 [起始时, 顶部色, 底部色, 暗角强度]
+    const phases = [
+        { from: 5, to: 7,  top: 'rgba(255,170,80,0.20)', bot: 'rgba(120,70,200,0.12)', vig: 0.22 },   // 清晨
+        { from: 7, to: 10, top: 'rgba(255,225,170,0.08)', bot: 'rgba(255,255,255,0)',   vig: 0.10 },   // 上午
+        { from: 10, to: 15, top: 'rgba(255,255,255,0)',   bot: 'rgba(255,255,255,0)',   vig: 0.06 },   // 正午
+        { from: 15, to: 17, top: 'rgba(255,255,255,0)',   bot: 'rgba(255,190,110,0.07)', vig: 0.10 },  // 下午
+        { from: 17, to: 19, top: 'rgba(40,60,140,0.20)',  bot: 'rgba(255,140,60,0.14)', vig: 0.28 },   // 黄昏
+        { from: 19, to: 24, top: 'rgba(6,14,38,0.32)',    bot: 'rgba(3,6,20,0.22)',    vig: 0.40 },   // 夜晚
+        { from: 0, to: 5,   top: 'rgba(6,14,38,0.32)',    bot: 'rgba(3,6,20,0.22)',    vig: 0.40 },   // 深夜
+    ];
+    const p = phases.find(p => h >= p.from && h < p.to) || phases[4];
+    el.style.background = 'radial-gradient(ellipse at 50% 38%, rgba(0,0,0,0) 55%, rgba(0,0,0,' + p.vig + ') 100%), linear-gradient(180deg, ' + p.top + ', ' + p.bot + ')';
 }
 
 // —— 水波纹扩散：独立 Canvas 覆盖层，用 rAF 平滑画扩散圆环（不用 Loca setStyle，避免闪）——
@@ -1406,7 +1538,7 @@ function displayRoutesAndAreas(map) {
             const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
             // 透明折线仅作点击热区，虚线视觉由 flow 层绘制
             const line = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 8, strokeOpacity: 0.01, zIndex: 10 });
-            line.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [] })));
+            line.on('click', (e) => onFeatureClick(e, () => { ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [] }); startGuide(r.pts, r.color, name); }));
             map.add(line);
             addFlowRoute('config:' + name, r.pts, r.color, 3, r.speed);
             const mid = r.pts[Math.floor(r.pts.length / 2)];
@@ -1796,7 +1928,7 @@ function applyPlan(map, plan) {
                 if (!r.pts || r.pts.length < 2) return;
                 const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 8, strokeOpacity: 0.01, zIndex: 10 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [] })));
+                o.on('click', (e) => onFeatureClick(e, () => { ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [] }); startGuide(r.pts, r.color, name); }));
                 map.add(o); overlays.push(o); group.route++; added++;
                 // 流动虚线（Canvas 层绘制，严格贴线）
                 const flowId = 'plan:' + plan.id + ':' + name;
@@ -2313,11 +2445,16 @@ async function boot() {
     // 天气预报（AMap.Weather）
     initWeather();
 
+    // 时段氛围：初始渲染 + 每分钟刷新（小时变化才真正跳档）
+    updateAtmosphere();
+    setInterval(updateAtmosphere, 60000);
+
     // 搜索：优先匹配本地场馆标记，其次高德 POI
     AMap.plugin('AMap.AutoComplete', () => {
         const auto = new AMap.AutoComplete({ city: '成都', citylimit: true });
         const searchInput = document.getElementById('search-input');
         const searchResults = document.getElementById('search-results');
+        const itemCache = {};   // 方案地物结果缓存：itemId → {type,badge,icon,name,lng,lat,desc,images,pts}
         searchInput.addEventListener('input', () => {
             const val = searchInput.value.trim();
             if (!val) { searchResults.style.display = 'none'; return; }
@@ -2332,6 +2469,18 @@ async function boot() {
                     div.textContent = (m.icon || '📍') + ' ' + (m.label || key);
                     searchResults.appendChild(div);
                 }
+            }
+            // 2) 方案地物（标记/区域/路线/画框/圆/椭圆）
+            let seq = 0;
+            for (const it of buildSearchIndex()) {
+                if (!(it.name || '').toLowerCase().includes(q)) continue;
+                const id = 'pi' + (seq++);
+                itemCache[id] = it;
+                const div = document.createElement('div');
+                div.className = 'search-item';
+                div.dataset.itemId = id;
+                div.textContent = (it.icon || '📍') + ' ' + it.name;
+                searchResults.appendChild(div);
             }
             searchResults.style.display = searchResults.children.length ? 'block' : 'none';
             // 3) 高德 POI
@@ -2359,6 +2508,17 @@ async function boot() {
                 {
                     const md = markerData.find(m => m.key === vk);
                     if (md) { map.setZoomAndCenter(18, md.lngLat); ui.showInfo(vk); }
+                }
+                return;
+            }
+            if (item.dataset.itemId) {
+                const it = itemCache[item.dataset.itemId];
+                if (it) {
+                    searchResults.style.display = 'none';
+                    searchInput.value = it.name;
+                    flyTo([it.lng, it.lat], 18, map.getPitch(), map.getRotation());
+                    ui.showFeature({ icon: it.icon, title: it.name, badge: it.badge, desc: it.desc, images: it.images });
+                    if (it.type === 'route' && it.pts) startGuide(it.pts, it.color, it.name);
                 }
                 return;
             }
