@@ -1383,12 +1383,11 @@ function initLoca(map) {
         const pts = all.filter(f => f.geometry.type === 'Point');
         const lines = all.filter(f => f.geometry.type === 'LineString');
 
-        // 呼吸点：地面发光光环（ScatterLayer）—— 改为「一闪一闪」硬闪烁
+        // 呼吸灯：地面发光光环（ScatterLayer 呼吸动画，正弦平滑渐明渐暗）
         if (pts.length && locaEffects.breathing) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
             const glowLayer = new Loca.ScatterLayer({ zIndex: 117 });
             glowLayer.setSource(src);
-            // 完整样式模板：闪烁时只改 opacity，其余保持一致（避免 setStyle 替换丢字段）
             const glowStyle = (opacity) => ({
                 unit: 'meter', size: [45, 45], borderWidth: 0,
                 texture: (...a) => glowTexture(locaFeatureProps(...a).color || '#f59e0b'),
@@ -1396,12 +1395,13 @@ function initLoca(map) {
             });
             glowLayer.setStyle(glowStyle(1));
             loca.add(glowLayer);
-            // 交替透明度实现硬闪烁；destroyLoca 时清定时器，防止 rebuild 泄漏
-            let blinkOn = true;
-            loca.__blinkTimer = setInterval(() => {
-                blinkOn = !blinkOn;
-                try { glowLayer.setStyle(glowStyle(blinkOn ? 1 : 0.08)); } catch (_) {}
-            }, 500);
+            // 呼吸灯：约 2.4s 一个呼吸周期，透明度在 0.12↔1 之间平滑往返；destroy 时清定时器
+            const breatheStart = performance.now();
+            loca.__breatheTimer = setInterval(() => {
+                const t = (performance.now() - breatheStart) / 1000;
+                const opacity = 0.12 + 0.88 * (0.5 + 0.5 * Math.sin(t * (2 * Math.PI) / 2.4));
+                try { glowLayer.setStyle(glowStyle(opacity)); } catch (_) {}
+            }, 80);
         }
 
         // 路线：贴地脉冲流动动画（去掉海拔分层，只留脉冲）
@@ -1424,7 +1424,7 @@ function initLoca(map) {
 function destroyLoca() {
     try {
         if (locaContainer) {
-            if (locaContainer.__blinkTimer) { clearInterval(locaContainer.__blinkTimer); locaContainer.__blinkTimer = null; }
+            if (locaContainer.__breatheTimer) { clearInterval(locaContainer.__breatheTimer); locaContainer.__breatheTimer = null; }
             if (typeof locaContainer.destroy === 'function') locaContainer.destroy();
         }
     } catch (_) {}
@@ -2435,21 +2435,21 @@ async function boot() {
         }
 
 
-        // Blink marker rings & cones (一闪一闪)
+        // 呼吸灯：标记点光环与锥体平滑渐明渐暗（正弦）
         scene.children.forEach(child => {
             const ph = child.userData.phase || 0;
-            // sharp on/off envelope: positive half of sin squared → brief bright pulse, then dim
-            const sharp = Math.pow(Math.max(0, Math.sin(elapsed * 5.0 + ph)), 2);
             if (child.isMesh && child.geometry.type === 'RingGeometry' && child.userData.phase !== undefined) {
-                const s = 1 + 0.5 * sharp;
+                const wave = 0.5 + 0.5 * Math.sin(elapsed * 2.2 + ph);
+                const s = 1 + 0.25 * wave;
                 child.scale.set(s, s, 1);
-                child.material.opacity = 0.08 + 0.5 * sharp;
-                child.material.emissiveIntensity = 0.1 + 1.0 * sharp;
+                child.material.opacity = 0.25 + 0.2 * wave;
+                child.material.emissiveIntensity = 0.1 + 0.4 * wave;
             }
             if (child.isMesh && child.geometry.type === 'ConeGeometry' && child.userData.baseEmissive !== undefined) {
                 const base = child.userData.baseEmissive;
-                child.material.emissiveIntensity = base + 1.6 * sharp;
-                child.material.opacity = 0.2 + 0.8 * sharp;
+                const wave = 0.5 + 0.5 * Math.sin(elapsed * 2.5 + ph);
+                child.material.emissiveIntensity = base + 0.3 * wave;
+                child.material.opacity = 0.7 + 0.3 * wave;
             }
         });
 
