@@ -279,6 +279,29 @@ app.get('/api/amap', (_req, res) => {
     });
 });
 
+// 和风天气 QWeather 代理：key 只在服务端 .env，前端不接触（不暴露到浏览器）
+// 前端调用 GET /api/weather?type=now|3d，本接口转发到 QWeather 并原样返回 JSON
+app.get('/api/weather', async (req, res) => {
+    const key = process.env.QWEATHER_KEY || '';
+    if (!key) return res.status(500).json({ code: '500', error: 'QWEATHER_KEY 未配置' });
+    const type = req.query.type === '3d' ? '3d' : 'now';
+    // 定位：优先 config.json 的 geo.center（[lng, lat]），QWeather location 格式为 "lng,lat"
+    let loc = '116.41,39.92';
+    try {
+        const geo = db.getGeo();
+        if (geo && geo.center && geo.center.length >= 2) loc = geo.center[0] + ',' + geo.center[1];
+    } catch (_) {}
+    const url = 'https://devapi.qweather.com/v7/weather/' + type +
+        '?location=' + encodeURIComponent(loc) + '&key=' + encodeURIComponent(key);
+    try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        const data = await r.json();
+        res.json(data);
+    } catch (err) {
+        res.status(502).json({ code: '502', error: '天气服务请求失败: ' + err.message });
+    }
+});
+
 // ==================== 配置读写（数据库驱动） ====================
 
 // 读取完整配置

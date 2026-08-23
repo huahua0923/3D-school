@@ -1729,7 +1729,6 @@ function rebuildLocaIfActive() {
 function initWeather() {
     const panel = document.getElementById('weather-panel');
     if (!panel) return;
-    const city = (CONFIG.weather && CONFIG.weather.city) || '成都市';
     const deg = (t) => String(t == null ? '--' : t).replace('℃', '').replace('°', '');
     const emoji = (w) => {
         const s = (w || '');
@@ -1742,28 +1741,28 @@ function initWeather() {
         if (s.includes('晴')) return '☀️';
         return '🌤️';
     };
-    let live = null;
-    let forecasts = [];
+    let live = null;      // QWeather /v7/weather/now 的 now 对象
+    let forecasts = [];   // QWeather /v7/weather/3d 的 daily 数组
     function render() {
         if (!live && forecasts.length === 0) { panel.style.display = 'none'; return; }
         let head, detail;
         if (live) {
-            head = '<div class="w-head"><span class="w-emoji">' + emoji(live.weather) + '</span>' +
-                   '<span class="w-temp">' + deg(live.temperature) + '°</span>' +
-                   '<span class="w-cond">' + (live.weather || '') + '</span></div>';
+            head = '<div class="w-head"><span class="w-emoji">' + emoji(live.text) + '</span>' +
+                   '<span class="w-temp">' + deg(live.temp) + '°</span>' +
+                   '<span class="w-cond">' + (live.text || '') + '</span></div>';
         } else {
-            head = '<div class="w-head"><span class="w-emoji">🌤️</span><span class="w-cond">' + city + '</span></div>';
+            head = '<div class="w-head"><span class="w-emoji">🌤️</span><span class="w-cond">场馆天气</span></div>';
         }
         let inner = '';
         if (live) {
-            inner += '<div class="w-city">' + (live.city || city) + '</div>' +
-                     '<div class="w-meta">' + (live.windDirection || '') + '风 ' + (live.windPower || '') + ' · 湿度 ' + (live.humidity || '--') + '%</div>';
+            inner += '<div class="w-city">📍 场馆实时</div>' +
+                     '<div class="w-meta">' + (live.windDir || '') + ' ' + (live.windScale || '') + '级 · 湿度 ' + (live.humidity || '--') + '%</div>';
         }
         let fc = '';
         forecasts.forEach(f => {
-            fc += '<div class="w-frow"><span class="w-fdate">' + (f.date || '').slice(5) + '</span>' +
-                  '<span class="w-fcond">' + emoji(f.dayweather) + ' ' + (f.dayweather || '') + '</span>' +
-                  '<span class="w-ftemp">' + deg(f.nighttemp) + '~' + deg(f.daytemp) + '°</span></div>';
+            fc += '<div class="w-frow"><span class="w-fdate">' + (f.fxDate || '').slice(5) + '</span>' +
+                  '<span class="w-fcond">' + emoji(f.textDay) + ' ' + (f.textDay || '') + '</span>' +
+                  '<span class="w-ftemp">' + deg(f.tempMin) + '~' + deg(f.tempMax) + '°</span></div>';
         });
         if (fc) inner += '<div class="w-forecast">' + fc + '</div>';
         if (inner) detail = '<div class="w-detail">' + inner + '</div>';
@@ -1771,17 +1770,26 @@ function initWeather() {
         panel.innerHTML = head + detail;
         panel.style.display = 'block';
     }
-    AMap.plugin('AMap.Weather', () => {
-        const weather = new AMap.Weather();
-        weather.getLive(city, (err, l) => {
-            if (!err && l) { live = l; render(); }
-            else console.warn('⚠️ 天气实时数据获取失败', err);
-        });
-        weather.getForecast(city, (err, f) => {
-            if (!err && f && f.forecasts) { forecasts = f.forecasts.slice(0, 3); render(); }
-            else console.warn('⚠️ 天气预报数据获取失败', err);
-        });
-    });
+    // 服务端代理和风天气 QWeather（key 只在 .env，前端不接触）
+    async function load() {
+        try {
+            const [nowRes, fcRes] = await Promise.all([
+                fetch('/api/weather?type=now', { cache: 'no-store' }),
+                fetch('/api/weather?type=3d', { cache: 'no-store' }),
+            ]);
+            const nowJson = await nowRes.json();
+            const fcJson = await fcRes.json();
+            if (nowJson && nowJson.code === '200' && nowJson.now) live = nowJson.now;
+            else console.warn('⚠️ 天气实时数据获取失败', nowJson);
+            if (fcJson && fcJson.code === '200' && fcJson.daily) forecasts = fcJson.daily.slice(0, 3);
+            else console.warn('⚠️ 天气预报数据获取失败', fcJson);
+        } catch (err) {
+            console.warn('⚠️ 天气请求失败', err.message);
+        }
+        render();
+    }
+    load();
+    setInterval(load, 30 * 60 * 1000);   // 每 30 分钟刷新一次
     panel.addEventListener('click', () => panel.classList.toggle('expanded'));
 }
 
