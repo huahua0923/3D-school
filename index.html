@@ -1368,6 +1368,37 @@ function glowTexture(hex) {
     return glowTexCache[hex];
 }
 
+// 水波纹扩散贴图：同心圆环（一圈圈向外），按 marker 颜色生成（缓存）
+const rippleTexCache = {};
+function rippleTexture(hex) {
+    if (rippleTexCache[hex]) return rippleTexCache[hex];
+    try {
+        const size = 160;
+        const c = document.createElement('canvas'); c.width = c.height = size;
+        const ctx = c.getContext('2d');
+        const cx = size / 2, cy = size / 2, R = size / 2;
+        // 中心亮斑
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * 0.1, 0, Math.PI * 2);
+        ctx.fillStyle = hexToRgba(hex, 1);
+        ctx.fill();
+        // 同心圆环：从内到外半径递增、透明度递减
+        const ringCount = 5;
+        for (let i = 0; i < ringCount; i++) {
+            const t = (i + 1) / ringCount;          // 1/5 .. 1
+            const r = t * R;
+            const alpha = 0.9 * (1 - t * 0.85);      // 内圈亮、外圈淡
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.strokeStyle = hexToRgba(hex, alpha);
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
+        rippleTexCache[hex] = c.toDataURL();
+    } catch (e) { rippleTexCache[hex] = ''; }
+    return rippleTexCache[hex];
+}
+
 function initLoca(map) {
     if (!window.Loca) { toast('⚠️ Loca SDK 未加载'); return; }
     if (locaContainer) return;
@@ -1388,7 +1419,7 @@ function initLoca(map) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
             const glowLayer = new Loca.ScatterLayer({ zIndex: 117 });
             glowLayer.setSource(src);
-            glowLayer.setStyle({ unit: 'meter', size: [45, 45], borderWidth: 0, texture: (...a) => glowTexture(locaFeatureProps(...a).color || '#f59e0b'), duration: 900, animate: true });
+            glowLayer.setStyle({ unit: 'meter', size: [70, 70], borderWidth: 0, texture: (...a) => rippleTexture(locaFeatureProps(...a).color || '#f59e0b'), duration: 1600, animate: true });
             loca.add(glowLayer);
         }
 
