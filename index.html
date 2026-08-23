@@ -1107,6 +1107,7 @@ const RIPPLE_RINGS = 3;           // 同时存在的圈数
 const RIPPLE_SEGMENTS = 24;       // 每圈采样点数（地面圆投影成椭圆）
 const RIPPLE_GLOW_R_M = 16;       // 中心光晕半径（米，贴地）
 const RIPPLE_GLOW_ALPHA = 0.25;   // 光晕中心不透明度
+const RIPPLE_BEAM_PX = 90;        // 光柱基准高度（px，随俯仰缩短）
 
 // 把以 (lng,lat) 为中心、地面半径 Rm 的圆采样成屏幕折线路径，3D 俯仰/旋转下自然压成椭圆
 function projectGroundEllipse(map, lng, lat, Rm, dLatPerM, dLngPerM) {
@@ -1143,16 +1144,36 @@ function drawRipple(map, now) {
         const c0 = map.lngLatToContainer(new AMap.LngLat(p.lng, p.lat));
         if (!c0) continue;
 
+        // 屏幕尺度：光晕半径对应的像素，光晕和光柱都按它定大小
+        const ce = map.lngLatToContainer(new AMap.LngLat(p.lng + RIPPLE_GLOW_R_M * dLngPerM, p.lat));
+        const gradR = ce ? Math.hypot(ce.x - c0.x, ce.y - c0.y) : RIPPLE_GLOW_R_M;
+
         // 中心光晕：软径向渐变填充贴地椭圆，让标记点有发光感（无硬点）
         const glow = projectGroundEllipse(map, p.lng, p.lat, RIPPLE_GLOW_R_M, dLatPerM, dLngPerM);
         if (glow) {
-            const ce = map.lngLatToContainer(new AMap.LngLat(p.lng + RIPPLE_GLOW_R_M * dLngPerM, p.lat));
-            const gradR = ce ? Math.hypot(ce.x - c0.x, ce.y - c0.y) : RIPPLE_GLOW_R_M;
             const grad = rippleCtx.createRadialGradient(c0.x, c0.y, 0, c0.x, c0.y, gradR);
             grad.addColorStop(0, hexToRgba(p.color, RIPPLE_GLOW_ALPHA));
             grad.addColorStop(1, hexToRgba(p.color, 0));
             rippleCtx.fillStyle = grad;
             rippleCtx.fill(glow);
+        }
+
+        // 光柱：从标记点向上的一道竖向光束（加法混合，顶部渐隐，俯仰越大越矮）
+        const pitch = (typeof map.getPitch === 'function') ? map.getPitch() : 55;
+        const beamH = RIPPLE_BEAM_PX * (0.35 + 0.65 * Math.cos(pitch * Math.PI / 180));
+        if (beamH > 8) {
+            const halfW = Math.max(3, gradR * 0.18);
+            const bg = rippleCtx.createLinearGradient(0, c0.y - beamH, 0, c0.y);
+            bg.addColorStop(0, hexToRgba(p.color, 0));
+            bg.addColorStop(0.72, hexToRgba(p.color, 0.16));
+            bg.addColorStop(1, hexToRgba(p.color, 0.38));
+            rippleCtx.fillStyle = bg;
+            rippleCtx.beginPath();
+            rippleCtx.moveTo(c0.x - halfW, c0.y);
+            rippleCtx.lineTo(c0.x + halfW, c0.y);
+            rippleCtx.lineTo(c0.x, c0.y - beamH);
+            rippleCtx.closePath();
+            rippleCtx.fill();
         }
 
         // 扩散圆环
