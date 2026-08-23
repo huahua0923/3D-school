@@ -1100,9 +1100,10 @@ function resizeRippleLayer() {
     rippleCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-const RIPPLE_PERIOD = 1800;     // 一圈扩散的周期（ms）
-const RIPPLE_MAX_R = 64;        // 最大扩散半径（px）
-const RIPPLE_RINGS = 3;         // 同时存在的圈数
+const RIPPLE_PERIOD = 1800;       // 一圈扩散的周期（ms）
+const RIPPLE_MAX_R_M = 60;        // 最大扩散半径（米，贴地）
+const RIPPLE_RINGS = 3;           // 同时存在的圈数
+const RIPPLE_SEGMENTS = 24;       // 每圈采样点数（地面圆投影成椭圆）
 
 function drawRipple(map, now) {
     if (!rippleCtx) return;
@@ -1112,14 +1113,30 @@ function drawRipple(map, now) {
     if (!rippleOn || !ripplePoints.length) return;
     rippleCtx.lineWidth = 2.5;
     for (const p of ripplePoints) {
-        const c = map.lngLatToContainer(new AMap.LngLat(p.lng, p.lat));
-        if (!c) continue;
+        // 地面半径 → 经纬度偏移（经度方向除以 cos(lat) 做球面修正）
+        const cosLat = Math.cos(p.lat * Math.PI / 180);
+        const dLatPerM = 1 / METERS_PER_DEG_LAT;
+        const dLngPerM = 1 / (METERS_PER_DEG_LAT * cosLat);
         for (let i = 0; i < RIPPLE_RINGS; i++) {
             const t = ((now / RIPPLE_PERIOD) + i / RIPPLE_RINGS) % 1;   // 0..1
-            const r = RIPPLE_MAX_R * t;
+            const R = RIPPLE_MAX_R_M * t;
             const alpha = 0.75 * Math.sin(Math.PI * t);                  // 平滑淡入淡出
+            if (R < 1) continue;                                         // 刚冒出时太小不画
+            // 把地面圆采样成多段折线并投影，3D 俯仰/旋转下自然变成椭圆
             rippleCtx.beginPath();
-            rippleCtx.arc(c.x, c.y, Math.max(r, 0.5), 0, Math.PI * 2);
+            let started = false;
+            for (let s = 0; s < RIPPLE_SEGMENTS; s++) {
+                const th = (s / RIPPLE_SEGMENTS) * Math.PI * 2;
+                const c = map.lngLatToContainer(new AMap.LngLat(
+                    p.lng + R * dLngPerM * Math.cos(th),
+                    p.lat + R * dLatPerM * Math.sin(th)
+                ));
+                if (!c) continue;
+                if (!started) { rippleCtx.moveTo(c.x, c.y); started = true; }
+                else rippleCtx.lineTo(c.x, c.y);
+            }
+            if (!started) continue;
+            rippleCtx.closePath();
             rippleCtx.strokeStyle = hexToRgba(p.color, Math.max(0, alpha));
             rippleCtx.stroke();
         }
