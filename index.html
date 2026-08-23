@@ -1381,11 +1381,6 @@ function rippleFrames(hex, frames = 24) {
             const phase = f / frames;                // 0..1 一个扩散周期
             const c = document.createElement('canvas'); c.width = c.height = size;
             const ctx = c.getContext('2d');
-            // 中心亮斑（锚定标记点位置）
-            ctx.beginPath();
-            ctx.arc(cx, cy, R * 0.08, 0, Math.PI * 2);
-            ctx.fillStyle = hexToRgba(hex, 1);
-            ctx.fill();
             // 一圈圈向外扩散：每个环随 phase 前移，越靠外越淡
             for (let i = 0; i < ringCount; i++) {
                 const t = (phase + i / ringCount) % 1;   // 0..1，从中心到边缘
