@@ -465,17 +465,23 @@ body {
   height: 3px; width: 16px; cursor: ns-resize; border-radius: 0 0 2px 2px;
 }
 
-/* ---- Hidden file input (Chrome compatible) ---- */
+/* ---- 导入图片：透明 file input 覆盖在按钮上，原生点击即打开文件框（不依赖 JS click） ---- */
+#btn-import-img { position: relative; overflow: hidden; }
 #hidden-file-input {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0,0,0,0);
-  white-space: nowrap;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
   border: 0;
+  margin: 0;
+  padding: 0;
+}
+#btn-import-img:hover,
+#btn-import-img:has(#hidden-file-input:hover) {
+  color: var(--text-primary);
+  border-color: #3a3a6e;
 }
 
 /* Scrollbar */

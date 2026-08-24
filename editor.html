@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>室内编辑 · 会展中心导览</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-<link rel="stylesheet" href="editor.css?v=2" />
+<link rel="stylesheet" href="editor.css?v=3" />
 </head>
 <body>
 
@@ -14,8 +14,9 @@
   <a href="/index.html" class="toolbar-btn" title="返回主地图" style="text-decoration:none;">🏠 首页</a>
   <div class="brand">🗺️ <span>Route</span>Editor</div>
   <input type="text" id="project-name" placeholder="未命名项目" title="项目名称" />
-  <label class="toolbar-btn" id="btn-import-img" title="导入图片" for="hidden-file-input">🖼️ 导入图片</label>
-  <input type="file" id="hidden-file-input" accept="image/*" style="display:none;" />
+  <label class="toolbar-btn" id="btn-import-img" title="导入图片">🖼️ 导入图片
+    <input type="file" id="hidden-file-input" accept="image/*" />
+  </label>
   <div class="sep"></div>
   <button class="toolbar-btn" id="btn-undo" disabled title="撤销 (Ctrl+Z)">↩</button>
   <button class="toolbar-btn" id="btn-redo" disabled title="重做 (Ctrl+Shift+Z)">↪</button>
