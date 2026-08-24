@@ -466,12 +466,10 @@ body {
 }
 
 /* ---- 导入图片：透明 file input 覆盖在按钮上，原生点击即打开文件框（不依赖 JS click） ---- */
-#btn-import-img { position: relative; overflow: hidden; }
+#btn-import-img { position: relative; }
 #hidden-file-input {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   opacity: 0;
   cursor: pointer;
   border: 0;
