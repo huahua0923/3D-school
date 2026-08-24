@@ -41,6 +41,7 @@
     selectedElementIds: [],
     isDrawing: false,
     drawingPoints: [],
+    calibrating: false,
     stageScale: 1,
     stagePosition: { x: 0, y: 0 },
     mousePos: null,
@@ -325,7 +326,7 @@
   function drawDrawingPreview() {
     const pts = state.drawingPoints;
     const isArea = state.currentTool === 'draw-area';
-    const color = isArea ? DEFAULT_AREA_COLOR : DEFAULT_ROUTE_COLOR;
+    const color = state.calibrating ? '#f59e0b' : (isArea ? DEFAULT_AREA_COLOR : DEFAULT_ROUTE_COLOR);
     if (pts.length >= 2) {
       ctx.strokeStyle = color; ctx.lineWidth = isArea ? 2 : 3;
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -337,6 +338,11 @@
         ctx.lineTo(pts[0].x, pts[0].y);
       }
       ctx.stroke(); ctx.setLineDash([]);
+      // 标定模式：在中点显示两点像素距离
+      if (state.calibrating) {
+        const d = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        drawPill((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2 - 16, Math.round(d) + ' px', '#f59e0b');
+      }
     }
     pts.forEach(p => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill(); });
   }
@@ -463,7 +469,7 @@
       elements: JSON.parse(JSON.stringify(sp.elements)),
       backgroundImage: sp.backgroundImage, imageWidth: sp.imageWidth, imageHeight: sp.imageHeight,
       bgOpacity: sp.bgOpacity, historyIndex: ni,
-      selectedElementId: null, selectedElementIds: [], isDrawing: false, drawingPoints: [],
+      selectedElementId: null, selectedElementIds: [], isDrawing: false, drawingPoints: [], calibrating: false,
     });
     loadBgImage(sp.backgroundImage, sp.imageWidth, sp.imageHeight);
   }
@@ -627,6 +633,67 @@
     textInputEl.style.display = 'none';
     textInputEl.blur();
     pendingTextPoint = null;
+  }
+
+  // ===================== 比例尺标定（参考线：画一段已知距离的线 → 输入米数） =====================
+  let calibrateInputEl = null;
+
+  function startCalibrate() {
+    setState({ calibrating: true, currentTool: 'select', isDrawing: false, drawingPoints: [] });
+    updateToolBtns();
+    showToast('📏 请沿图上一条已知长度的线段点两个点（如一段 50 米的通道）');
+  }
+
+  function showCalibrateInput() {
+    const pts = state.drawingPoints;
+    if (pts.length < 2) return;
+    const mx = (pts[0].x + pts[1].x) / 2, my = (pts[0].y + pts[1].y) / 2;
+    if (!calibrateInputEl) {
+      calibrateInputEl = document.createElement('input');
+      calibrateInputEl.type = 'number';
+      calibrateInputEl.min = '0';
+      calibrateInputEl.step = '0.1';
+      calibrateInputEl.className = 'inline-text-input';
+      calibrateInputEl.placeholder = '这段实际多少米？';
+      canvasWrap.appendChild(calibrateInputEl);
+      calibrateInputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commitCalibrate(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancelCalibrate(); }
+      });
+      calibrateInputEl.addEventListener('blur', commitCalibrate);
+    }
+    const sx = state.stagePosition.x + mx * state.stageScale;
+    const sy = state.stagePosition.y + my * state.stageScale;
+    calibrateInputEl.style.left = sx + 'px';
+    calibrateInputEl.style.top = (sy - 18) + 'px';
+    calibrateInputEl.value = '';
+    calibrateInputEl.style.display = 'block';
+    calibrateInputEl.focus();
+  }
+
+  function commitCalibrate() {
+    if (!calibrateInputEl || calibrateInputEl.style.display === 'none') return;
+    const meters = parseFloat(calibrateInputEl.value);
+    calibrateInputEl.style.display = 'none';
+    calibrateInputEl.blur();
+    const pts = state.drawingPoints;
+    setState({ calibrating: false, isDrawing: false, drawingPoints: [] });
+    if (!isFinite(meters) || meters <= 0 || pts.length < 2) { showToast('⚠️ 请输入有效的米数'); return; }
+    const dpx = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    if (dpx < 1) { showToast('⚠️ 两点距离太近'); return; }
+    const mpp = meters / dpx;   // 每像素多少米（比例尺真相）
+    const imgW = state.imageWidth || 1200;
+    const imgH = state.imageHeight || 800;
+    const gb = ensureGeoBounds();
+    const { center } = scaleFromBounds(gb, imgW);
+    const nb = boundsFromScale(center, mpp, imgW, imgH, gb.rotation || 0);
+    setState({ geoBounds: nb, geoBoundsExplicit: true });
+    showToast(`✅ 比例尺已标定：1px = ${(mpp * 100).toFixed(2)}cm · 整图 ≈ ${(imgW * mpp).toFixed(1)}m × ${(imgH * mpp).toFixed(1)}m`);
+  }
+
+  function cancelCalibrate() {
+    if (calibrateInputEl) { calibrateInputEl.style.display = 'none'; calibrateInputEl.blur(); }
+    setState({ calibrating: false, isDrawing: false, drawingPoints: [] });
   }
 
   function updateSelEl(updates) {
@@ -806,6 +873,27 @@
   let defaultCenter = [104.14141, 30.67133];
   let geoConfig = null;
   const GEO_HALF_LNG = 0.002, GEO_HALF_LAT = 0.0014;
+  const METERS_PER_DEG_LAT = 111320;
+
+  // 由 center + 每像素米数(mpp) + 图片尺寸 → 等比 nw/se（宽度方向用墨卡托 cos 修正，保证不变形）
+  function boundsFromScale(center, mpp, imgW, imgH, rotation) {
+    const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(center[1] * Math.PI / 180);
+    const dLng = (imgW * mpp) / mPerDegLng;
+    const dLat = (imgH * mpp) / METERS_PER_DEG_LAT;
+    return {
+      center: [center[0], center[1]], metersPerPixel: mpp, rotation: rotation || 0,
+      nw: [center[0] - dLng / 2, center[1] + dLat / 2],
+      se: [center[0] + dLng / 2, center[1] - dLat / 2],
+    };
+  }
+
+  // 由现有 nw/se 反推 center + 每像素米数（宽度方向），兼容旧数据 / 从范围取比例尺
+  function scaleFromBounds(gb, imgW) {
+    const center = gb.center || [(gb.nw[0] + gb.se[0]) / 2, (gb.nw[1] + gb.se[1]) / 2];
+    const dLng = gb.se[0] - gb.nw[0];
+    const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(center[1] * Math.PI / 180);
+    return { center, mpp: (dLng * mPerDegLng) / imgW };
+  }
 
   function defaultGeoBounds() {
     const [clng, clat] = defaultCenter;
@@ -1050,30 +1138,42 @@
     const imgAr = imgW / imgH;
     const midLng = (gb.nw[0] + gb.se[0]) / 2;
     const midLat = (gb.nw[1] + gb.se[1]) / 2;
+    const { mpp: curMpp } = scaleFromBounds(gb, imgW);
+    const curWM = imgW * curMpp, curHM = imgH * curMpp;
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal-box"><h2>🌐 地理范围</h2>
-      <p style="color:#8888aa;font-size:0.8rem;margin-bottom:12px;">设定本方案对应真实地图的经纬度范围，保存后 3D 主地图按此范围展示线/框/文字。图片会被拉伸对齐到这两个角点。</p>
-      <div class="geo-grid">
-        <label>西北角 经度<input type="number" id="geo-nw-lng" step="0.00001" value="${gb.nw[0]}"></label>
-        <label>西北角 纬度<input type="number" id="geo-nw-lat" step="0.00001" value="${gb.nw[1]}"></label>
-        <label>东南角 经度<input type="number" id="geo-se-lng" step="0.00001" value="${gb.se[0]}"></label>
-        <label>东南角 纬度<input type="number" id="geo-se-lat" step="0.00001" value="${gb.se[1]}"></label>
-        <label>旋转角度(度)<input type="number" id="geo-rotation" step="0.5" value="${gb.rotation || 0}"></label>
-      </div>
-      <button class="toolbar-btn primary" id="geo-align" style="margin-top:12px;width:100%;justify-content:center;">🎯 在地图上对位（拖拽/缩放底图，所见即所得）</button>
-      <button class="toolbar-btn" id="geo-pick" style="margin-top:6px;width:100%;justify-content:center;">🖱️ 点选两个角点（备用）</button>
-      <div id="geo-distort" style="margin-top:10px;font-size:0.78rem;color:#8888aa;line-height:1.5;"></div>
-      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border-panel);">
-        <div style="font-size:0.78rem;color:#8888aa;margin-bottom:8px;">⚡ 按图片比例自动计算（图片 ${imgW}×${imgH}，比例 ${imgAr.toFixed(2)}:1）</div>
+      <p style="color:#8888aa;font-size:0.8rem;margin-bottom:12px;">设定本方案对应真实地图的经纬度范围与比例尺（1 像素 = 多少米），保存后 3D 主地图按此范围展示线/框/文字，并保持图片宽高比不变形。</p>
+
+      <div style="background:#111827;border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="font-size:0.8rem;font-weight:600;color:#e0e0f0;margin-bottom:8px;">⚡ 真实尺寸标定（推荐）</div>
         <div class="geo-grid">
           <label>中心 经度<input type="number" id="geo-c-lng" step="0.00001" value="${midLng.toFixed(5)}"></label>
           <label>中心 纬度<input type="number" id="geo-c-lat" step="0.00001" value="${midLat.toFixed(5)}"></label>
-          <label>实地宽度(米)<input type="number" id="geo-width" step="1" min="1" value="200"></label>
+          <label>实地宽度(米)<input type="number" id="geo-width" step="1" min="1" value="${curWM.toFixed(1)}" placeholder="例如 80"></label>
+          <label>实地高度(米)<input type="number" id="geo-height" step="1" min="1" value="${curHM.toFixed(1)}" placeholder="按比例自动"></label>
         </div>
-        <button class="toolbar-btn" id="geo-auto-calc" style="margin-top:8px;">计算并填入</button>
+        <div id="geo-scale-readout" style="font-size:0.78rem;color:#8888aa;margin:8px 0;"></div>
+        <button class="toolbar-btn primary" id="geo-apply-scale" style="width:100%;justify-content:center;">应用比例尺</button>
       </div>
+
+      <button class="toolbar-btn" id="geo-calibrate" style="width:100%;justify-content:center;">📏 参考线标定（画一段已知长度的线）</button>
+
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-panel);">
+        <div style="font-size:0.78rem;color:#8888aa;margin-bottom:8px;">手动范围（高级）</div>
+        <div class="geo-grid">
+          <label>西北角 经度<input type="number" id="geo-nw-lng" step="0.00001" value="${gb.nw[0]}"></label>
+          <label>西北角 纬度<input type="number" id="geo-nw-lat" step="0.00001" value="${gb.nw[1]}"></label>
+          <label>东南角 经度<input type="number" id="geo-se-lng" step="0.00001" value="${gb.se[0]}"></label>
+          <label>东南角 纬度<input type="number" id="geo-se-lat" step="0.00001" value="${gb.se[1]}"></label>
+          <label>旋转角度(度)<input type="number" id="geo-rotation" step="0.5" value="${gb.rotation || 0}"></label>
+        </div>
+        <button class="toolbar-btn" id="geo-align" style="margin-top:12px;width:100%;justify-content:center;">🎯 在地图上对位（拖拽/缩放底图，所见即所得）</button>
+        <button class="toolbar-btn" id="geo-pick" style="margin-top:6px;width:100%;justify-content:center;">🖱️ 点选两个角点（备用）</button>
+        <div id="geo-distort" style="margin-top:10px;font-size:0.78rem;color:#8888aa;line-height:1.5;"></div>
+      </div>
+
       <div class="actions">
         <button class="toolbar-btn" id="geo-default">恢复默认</button>
         <button class="toolbar-btn" id="geo-cancel">取消</button>
@@ -1084,6 +1184,9 @@
     const seLng = overlay.querySelector('#geo-se-lng'), seLat = overlay.querySelector('#geo-se-lat');
     const rotationEl = overlay.querySelector('#geo-rotation');
     const distortEl = overlay.querySelector('#geo-distort');
+    const widthEl = overlay.querySelector('#geo-width');
+    const heightEl = overlay.querySelector('#geo-height');
+    const readoutEl = overlay.querySelector('#geo-scale-readout');
 
     function readBounds() {
       return {
@@ -1104,12 +1207,49 @@
       const ratio = groundAr / imgAr;
       const pct = Math.abs(1 - ratio) * 100;
       if (pct < 1) distortEl.innerHTML = '✅ 经纬度跨度比与图片宽高比一致，无变形';
-      else distortEl.innerHTML = `⚠️ 会拉伸变形约 <b>${pct.toFixed(0)}%</b>（地面宽高比 ${groundAr.toFixed(2)} vs 图片 ${imgAr.toFixed(2)}），建议点「计算并填入」`;
+      else distortEl.innerHTML = `⚠️ 会拉伸变形约 <b>${pct.toFixed(0)}%</b>（地面宽高比 ${groundAr.toFixed(2)} vs 图片 ${imgAr.toFixed(2)}），建议点「应用比例尺」`;
     }
+    // 真实尺寸：宽/高按图片比例联动
+    function updateScaleReadout() {
+      const wM = Number(widthEl.value), hM = Number(heightEl.value);
+      if (isFinite(wM) && wM > 0 && isFinite(hM) && hM > 0) {
+        const mpp = wM / imgW;
+        readoutEl.innerHTML = `每像素 ≈ <b>${(mpp * 100).toFixed(2)} cm</b> · 整图 ≈ 宽 <b>${wM.toFixed(1)} m</b> × 高 <b>${hM.toFixed(1)} m</b>`;
+      } else {
+        readoutEl.innerHTML = '输入宽度或高度后自动计算比例尺';
+      }
+    }
+    widthEl.addEventListener('input', () => {
+      const wM = Number(widthEl.value);
+      if (isFinite(wM) && wM > 0) heightEl.value = (wM / imgAr).toFixed(2);
+      updateScaleReadout();
+    });
+    heightEl.addEventListener('input', () => {
+      const hM = Number(heightEl.value);
+      if (isFinite(hM) && hM > 0) widthEl.value = (hM * imgAr).toFixed(2);
+      updateScaleReadout();
+    });
 
     ['geo-nw-lng', 'geo-nw-lat', 'geo-se-lng', 'geo-se-lat'].forEach(id => {
       overlay.querySelector('#' + id).addEventListener('input', updateDistortHint);
     });
+
+    // 应用比例尺：由 center + 宽度 → 等比 nw/se
+    overlay.querySelector('#geo-apply-scale').onclick = () => {
+      const clng = Number(overlay.querySelector('#geo-c-lng').value);
+      const clat = Number(overlay.querySelector('#geo-c-lat').value);
+      const wM = Number(widthEl.value) || (Number(heightEl.value) * imgAr);
+      if ([clng, clat, wM].some(isNaN) || wM <= 0) { alert('请输入有效的中心与实地宽度/高度'); return; }
+      const nb = boundsFromScale([clng, clat], wM / imgW, imgW, imgH, Number(rotationEl.value) || 0);
+      nwLng.value = nb.nw[0]; nwLat.value = nb.nw[1]; seLng.value = nb.se[0]; seLat.value = nb.se[1];
+      updateDistortHint();
+    };
+
+    // 参考线标定：关弹窗 → 画布上画两个点
+    overlay.querySelector('#geo-calibrate').onclick = () => {
+      overlay.remove();
+      startCalibrate();
+    };
 
     overlay.querySelector('#geo-align').onclick = () => {
       showGeoAlign(({ nw, se, rotation }) => {
@@ -1120,7 +1260,11 @@
     };
     overlay.querySelector('#geo-pick').onclick = () => {
       showGeoPicker(({ nw, se }) => {
-        nwLng.value = nw[0]; nwLat.value = nw[1]; seLng.value = se[0]; seLat.value = se[1];
+        // 点选两角：保持中心 + 宽度，高度按图片比例强制等比（避免拉伸变形）
+        const center = [(nw[0] + se[0]) / 2, (nw[1] + se[1]) / 2];
+        const { mpp } = scaleFromBounds({ nw, se }, imgW);
+        const nb = boundsFromScale(center, mpp, imgW, imgH, Number(rotationEl.value) || 0);
+        nwLng.value = nb.nw[0]; nwLat.value = nb.nw[1]; seLng.value = nb.se[0]; seLat.value = nb.se[1];
         updateDistortHint();
       });
     };
@@ -1130,30 +1274,24 @@
       rotationEl.value = 0;
       updateDistortHint();
     };
-    overlay.querySelector('#geo-auto-calc').onclick = () => {
-      const clng = Number(overlay.querySelector('#geo-c-lng').value);
-      const clat = Number(overlay.querySelector('#geo-c-lat').value);
-      const widthM = Number(overlay.querySelector('#geo-width').value);
-      if ([clng, clat, widthM].some(isNaN) || widthM <= 0) { alert('请输入有效的中心和宽度'); return; }
-      const mPerDegLat = 111320;
-      const mPerDegLng = 111320 * Math.cos(clat * Math.PI / 180);
-      const dLat = (widthM / imgAr) / mPerDegLat;
-      const dLng = widthM / mPerDegLng;
-      nwLng.value = clng - dLng / 2; nwLat.value = clat + dLat / 2;
-      seLng.value = clng + dLng / 2; seLat.value = clat - dLat / 2;
-      updateDistortHint();
-    };
     overlay.querySelector('#geo-cancel').onclick = () => overlay.remove();
     overlay.querySelector('#geo-save').onclick = () => {
       const nw = [Number(nwLng.value), Number(nwLat.value)];
       const se = [Number(seLng.value), Number(seLat.value)];
       if (nw.some(isNaN) || se.some(isNaN)) { alert('请输入有效经纬度'); return; }
-      setState({ geoBounds: { nw, se, rotation: Number(rotationEl.value) || 0 }, geoBoundsExplicit: true });
+      if (se[0] <= nw[0] || nw[1] <= se[1]) { alert('请确保东南角经度大于西北角经度、西北角纬度大于东南角纬度'); return; }
+      const rotation = Number(rotationEl.value) || 0;
+      // 归一化：始终存等比范围 + center + 每像素米数（宽度方向为准），保证旋转/比例正确、不变形
+      const center = [(nw[0] + se[0]) / 2, (nw[1] + se[1]) / 2];
+      const { mpp } = scaleFromBounds({ nw, se, rotation }, imgW);
+      const nb = boundsFromScale(center, mpp, imgW, imgH, rotation);
+      setState({ geoBounds: nb, geoBoundsExplicit: true });
       overlay.remove();
-      showToast('✅ 地理范围已设置');
+      showToast('✅ 地理范围与比例尺已设置');
     };
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     updateDistortHint();
+    updateScaleReadout();
   }
 
   // ===================== Save/Load =====================
@@ -1177,7 +1315,7 @@
       geoBounds: data.geoBounds || null,
       geoBoundsExplicit: !!(data.geoBounds),
       selectedElementId: null, selectedElementIds: [],
-      isDrawing: false, drawingPoints: [], stageScale: 1, stagePosition: { x: 0, y: 0 },
+      isDrawing: false, drawingPoints: [], calibrating: false, stageScale: 1, stagePosition: { x: 0, y: 0 },
     });
     loadBgImage(data.backgroundImage, data.imageWidth, data.imageHeight);
     resetHistory();
@@ -1570,6 +1708,17 @@
       return;
     }
 
+    if (state.calibrating) {
+      const pt = { x: snap(world.x), y: snap(world.y) };
+      if (state.isDrawing) {
+        addDrawingPoint(pt);
+        if (state.drawingPoints.length >= 2) showCalibrateInput();
+      } else {
+        startDrawing(pt);
+      }
+      return;
+    }
+
     if (state.currentTool === 'pan' || (state.currentTool === 'select' && e.shiftKey)) {
       dragState = { type: 'pan', sx: pos.clientX, sy: pos.clientY, sp: { ...state.stagePosition } };
       canvasWrap.classList.add('panning');
@@ -1708,6 +1857,10 @@
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     const k = e.key.toLowerCase();
     const ctrl = e.ctrlKey || e.metaKey;
+    if (state.calibrating) {
+      if (k === 'escape') { e.preventDefault(); cancelCalibrate(); }
+      return; // 标定模式下屏蔽其它快捷键，先 Esc 退出
+    }
     if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
     if (ctrl && (k === 'z' && e.shiftKey || k === 'y')) { e.preventDefault(); redo(); }
     if (ctrl && k === 's') { e.preventDefault(); handleSave(); }
@@ -1742,7 +1895,7 @@
   document.querySelectorAll('#toolbar button').forEach(btn => {
     btn.addEventListener('click', () => {
       const tool = btn.dataset.tool; if (!tool) return;
-      setState({ currentTool: tool, isDrawing: false, drawingPoints: [] });
+      setState({ currentTool: tool, isDrawing: false, drawingPoints: [], calibrating: false });
       updateToolBtns();
     });
   });
