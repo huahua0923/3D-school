@@ -1743,10 +1743,6 @@
     reader.readAsDataURL(file);
     this.value = '';
   });
-  document.getElementById('btn-import-img').addEventListener('click', function (e) {
-    e.preventDefault();
-    fileInput.click();
-  });
 
   // Snap toggle
   document.getElementById('snap-toggle').addEventListener('change', function () {
