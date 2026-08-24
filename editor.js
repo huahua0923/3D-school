@@ -1621,9 +1621,11 @@
     const file = e.dataTransfer.files[0];
     if (!file || !file.type.startsWith('image/')) return;
     const reader = new FileReader();
+    reader.onerror = () => { showToast('⚠️ 文件读取失败，请重试'); };
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => { setBackgroundImage(ev.target.result, img.width, img.height); setState({ stageScale: 1, stagePosition: { x: 0, y: 0 } }); showToast('✅ 背景图已导入'); };
+      img.onerror = () => { showToast('⚠️ 无法解析该图片，请改用 PNG 或 JPG 格式'); };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
@@ -1731,9 +1733,11 @@
     const file = this.files[0];
     if (!file) return;
     const reader = new FileReader();
+    reader.onerror = () => { showToast('⚠️ 文件读取失败，请重试'); this.value = ''; };
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => { setBackgroundImage(ev.target.result, img.width, img.height); showToast('✅ 背景图已导入'); };
+      img.onerror = () => { showToast('⚠️ 无法解析该图片，请改用 PNG 或 JPG 格式'); };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
