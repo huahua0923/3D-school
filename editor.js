@@ -393,7 +393,15 @@
         if (pointInPolygon(mx, my, el.points)) return el;
       } else if (el.type === 'text') {
         const p = el.points[0];
-        if (p && Math.abs(mx - p.x) < 60 && Math.abs(my - p.y) < 24) return el;
+        if (p) {
+          const fs = el.fontSize || 16;
+          ctx.save();
+          ctx.font = `${fs}px "Inter","PingFang SC","Microsoft YaHei",sans-serif`;
+          const pw = ctx.measureText(el.label || '').width + 16;
+          ctx.restore();
+          const ph = fs + 10;
+          if (mx >= p.x - 2 && mx <= p.x + pw + 2 && my >= p.y - ph / 2 - 2 && my <= p.y + ph / 2 + 2) return el;
+        }
       }
     }
     const sel = getSelEl();
@@ -544,14 +552,20 @@
 
   function addDrawingPoint(point) {
     if (!state.isDrawing) return;
+    const last = state.drawingPoints[state.drawingPoints.length - 1];
+    if (last && Math.hypot(last.x - point.x, last.y - point.y) < 1) return; // 与上一点重合，去重
     setState({ drawingPoints: [...state.drawingPoints, point] });
   }
 
   function finishDrawing() {
-    if (!state.isDrawing || state.drawingPoints.length < 2) {
-      setState({ isDrawing: false, drawingPoints: [] }); return;
-    }
     const isArea = state.currentTool === 'draw-area';
+    const minPts = isArea ? 3 : 2;
+    if (!state.isDrawing) return;
+    if (state.drawingPoints.length < minPts) {
+      setState({ isDrawing: false, drawingPoints: [] });
+      showToast(isArea ? '⚠️ 区域至少需要 3 个点' : '⚠️ 路线至少需要 2 个点');
+      return;
+    }
     const bn = isArea ? '区域' : '路线';
     const cnt = state.elements.filter(e => e.name.startsWith(bn)).length + 1;
     const newEl = {
@@ -564,17 +578,55 @@
     saveHistory();
   }
 
+  let textInputEl = null;
+  let pendingTextPoint = null;
+
   function addTextAnnotation(point) {
-    const text = prompt('输入文字:', '标注');
-    if (!text) return;
+    pendingTextPoint = point;
+    if (!textInputEl) {
+      textInputEl = document.createElement('input');
+      textInputEl.type = 'text';
+      textInputEl.className = 'inline-text-input';
+      textInputEl.placeholder = '输入文字，回车确定';
+      canvasWrap.appendChild(textInputEl);
+      textInputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commitText(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
+      });
+      textInputEl.addEventListener('blur', commitText);
+    }
+    const sx = state.stagePosition.x + point.x * state.stageScale;
+    const sy = state.stagePosition.y + point.y * state.stageScale;
+    textInputEl.style.left = sx + 'px';
+    textInputEl.style.top = (sy - 16) + 'px';
+    textInputEl.value = '';
+    textInputEl.style.display = 'block';
+    textInputEl.focus();
+  }
+
+  function commitText() {
+    if (!textInputEl || textInputEl.style.display === 'none') return;
+    const text = textInputEl.value.trim();
+    const p = pendingTextPoint;
+    textInputEl.style.display = 'none';
+    textInputEl.blur();
+    pendingTextPoint = null;
+    if (!text || !p) return;
     const cnt = state.elements.filter(e => e.type === 'text').length + 1;
     const newEl = {
       id: genId(), type: 'text', name: `文字 ${cnt}`, visible: true, locked: false,
-      points: [point], color: DEFAULT_TEXT_COLOR, strokeWidth: 0, opacity: 1,
+      points: [p], color: DEFAULT_TEXT_COLOR, strokeWidth: 0, opacity: 1,
       label: text, fontSize: 16, backgroundColor: DEFAULT_TEXT_BG,
     };
     setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id });
     saveHistory();
+  }
+
+  function cancelText() {
+    if (!textInputEl) return;
+    textInputEl.style.display = 'none';
+    textInputEl.blur();
+    pendingTextPoint = null;
   }
 
   function updateSelEl(updates) {
@@ -1526,7 +1578,7 @@
 
     if (state.currentTool === 'draw-route' || state.currentTool === 'draw-area') {
       if (state.isDrawing) {
-        if (e.detail >= 2) { state.drawingPoints.pop(); finishDrawing(); return; }
+        if (e.detail >= 2) { addDrawingPoint({ x: snap(world.x), y: snap(world.y) }); finishDrawing(); return; }
         addDrawingPoint({ x: snap(world.x), y: snap(world.y) });
       } else {
         startDrawing({ x: snap(world.x), y: snap(world.y) });
@@ -1660,7 +1712,15 @@
     if (ctrl && (k === 'z' && e.shiftKey || k === 'y')) { e.preventDefault(); redo(); }
     if (ctrl && k === 's') { e.preventDefault(); handleSave(); }
     if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
-    if ((k === 'delete' || k === 'backspace') && !ctrl) { e.preventDefault(); deleteSelected(); }
+    if ((k === 'delete' || k === 'backspace') && !ctrl) {
+      e.preventDefault();
+      if (state.isDrawing) {
+        if (state.drawingPoints.length > 1) setState({ drawingPoints: state.drawingPoints.slice(0, -1) });
+        else setState({ isDrawing: false, drawingPoints: [] });
+      } else {
+        deleteSelected();
+      }
+    }
     if (k === 'v') { setState({ currentTool: 'select', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
     if (k === 'h') { setState({ currentTool: 'pan', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
     if (k === 'l') { setState({ currentTool: 'draw-route', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }

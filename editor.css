@@ -482,6 +482,23 @@ body {
   border-color: #3a3a6e;
 }
 
+/* ---- 画布内联文字输入框（替代原生 prompt） ---- */
+.inline-text-input {
+  position: absolute;
+  z-index: 20;
+  min-width: 180px;
+  padding: 5px 10px;
+  border: 2px solid var(--accent-blue);
+  border-radius: 6px;
+  background: #fff;
+  color: #111;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28);
+}
+.inline-text-input::placeholder { color: #999; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
