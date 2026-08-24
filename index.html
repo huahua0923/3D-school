@@ -1216,7 +1216,7 @@ function buildSearchIndex() {
             if (!els.length) return;
             const areaW = data.imageWidth || PLAN_DEFAULT_W;
             const areaH = data.imageHeight || PLAN_DEFAULT_H;
-            const bounds = normalizeGeoBounds(data.geoBounds || defaultPlanBounds(), areaW, areaH);
+            const bounds = data.geoBounds || defaultPlanBounds();
             els.forEach(el => {
                 if (el.visible === false) return;
                 const pts = (el.points || []).map(pt => planPointToLngLat(pt.x, pt.y, bounds, areaW, areaH));
@@ -1871,27 +1871,6 @@ let currentFeature = null;              // 当前详情卡地物 {lng,lat,title,
 function defaultPlanBounds(center) {
     const [clng, clat] = center || (CONFIG.geo ? CONFIG.geo.center : [104.14141, 30.67133]);
     return { nw: [clng - PLAN_HALF_LNG, clat + PLAN_HALF_LAT], se: [clng + PLAN_HALF_LNG, clat - PLAN_HALF_LAT] };
-}
-
-// 由 center + 每像素米数(mpp) + 图片尺寸 → 等比 nw/se（宽度方向用墨卡托 cos 修正，保证不变形）
-function boundsFromScale(center, mpp, imgW, imgH, rotation) {
-    const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(center[1] * Math.PI / 180);
-    const dLng = (imgW * mpp) / mPerDegLng;
-    const dLat = (imgH * mpp) / METERS_PER_DEG_LAT;
-    return {
-        center: [center[0], center[1]], metersPerPixel: mpp, rotation: rotation || 0,
-        nw: [center[0] - dLng / 2, center[1] + dLat / 2],
-        se: [center[0] + dLng / 2, center[1] - dLat / 2],
-    };
-}
-
-// 渲染前归一化：新数据带显式比例尺 → 用 center+mpp 重算等比范围（防手动改坏 / 保证旋转+比例正确）
-// 旧数据（无 metersPerPixel）保持原有线性行为，避免破坏已部署方案
-function normalizeGeoBounds(gb, imgW, imgH) {
-    if (gb && typeof gb.metersPerPixel === 'number' && gb.metersPerPixel > 0 && Array.isArray(gb.center)) {
-        return boundsFromScale(gb.center, gb.metersPerPixel, imgW, imgH, gb.rotation || 0);
-    }
-    return gb;
 }
 
 function planPointToLngLat(x, y, bounds, areaW, areaH) {
