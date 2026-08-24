@@ -999,7 +999,7 @@ function updateProps(){
     document.getElementById('prop-rotation-row').style.display=(selectedOv._type==='rect')?'':'none';
     document.getElementById('prop-rotation').value=selectedOv._rotation||0;
     document.getElementById('prop-rotation-val').textContent=(selectedOv._rotation||0)+'°';
-    document.getElementById('prop-desc').closest('.prop-row').style.display=(isMarker||isText)?'none':'';
+    document.getElementById('prop-desc').closest('.prop-row').style.display=isText?'none':'';
     document.getElementById('prop-color').closest('.prop-row').style.display=isText?'none':'';
     document.getElementById('color-presets').style.display=isText?'none':'';
     const isLine=selectedOv instanceof AMap.Polyline;
@@ -1082,7 +1082,7 @@ document.getElementById('prop-rotation').addEventListener('input',function(){
 });
 document.getElementById('prop-rotation').addEventListener('change',function(){ _rotating=false; });
 document.getElementById('prop-desc').addEventListener('input',function(){
-    if(!selectedOv||selectedOv._type==='marker'||selectedOv._type==='text')return;
+    if(!selectedOv||selectedOv._type==='text')return;
     selectedOv._desc=this.value;
 });
 
@@ -1223,7 +1223,7 @@ async function doSave(token,name){
         const imgs=o._images||[];
         if(o._type==='marker'){
             const pos=o.getPosition();
-            markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b',images:imgs};
+            markers[o._name]={lng:pos.lng,lat:pos.lat,color:o._color||'#f59e0b',desc:o._desc||'',images:imgs};
             return;
         }
         if(o._type==='rect'){
