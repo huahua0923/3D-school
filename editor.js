@@ -1903,6 +1903,8 @@
 
   $floor.addEventListener('change', function () { setState({ floor: parseInt(this.value, 10) || 0 }); });
 
+  $building.addEventListener('input', function () { setState({ building: this.value.trim() }); });
+
   document.querySelectorAll('#toolbar button').forEach(btn => {
     btn.addEventListener('click', () => {
       const tool = btn.dataset.tool; if (!tool) return;
