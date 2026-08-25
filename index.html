@@ -2085,7 +2085,7 @@ function applyPlan(map, plan) {
     const els = Array.isArray(data.elements) ? data.elements : [];
     const areaW = data.imageWidth || PLAN_DEFAULT_W;
     const areaH = data.imageHeight || PLAN_DEFAULT_H;
-    const bounds = normalizeGeoBounds(data.geoBounds || defaultPlanBounds(), areaW, areaH);
+    const bounds = data.geoBounds || defaultPlanBounds();
 
     // 底图：场地平面图，按 geoBounds 对齐到地图（支持旋转烘焙）
     if (data.backgroundImage) {
