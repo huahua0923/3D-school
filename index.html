@@ -1855,7 +1855,7 @@ const PLAN_DEFAULT_W = 1200, PLAN_DEFAULT_H = 800;
 const PLAN_HALF_LNG = 0.002, PLAN_HALF_LAT = 0.0014;
 const PLAN_MEMORY_KEY = 'active_plans';
 const FLOOR_MEMORY_KEY = 'current_floor';
-let currentFloor = parseInt(localStorage.getItem(FLOOR_MEMORY_KEY) || '1', 10) || 1;  // 当前楼层（1=1F）
+let currentFloor = parseInt(localStorage.getItem(FLOOR_MEMORY_KEY) || '0', 10) || 0;  // 当前楼层（0=默认/未配置）
 let planMap = null;                     // 当前地图实例
 let planProjects = [];                  // 方案列表缓存 {id,name}
 let planOverlayGroups = {};             // planId -> { overlays:[], route:0, area:0 }
@@ -2210,48 +2210,22 @@ function drawNavRoute() {
     planMap.setZoomAndCenter(Math.max(planMap.getZoom(), 17), [navStart.lng, navStart.lat]);
 }
 
-// 方案楼层：取 floor 字段，非法/缺失回退 1F
-function floorOf(p) { return (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 1; }
+// 方案楼层：取 floor 字段，非法/缺失回退 0F（默认/未配置）
+function floorOf(p) { return (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 0; }
 
 function renderPlanList() {
     const active = new Set(getActivePlanIds().map(String));
-    const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map' && floorOf(p) === currentFloor);
-    const indoorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map') && floorOf(p) === currentFloor);
+    const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map');
+    const indoorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map'));
     renderOnePlanList(document.getElementById('plan-list-map'), mapPlans, active);
     renderOnePlanList(document.getElementById('plan-list-indoor'), indoorPlans, active);
     renderFloorSwitcher();
 }
 
-// 渲染楼层切换器：从方案收集去重排序的楼层，生成 1F/2F/... 按钮
+// 楼层切换器：楼层为可选元数据（默认 0F），方案自然平铺显示，不再按楼层互斥切换
 function renderFloorSwitcher() {
-    const box = document.getElementById('floor-switcher');
-    if (!box) return;
-    const floors = [...new Set(planProjects.map(floorOf))].sort((a, b) => a - b);
-    box.innerHTML = '';
-    if (floors.length === 0) return;
-    floors.forEach(f => {
-        const btn = document.createElement('button');
-        btn.className = 'floor-btn' + (f === currentFloor ? ' active' : '');
-        btn.textContent = f + 'F';
-        btn.addEventListener('click', () => switchFloor(f));
-        box.appendChild(btn);
-    });
-}
-
-// 切换楼层：跨层互斥（清空其他层、激活当前层全部方案）
-function switchFloor(floor) {
-    currentFloor = floor;
-    localStorage.setItem(FLOOR_MEMORY_KEY, String(floor));
-    if (planMap) getActivePlanIds().forEach(id => removePlanOverlay(planMap, Number(id)));
-    const ids = planProjects.filter(p => floorOf(p) === floor).map(p => String(p.id));
-    saveActivePlanIds(ids);
-    if (planMap) {
-        Promise.all(ids.map(id => fetchPlanData(id))).then(plans => {
-            plans.forEach(plan => { if (plan) applyPlan(planMap, plan); });
-            rebuildLocaIfActive();
-        });
-    }
-    renderPlanList();
+    const section = document.getElementById('floor-section');
+    if (section) section.style.display = 'none';
 }
 
 function renderOnePlanList(box, plans, active) {
@@ -2364,11 +2338,11 @@ async function refreshPlansAfterAuthChange() {
     saveActivePlanIds([]);
     await refreshPlanList();
     rebuildLocaIfActive();
-    const floorIds = planProjects.filter(p => floorOf(p) === currentFloor).map(p => String(p.id));
-    saveActivePlanIds(floorIds);
+    const allIds = planProjects.map(p => String(p.id));
+    saveActivePlanIds(allIds);
     renderPlanList();
-    if (planMap && floorIds.length > 0) {
-        Promise.all(floorIds.map(id => fetchPlanData(id))).then(plans => {
+    if (planMap && allIds.length > 0) {
+        Promise.all(allIds.map(id => fetchPlanData(id))).then(plans => {
             plans.forEach(plan => { if (plan) applyPlan(planMap, plan); });
             rebuildLocaIfActive();
         });
@@ -2447,17 +2421,16 @@ async function initPlanSelector(map) {
         rebuildLocaIfActive();
     });
 
-    // 楼层模型：只激活当前楼层方案（跨层互斥）
-    // 已有勾选记忆且属于当前楼层则恢复之；否则激活当前楼层全部方案
-    const floorIds = planProjects.filter(p => floorOf(p) === currentFloor).map(p => String(p.id));
-    const savedIds = getActivePlanIds().filter(id => floorIds.includes(String(id)));
-    const toActivate = (savedIds.length > 0) ? savedIds : floorIds;
+    // 所有方案自然显示：已有勾选记忆则恢复之；否则激活全部方案
+    const allIds = planProjects.map(p => String(p.id));
+    const savedIds = getActivePlanIds().filter(id => allIds.includes(String(id)));
+    const toActivate = (savedIds.length > 0) ? savedIds : allIds;
     saveActivePlanIds(toActivate);
     toActivate.forEach(id => {
         fetchPlanData(id).then(plan => {
             if (!plan) return;
             applyPlan(map, plan);
-            console.log(`✅ 已激活方案「${plan.name}」（${currentFloor}F）`);
+            console.log(`✅ 已激活方案「${plan.name}」`);
         });
     });
     renderPlanList();
@@ -2679,8 +2652,6 @@ async function boot() {
                 if (it) {
                     searchResults.style.display = 'none';
                     searchInput.value = it.name;
-                    // 跨层定位：结果所在楼层与当前不同 → 先切换楼层（异步渲染该层方案）
-                    if (it.floor && it.floor !== currentFloor) switchFloor(it.floor);
                     flyTo([it.lng, it.lat], 18, map.getPitch(), map.getRotation());
                     ui.showFeature({ icon: it.icon, title: it.name, badge: it.badge, desc: it.desc, images: it.images, lng: it.lng, lat: it.lat });
                     if (it.type === 'route' && it.pts) startGuide(it.pts, it.color, it.name);
