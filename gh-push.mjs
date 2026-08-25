@@ -58,6 +58,15 @@ if (files.length === 0) {
   process.exit(1);
 }
 
+// 本地运行时文件（含密钥/个性化配置），永远不进 git
+// 否则部署 tarball 会覆盖服务器上后台改过的 config.json（系统名字回退的根因）
+const NEVER_PUSH = new Set(['config.json', '.env', 'config.json.bak']);
+const blocked = files.filter(f => NEVER_PUSH.has(f.replace(/\\/g, '/')));
+if (blocked.length > 0) {
+  console.error('❌ 拒绝推送本地运行时文件（会覆盖服务器改过的配置 / 泄露密钥）: ' + blocked.join(', '));
+  process.exit(1);
+}
+
 const token = getToken();
 
 // 1. 当前 HEAD + base tree
