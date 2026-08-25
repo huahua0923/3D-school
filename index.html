@@ -125,6 +125,8 @@
 .plan-item { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255,255,255,0.7); cursor: pointer; padding: 2px 0; }
 .plan-item input { accent-color: var(--accent-main); cursor: pointer; flex-shrink: 0; }
 .plan-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-building-head { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.85); padding: 6px 0 2px; cursor: pointer; user-select: none; }
+.plan-building-head:hover { color: #fff; }
 .floor-switcher { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
 .floor-btn { flex: 0 0 auto; padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.6); font-size: 0.74rem; font-family: inherit; cursor: pointer; white-space: nowrap; }
 .floor-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
@@ -415,6 +417,12 @@
             <input type="text" id="search-input" placeholder="搜索地点..." autocomplete="off" />
             <div id="search-results"></div>
         </div>
+    </div>
+
+    <!-- Building Switcher (建筑切换) -->
+    <div class="sb-section" id="building-section" style="display:none;">
+        <div class="sb-label">🏢 建筑</div>
+        <div class="floor-switcher" id="building-switcher"></div>
     </div>
 
     <!-- Floor Switcher (楼层切换) -->
@@ -1846,7 +1854,9 @@ const PLAN_DEFAULT_W = 1200, PLAN_DEFAULT_H = 800;
 const PLAN_HALF_LNG = 0.002, PLAN_HALF_LAT = 0.0014;
 const PLAN_MEMORY_KEY = 'active_plans';
 const FLOOR_MEMORY_KEY = 'current_floor';
+const BUILDING_MEMORY_KEY = 'current_building';
 let currentFloor = parseInt(localStorage.getItem(FLOOR_MEMORY_KEY) || '0', 10) || 0;  // 当前楼层（0=默认/未配置）
+let currentBuilding = localStorage.getItem(BUILDING_MEMORY_KEY) || '';             // 当前建筑（''=全部）
 let planMap = null;                     // 当前地图实例
 let planProjects = [];                  // 方案列表缓存 {id,name}
 let planOverlayGroups = {};             // planId -> { overlays:[], route:0, area:0 }
@@ -2338,14 +2348,49 @@ function drawNavRoute() {
 
 // 方案楼层：取 floor 字段，非法/缺失回退 0F（默认/未配置）
 function floorOf(p) { return (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 0; }
+function buildingOf(p) { return (p.building && String(p.building).trim()) || ''; }
 
 function renderPlanList() {
     const active = new Set(getActivePlanIds().map(String));
     const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map');
-    const indoorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map'));
+    const indoorAll = planProjects.filter(p => !(p.data && p.data.kind === 'map'));
+    const indoorPlans = indoorAll.filter(p => currentBuilding === '' || buildingOf(p) === currentBuilding);
     renderOnePlanList(document.getElementById('plan-list-map'), mapPlans, active);
-    renderOnePlanList(document.getElementById('plan-list-indoor'), indoorPlans, active);
+    renderIndoorGrouped(document.getElementById('plan-list-indoor'), indoorPlans, active);
+    renderBuildingSwitcher();
     renderFloorSwitcher();
+}
+
+// 室内方案按「建筑」分组渲染（每组一个组头，点击聚焦该建筑；''=未分组）
+function renderIndoorGrouped(box, plans, active) {
+    if (!box) return;
+    box.innerHTML = '';
+    if (plans.length === 0) {
+        box.innerHTML = '<div style="font-size:0.72rem;color:rgba(255,255,255,0.35);padding:4px 0;">暂无方案</div>';
+        return;
+    }
+    const groups = new Map();
+    for (const p of plans) {
+        const key = buildingOf(p);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+    }
+    for (const [key, list] of groups) {
+        const head = document.createElement('div');
+        head.className = 'plan-building-head';
+        head.textContent = '🏢 ' + (key || '未分组');
+        if (key) {
+            head.title = '点击只看这栋楼的方案';
+            head.addEventListener('click', () => setBuilding(key));
+        } else {
+            head.title = '未分组方案';
+        }
+        box.appendChild(head);
+        const sub = document.createElement('div');
+        sub.className = 'plan-list';
+        renderOnePlanList(sub, list, active);
+        box.appendChild(sub);
+    }
 }
 
 // 楼层互斥切换：收集所有 >0 的楼层，生成「全部 / 1F / 2F…」按钮；点某层只看该层方案
@@ -2353,7 +2398,9 @@ function renderFloorSwitcher() {
     const section = document.getElementById('floor-section');
     const box = document.getElementById('floor-switcher');
     if (!section || !box) return;
-    const floors = [...new Set(planProjects.map(p => floorOf(p)).filter(f => f > 0))].sort((a, b) => a - b);
+    // 楼层按钮只显示「当前建筑」下的楼层（''=全部建筑）
+    const scope = planProjects.filter(p => currentBuilding === '' || buildingOf(p) === currentBuilding);
+    const floors = [...new Set(scope.map(p => floorOf(p)).filter(f => f > 0))].sort((a, b) => a - b);
     if (floors.length === 0) { section.style.display = 'none'; return; }
     section.style.display = 'block';
     box.innerHTML = '';
@@ -2367,6 +2414,37 @@ function renderFloorSwitcher() {
     };
     mk('全部', 0);
     floors.forEach(f => mk(f + 'F', f));
+}
+
+// 建筑互斥切换：收集所有建筑，生成「全部 / 楼A / 楼B…」按钮；≥2 个建筑才显示
+function renderBuildingSwitcher() {
+    const section = document.getElementById('building-section');
+    const box = document.getElementById('building-switcher');
+    if (!section || !box) return;
+    const buildings = [...new Set(planProjects.map(buildingOf).filter(Boolean))].sort();
+    if (buildings.length < 2) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    box.innerHTML = '';
+    const mk = (label, val) => {
+        const b = document.createElement('button');
+        b.className = 'floor-btn';
+        b.textContent = label;
+        if (currentBuilding === val) b.classList.add('active');
+        b.addEventListener('click', () => setBuilding(val));
+        box.appendChild(b);
+    };
+    mk('全部', '');
+    buildings.forEach(bn => mk(bn, bn));
+}
+
+function setBuilding(b) {
+    if (currentBuilding === b) return;
+    currentBuilding = b;
+    try { localStorage.setItem(BUILDING_MEMORY_KEY, String(b)); } catch (_) {}
+    renderBuildingSwitcher();
+    renderFloorSwitcher();
+    renderPlanList();
+    syncFloorVisibility();
 }
 
 function setFloor(f) {
@@ -2383,13 +2461,18 @@ function syncFloorVisibility() {
     const active = new Set(getActivePlanIds().map(String));
     for (const p of planProjects) {
         const id = String(p.id);
-        const want = active.has(id) && (currentFloor === 0 || floorOf(p) === currentFloor);
+        const isMap = p.data && p.data.kind === 'map';
+        const want = active.has(id)
+            && (isMap || currentBuilding === '' || buildingOf(p) === currentBuilding)
+            && (currentFloor === 0 || floorOf(p) === currentFloor);
         const shown = !!planOverlayGroups[id];
         if (want && !shown) {
             fetchPlanData(p.id).then(plan => {
                 if (!plan) return;
-                // 二次校验：异步期间楼层/勾选可能已变
-                if ((currentFloor === 0 || floorOf(plan) === currentFloor)
+                // 二次校验：异步期间建筑/楼层/勾选可能已变（map 方案不受建筑过滤）
+                const isMapP = plan.data && plan.data.kind === 'map';
+                if ((isMapP || currentBuilding === '' || buildingOf(plan) === currentBuilding)
+                    && (currentFloor === 0 || floorOf(plan) === currentFloor)
                     && getActivePlanIds().map(String).includes(id)
                     && !planOverlayGroups[id]) {
                     applyPlan(planMap, plan);

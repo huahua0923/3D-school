@@ -26,6 +26,7 @@
     <option value="8">8F</option>
     <option value="9">9F</option>
   </select>
+  <input type="text" id="project-building" placeholder="建筑名（同楼各层填同名）" title="建筑分组（同楼各层填同名，空=未分组）" style="flex:0 0 160px;max-width:160px;" />
   <label class="toolbar-btn" id="btn-import-img" title="导入图片">🖼️ 导入图片
     <input type="file" id="hidden-file-input" accept="image/*" />
   </label>
@@ -59,6 +60,7 @@
   <button class="toolbar-btn primary" id="btn-save" title="保存项目 (Ctrl+S)">💾 保存</button>
   <button class="toolbar-btn" id="btn-new" title="新建项目">＋</button>
   <button class="toolbar-btn" id="btn-geo" title="设置地理范围（用于 3D 地图展示）">🌐 范围</button>
+  <button class="toolbar-btn" id="btn-batch-import" title="批量导入：粘贴建筑清单 JSON，一键生成每栋每层的方案">🧱 批量导入</button>
   <div class="sep"></div>
   <span id="export-menu-wrap" style="position:relative;">
     <button class="toolbar-btn" id="btn-export" title="导出">📤 导出 ▾</button>
@@ -188,6 +190,6 @@
   <button data-action="delete" class="danger">🗑 删除</button>
 </div>
 
-<script src="editor.js?v=5"></script>
+<script src="editor.js?v=6"></script>
 </body>
 </html>

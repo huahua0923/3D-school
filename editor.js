@@ -30,6 +30,7 @@
     projectId: null,
     projectName: '未命名项目',
     floor: 0,
+    building: '',
     geoBounds: null,
     geoBoundsExplicit: false,
     backgroundImage: null,
@@ -68,6 +69,7 @@
   const canvasWrap = document.getElementById('canvas-wrap');
   const $name = document.getElementById('project-name');
   const $floor = document.getElementById('project-floor');
+  const $building = document.getElementById('project-building');
   const $layerList = document.getElementById('layer-list');
   const $propsPanel = document.getElementById('props-panel');
   const $noSelection = document.getElementById('no-selection');
@@ -1307,7 +1309,7 @@
     };
   }
 
-  function loadProjectData(data, floor) {
+  function loadProjectData(data, floor, building) {
     setState({
       backgroundImage: data.backgroundImage || null,
       imageWidth: data.imageWidth || 0, imageHeight: data.imageHeight || 0,
@@ -1315,6 +1317,7 @@
       elements: Array.isArray(data.elements) ? data.elements : [],
       projectName: data.projectName || '未命名项目',
       floor: floor !== undefined ? floor : 0,
+      building: building || '',
       geoBounds: data.geoBounds || null,
       geoBoundsExplicit: !!(data.geoBounds),
       selectedElementId: null, selectedElementIds: [],
@@ -1341,7 +1344,7 @@
     const data = getProjectData();
     const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
     let res;
-    const payload = { name, data, floor: state.floor };
+    const payload = { name, data, floor: state.floor, building: state.building || '' };
     if (state.projectId) {
       res = await fetch(`/api/editor/projects/${state.projectId}`, { method: 'PUT', headers, body: JSON.stringify(payload) });
     } else {
@@ -1400,7 +1403,7 @@
         const id = Number(row.dataset.id);
         const res = await fetch(`/api/editor/projects/${id}`);
         const json = await res.json();
-        if (json.data) { state.projectId = id; loadProjectData(json.data.data || json.data, json.data.floor); overlay.remove(); showToast('✅ 项目已加载'); }
+        if (json.data) { state.projectId = id; loadProjectData(json.data.data || json.data, json.data.floor, json.data.building); overlay.remove(); showToast('✅ 项目已加载'); }
       };
     });
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -1516,7 +1519,7 @@
         if (e.target.tagName === 'INPUT') return;
         const res = await fetch('/api/editor/projects/' + p.id, { headers: authHeaders() });
         const json = await res.json();
-        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data, json.data.floor); showToast('✅ 已加载：' + (json.data.name || p.name)); removePlanOverlay(String(p.id)); renderPlanList(); }
+        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data, json.data.floor, json.data.building); showToast('✅ 已加载：' + (json.data.name || p.name)); removePlanOverlay(String(p.id)); renderPlanList(); }
       });
       box.appendChild(row);
     });
@@ -1524,7 +1527,7 @@
 
   function blankProject() {
     setState({
-      projectId: null, projectName: '未命名项目', floor: 0, geoBounds: null, geoBoundsExplicit: false,
+      projectId: null, projectName: '未命名项目', floor: 0, building: '', geoBounds: null, geoBoundsExplicit: false,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
       stageScale: 1, stagePosition: { x: 0, y: 0 },
@@ -1599,6 +1602,7 @@
   function updateUI() {
     $name.value = state.projectName;
     $floor.value = String(state.floor ?? 0);
+    $building.value = state.building || '';
     $zoomSlider.value = Math.round(state.stageScale * 100);
     $zoomLabel.textContent = Math.round(state.stageScale * 100) + '%';
     document.getElementById('btn-undo').disabled = state.historyIndex < 0;
@@ -1996,7 +2000,7 @@
   document.getElementById('btn-new').addEventListener('click', () => {
     if (state.elements.length > 0 && !confirm('确定新建？未保存更改将丢失。')) return;
     setState({
-      projectId: null, projectName: '未命名项目', floor: 0, geoBounds: null, geoBoundsExplicit: false,
+      projectId: null, projectName: '未命名项目', floor: 0, building: '', geoBounds: null, geoBoundsExplicit: false,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
       stageScale: 1, stagePosition: { x: 0, y: 0 },
@@ -2004,6 +2008,42 @@
     bgImageObj = null; $name.value = '未命名项目'; lastSavedAt = null; resetHistory(); updateUI();
   });
   document.getElementById('btn-geo').addEventListener('click', showGeoBoundsModal);
+
+  // 批量导入：粘贴建筑清单 JSON，一键生成每栋 × 每层的方案骨架
+  function showBatchImport() {
+    const token = getToken();
+    if (!token) { showLoginPrompt(() => showBatchImport()); return; }
+    const example = JSON.stringify([
+      { name: '会展中心主馆', center: [104.0636, 30.6725], widthM: 80, heightM: 60, rotation: 0, floors: [1, 2, 3, 4, 5] }
+    ], null, 2);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-box" style="min-width:560px;"><h2>🧱 批量导入建筑</h2>
+      <p style="color:#8888aa;font-size:0.8rem;margin-bottom:8px;">粘贴一份「建筑清单」JSON，每栋楼自动生成每个楼层的方案骨架（名称/楼层/位置/比例尺就绪，底图后续逐层导入）。</p>
+      <textarea id="batch-json" style="width:100%;height:280px;padding:10px;border-radius:8px;border:1px solid #2a2a4e;background:#0f0f1a;color:#e0e0f0;font-size:0.8rem;font-family:ui-monospace,Consolas,monospace;">${example}</textarea>
+      <div class="actions">
+        <button class="toolbar-btn" id="batch-cancel">取消</button>
+        <button class="toolbar-btn primary" id="batch-run">导入</button>
+      </div></div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#batch-cancel').onclick = () => overlay.remove();
+    overlay.querySelector('#batch-run').onclick = async () => {
+      let payload;
+      try { payload = JSON.parse(overlay.querySelector('#batch-json').value); }
+      catch (e) { alert('JSON 解析失败：' + e.message); return; }
+      const t = getToken();
+      try {
+        const res = await fetch('/api/editor/projects/batch', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: JSON.stringify(payload) });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) { alert('导入失败：' + (j.error || ('HTTP ' + res.status))); return; }
+        overlay.remove();
+        showToast('✅ 已生成 ' + (j.created || 0) + ' 个方案');
+        loadPlanList();
+      } catch (err) { alert('导入失败：' + err.message); }
+    };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+  document.getElementById('btn-batch-import').addEventListener('click', showBatchImport);
 
   // 侧栏方案列表：新建 / 刷新
   document.getElementById('btn-plan-new').addEventListener('click', () => {

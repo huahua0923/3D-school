@@ -554,8 +554,8 @@ app.get('/api/editor/projects/:id', (req, res) => {
 // 创建新项目
 app.post('/api/editor/projects', adminOnly, (req, res) => {
     try {
-        const { name, data, visibility, floor } = req.body;
-        const id = db.saveEditorProject(null, name || '未命名项目', data || {}, visibility, floor);
+        const { name, data, visibility, floor, building } = req.body;
+        const id = db.saveEditorProject(null, name || '未命名项目', data || {}, visibility, floor, building);
         res.status(201).json({ message: 'ok', id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -563,14 +563,15 @@ app.post('/api/editor/projects', adminOnly, (req, res) => {
 // 更新项目（支持部分更新：只改名时保留已有 data；可单独改可见性）
 app.put('/api/editor/projects/:id', adminOnly, (req, res) => {
     try {
-        const { name, data, visibility, floor } = req.body;
+        const { name, data, visibility, floor, building } = req.body;
         const existing = db.getEditorProject(Number(req.params.id));
         if (!existing) return res.status(404).json({ error: '项目不存在' });
         const nextName = name !== undefined ? name : existing.name;
         const nextData = data !== undefined ? data : existing.data;
         const nextVis = visibility !== undefined ? visibility : existing.visibility;
         const nextFloor = floor !== undefined ? floor : existing.floor;
-        db.saveEditorProject(Number(req.params.id), nextName, nextData, nextVis, nextFloor);
+        const nextBuilding = building !== undefined ? building : (existing.building || '');
+        db.saveEditorProject(Number(req.params.id), nextName, nextData, nextVis, nextFloor, nextBuilding);
         res.json({ message: 'ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -580,6 +581,54 @@ app.delete('/api/editor/projects/:id', adminOnly, (req, res) => {
     try {
         db.deleteEditorProject(Number(req.params.id));
         res.json({ message: 'ok' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 批量导入：按「建筑清单」一次性生成每栋 × 每层的方案骨架（无底图，位置+比例尺由实地宽高算）
+app.post('/api/editor/projects/batch', adminOnly, (req, res) => {
+    try {
+        const buildings = req.body && req.body.buildings;
+        if (!Array.isArray(buildings) || buildings.length === 0) {
+            return res.status(400).json({ error: '缺少 buildings 数组' });
+        }
+        const METERS_PER_DEG_LAT = 111320;
+        // 由中心经纬度 + 实地宽高（米）→ 等比 geoBounds（不依赖图片像素）
+        const boundsFromMeters = (center, widthM, heightM, rotation = 0) => {
+            const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(center[1] * Math.PI / 180);
+            const dLng = widthM / mPerDegLng;
+            const dLat = heightM / METERS_PER_DEG_LAT;
+            return {
+                center: [center[0], center[1]], rotation,
+                nw: [center[0] - dLng / 2, center[1] + dLat / 2],
+                se: [center[0] + dLng / 2, center[1] - dLat / 2],
+            };
+        };
+        let created = 0;
+        for (const b of buildings) {
+            const name = (b && b.name && String(b.name).trim()) || '';
+            if (!name) return res.status(400).json({ error: '每栋建筑必须有 name' });
+            const center = b && Array.isArray(b.center) ? b.center : null;
+            const clng = center ? Number(center[0]) : NaN;
+            const clat = center ? Number(center[1]) : NaN;
+            const widthM = Number(b && b.widthM), heightM = Number(b && b.heightM);
+            const rotation = Number(b && b.rotation) || 0;
+            const floors = b && Array.isArray(b.floors) ? b.floors : null;
+            if (!isFinite(clng) || !isFinite(clat)) return res.status(400).json({ error: `建筑「${name}」center 必须是 [经度, 纬度]` });
+            if (!(widthM > 0) || !(heightM > 0)) return res.status(400).json({ error: `建筑「${name}」widthM/heightM 必须 > 0` });
+            if (!floors || floors.length === 0) return res.status(400).json({ error: `建筑「${name}」floors 不能为空` });
+            for (const f of floors) {
+                if (!Number.isInteger(f) || f < 1) return res.status(400).json({ error: `建筑「${name}」楼层必须是 ≥1 的整数` });
+                const data = {
+                    version: 1, projectName: name,
+                    backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
+                    elements: [],
+                    geoBounds: boundsFromMeters([clng, clat], widthM, heightM, rotation),
+                };
+                db.saveEditorProject(null, `${name} ${f}F`, data, 'public', f, name);
+                created++;
+            }
+        }
+        res.status(201).json({ message: 'ok', created });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
