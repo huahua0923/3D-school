@@ -814,8 +814,6 @@ function setupThreeScene(map) {
             console.log('✅ Three.js GLCustomLayer init (共享上下文)');
         },
         render: () => {
-            customCoords.lngLatsToCoords([[CONFIG.geo.center[0], CONFIG.geo.center[1]]]);
-
             const params = customCoords.getCameraParams();
             if (!params || !params.position) return;
 
@@ -839,19 +837,9 @@ function setupThreeScene(map) {
             camera.lookAt(params.lookAt[0], params.lookAt[1], params.lookAt[2]);
             camera.updateProjectionMatrix();
 
-            // 每帧刷新方案 3D 悬浮层：lngLatToCoord 结果随地图缩放/平移变化，需重算锚点位置
-            try {
-                const [fx0, fy0] = customCoords.lngLatToCoord([CONFIG.geo.center[0], CONFIG.geo.center[1]]);
-                const [fx1, fy1] = customCoords.lngLatToCoord([CONFIG.geo.center[0], CONFIG.geo.center[1] + 0.001]);
-                const freshLpm = Math.abs(fy1 - fy0) / (0.001 * METERS_PER_DEG_LAT);
-                if (freshLpm > 0) {
-                    for (const g of Object.values(planOverlayGroups)) {
-                        if (g.threeGroup && g.threeGroup.updateTransform) g.threeGroup.updateTransform(customCoords, freshLpm);
-                    }
-                }
-            } catch (_) {}
-
             // 渲染 Three.js 场景
+            // 高德官方写法：世界坐标（lngLatToCoord）在创建时算一次锚定即可——它基于 setCenter 的固定坐标系，
+            // 缩放/平移/旋转/俯仰都稳定；相机每帧由 getCameraParams 同步，悬浮层因此始终贴地、不随鼠标漂移
             renderer.resetState();
             renderer.render(scene, camera);
             renderer.resetState();
@@ -1992,8 +1980,9 @@ function removePlanOverlay(map, planId) {
 }
 
 // 3D 楼层悬浮：把室内方案的背景图 + 元素渲染到 Three.js 场景的指定高度（米）
-// 关键：几何体用「本地米」坐标（相对方案锚点），每帧由 render 循环刷新 group 的
-// position/scale——lngLatToCoord 结果随地图缩放/平移变化，一次算死会导致悬浮层随鼠标漂移
+// 关键：几何体用「本地米」坐标（相对方案锚点），group 的 position/scale 由 updateTransform
+// 用 lngLatToCoord 算一次锚定——lngLatToCoord 基于 setCenter 的固定坐标系，随缩放/平移/旋转/俯仰稳定，
+// 相机每帧由 getCameraParams 同步，悬浮层因此始终贴地锚定、不随鼠标漂移
 function renderIndoorPlan3D(data, heightM, group) {
     const areaW = data.imageWidth || PLAN_DEFAULT_W;
     const areaH = data.imageHeight || PLAN_DEFAULT_H;
@@ -2082,7 +2071,7 @@ function renderIndoorPlan3D(data, heightM, group) {
         }
     });
 
-    // 每帧由 render 循环调用：锚点经纬度 → 世界坐标，刷新 position/scale（随地图缩放/平移变化）
+    // 锚点经纬度 → 世界坐标（lngLatToCoord 基于 setCenter 固定坐标系，只需算一次）
     threeGroup.userData.anchor = [anchorLng, anchorLat];
     threeGroup.userData.heightM = heightM;
     threeGroup.updateTransform = (cc, lpm) => {
