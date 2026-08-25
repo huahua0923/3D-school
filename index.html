@@ -2242,10 +2242,59 @@ function renderPlanList() {
     renderFloorSwitcher();
 }
 
-// 楼层切换器：楼层为可选元数据（默认 0F），方案自然平铺显示，不再按楼层互斥切换
+// 楼层互斥切换：收集所有 >0 的楼层，生成「全部 / 1F / 2F…」按钮；点某层只看该层方案
 function renderFloorSwitcher() {
     const section = document.getElementById('floor-section');
-    if (section) section.style.display = 'none';
+    const box = document.getElementById('floor-switcher');
+    if (!section || !box) return;
+    const floors = [...new Set(planProjects.map(p => floorOf(p)).filter(f => f > 0))].sort((a, b) => a - b);
+    if (floors.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    box.innerHTML = '';
+    const mk = (label, val) => {
+        const b = document.createElement('button');
+        b.className = 'floor-btn';
+        b.textContent = label;
+        if (currentFloor === val) b.classList.add('active');
+        b.addEventListener('click', () => setFloor(val));
+        box.appendChild(b);
+    };
+    mk('全部', 0);
+    floors.forEach(f => mk(f + 'F', f));
+}
+
+function setFloor(f) {
+    if (currentFloor === f) return;
+    currentFloor = f;
+    try { localStorage.setItem(FLOOR_MEMORY_KEY, String(f)); } catch (_) {}
+    renderFloorSwitcher();
+    syncFloorVisibility();
+}
+
+// 按当前楼层对齐所有已勾选方案的显隐（唯一真理：切换楼层 / 勾选方案都走这里）
+function syncFloorVisibility() {
+    if (!planMap) return;
+    const active = new Set(getActivePlanIds().map(String));
+    for (const p of planProjects) {
+        const id = String(p.id);
+        const want = active.has(id) && (currentFloor === 0 || floorOf(p) === currentFloor);
+        const shown = !!planOverlayGroups[id];
+        if (want && !shown) {
+            fetchPlanData(p.id).then(plan => {
+                if (!plan) return;
+                // 二次校验：异步期间楼层/勾选可能已变
+                if ((currentFloor === 0 || floorOf(plan) === currentFloor)
+                    && getActivePlanIds().map(String).includes(id)
+                    && !planOverlayGroups[id]) {
+                    applyPlan(planMap, plan);
+                    rebuildLocaIfActive();
+                }
+            });
+        } else if (!want && shown) {
+            removePlanOverlay(planMap, id);
+        }
+    }
+    rebuildLocaIfActive();
 }
 
 function renderOnePlanList(box, plans, active) {
@@ -2264,7 +2313,8 @@ function renderOnePlanList(box, plans, active) {
         cb.addEventListener('change', () => togglePlan(p.id, cb.checked));
         const name = document.createElement('span');
         name.className = 'plan-name';
-        name.textContent = p.name || ('方案 ' + p.id);
+        const fl = floorOf(p);
+        name.textContent = (p.name || ('方案 ' + p.id)) + (fl > 0 ? ' · ' + fl + 'F' : '');
         name.title = p.name || '';
         name.addEventListener('click', () => { cb.checked = !cb.checked; togglePlan(p.id, cb.checked); });
         item.appendChild(cb);
@@ -2387,21 +2437,9 @@ async function refreshPlanList() {
 
 function togglePlan(planId, on) {
     const active = getActivePlanIds().filter(id => String(id) !== String(planId));
-    if (on) {
-        active.push(String(planId));
-        saveActivePlanIds(active);
-        if (!planMap) return;
-        fetchPlanData(planId).then(plan => {
-            if (!plan) { console.warn('⚠️ 方案加载失败'); return; }
-            const n = applyPlan(planMap, plan);
-            console.log(`✅ 已叠加方案「${plan.name}」，${n} 个对象`);
-            rebuildLocaIfActive();
-        });
-    } else {
-        saveActivePlanIds(active);
-        if (planMap) removePlanOverlay(planMap, planId);
-        rebuildLocaIfActive();
-    }
+    if (on) active.push(String(planId));
+    saveActivePlanIds(active);
+    syncFloorVisibility();   // 统一按当前楼层对齐显隐（含勾选变化）
 }
 
 async function fetchPlanData(id) {
@@ -2441,20 +2479,13 @@ async function initPlanSelector(map) {
         rebuildLocaIfActive();
     });
 
-    // 所有方案自然显示：已有勾选记忆则恢复之；否则激活全部方案
+    // 恢复勾选记忆（无记忆则全部勾选），再按当前楼层对齐显隐
     const allIds = planProjects.map(p => String(p.id));
     const savedIds = getActivePlanIds().filter(id => allIds.includes(String(id)));
     const toActivate = (savedIds.length > 0) ? savedIds : allIds;
     saveActivePlanIds(toActivate);
-    toActivate.forEach(id => {
-        fetchPlanData(id).then(plan => {
-            if (!plan) return;
-            applyPlan(map, plan);
-            console.log(`✅ 已激活方案「${plan.name}」`);
-        });
-    });
     renderPlanList();
-    rebuildLocaIfActive();
+    syncFloorVisibility();   // 统一按当前楼层对齐（含初始加载）
 }
 
 
