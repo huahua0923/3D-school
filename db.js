@@ -292,6 +292,19 @@ function migrateSchema() {
   addColumn('editor_projects', 'visibility', "TEXT NOT NULL DEFAULT 'public'");
   // 楼层：方案归属楼层（0=默认/未配置，1=1F, 2=2F…），默认 0F
   addColumn('editor_projects', 'floor', 'INTEGER NOT NULL DEFAULT 0');
+
+  // 一次性迁移：旧版无楼层配置功能，floor 默认写入 1；把「未配置楼层」的旧数据归零（没有楼层 = 0 层）
+  try {
+    const uv = db.exec('PRAGMA user_version');
+    const v = uv.length ? uv[0].values[0][0] : 0;
+    if (v < 2) {
+      db.run(`UPDATE editor_projects SET floor = 0 WHERE floor IS NULL OR floor = 1`);
+      db.run(`PRAGMA user_version = 2`);
+      console.log('✅ 迁移：旧方案楼层归零（没有楼层 = 0 层）');
+    }
+  } catch (err) {
+    console.error('⚠️ 迁移 floor 归零失败:', err.message);
+  }
 }
 
 // ---------- 数据填充 ----------
