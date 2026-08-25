@@ -473,13 +473,6 @@
         <button class="sb-btn" id="btn-clear-nav" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除路径</button>
     </div>
 
-    <!-- 室内地图：高德自带室内图层（放大到 18 级，被收录的建筑自动显示楼层图） -->
-    <div class="sb-section">
-        <div class="sb-label">🏢 室内地图</div>
-        <button class="sb-btn" id="btn-indoor-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🏢 室内地图：开</button>
-        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">放大到 18 级，被收录的建筑会自动显示楼层图</div>
-    </div>
-
     <!-- Loca 3D 可视化特效（每效果独立开关，可选择展示） -->
     <div class="sb-section">
         <div class="sb-label">🎆 可视化特效</div>
@@ -1527,7 +1520,7 @@ async function initAmap() {
         showBuildingBlock: false,
         showLabel: true,
         buildingAnimation: true,
-        showIndoorMap: true,   // 高德室内地图：zoom>17 且建筑被收录室内数据时自动显示
+        showIndoorMap: false,  // 高德官方室内图已弃用，室内图走自家「室内方案」系统（editor.html 绘制）
         // 允许 WebGL 内容
         webglParams: { preserveDrawingBuffer: false },
     });
@@ -3041,22 +3034,6 @@ async function boot() {
             map.addControl(new AMap.ControlBar({ position: { top: '72px', right: '20px' } }));
             map.addControl(new AMap.OverView({ position: { bottom: '84px', right: '24px' }, isOpen: false }));
         } catch (e) { console.warn('⚠️ 原生控件加载失败:', e && e.message); }
-    });
-
-    // 室内地图：高德自带室内图层（zoom>17 且建筑被收录室内数据时自动显示）
-    let indoorLayerOn = true;
-    function applyIndoorVisibility() {
-        const im = map && map.indoorMap;
-        if (!im) return;
-        try { indoorLayerOn ? im.show() : im.hide(); } catch (_) {}
-    }
-    map.on('indoor_create', () => { applyIndoorVisibility(); });
-    const btnIndoor = document.getElementById('btn-indoor-toggle');
-    if (btnIndoor) btnIndoor.addEventListener('click', () => {
-        indoorLayerOn = !indoorLayerOn;
-        btnIndoor.textContent = '🏢 室内地图：' + (indoorLayerOn ? '开' : '关');
-        if (!map.indoorMap) toast('该区域暂无高德室内地图数据');
-        else applyIndoorVisibility();
     });
 
     // 真实路线规划：高德自带步行导航（AMap.Walking），失败回退直线
