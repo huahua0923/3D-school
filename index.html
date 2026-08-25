@@ -848,6 +848,18 @@ function setupThreeScene(map) {
             camera.matrixWorld.copy(camera.matrix);
             camera.updateProjectionMatrix();
 
+            // 每帧刷新方案 3D 悬浮层：lngLatToCoord 结果随地图缩放/平移变化，需重算锚点位置
+            try {
+                const [fx0, fy0] = customCoords.lngLatToCoord([CONFIG.geo.center[0], CONFIG.geo.center[1]]);
+                const [fx1, fy1] = customCoords.lngLatToCoord([CONFIG.geo.center[0], CONFIG.geo.center[1] + 0.001]);
+                const freshLpm = Math.abs(fy1 - fy0) / (0.001 * METERS_PER_DEG_LAT);
+                if (freshLpm > 0) {
+                    for (const g of Object.values(planOverlayGroups)) {
+                        if (g.threeGroup && g.threeGroup.updateTransform) g.threeGroup.updateTransform(customCoords, freshLpm);
+                    }
+                }
+            } catch (_) {}
+
             // 渲染 Three.js 场景
             renderer.resetState();
             renderer.render(scene, camera);
@@ -1989,96 +2001,106 @@ function removePlanOverlay(map, planId) {
 }
 
 // 3D 楼层悬浮：把室内方案的背景图 + 元素渲染到 Three.js 场景的指定高度（米）
-// 仅处理 route / area / text 三种元素；MVP 暂不做点击交互（后续 raycast 补）
+// 关键：几何体用「本地米」坐标（相对方案锚点），每帧由 render 循环刷新 group 的
+// position/scale——lngLatToCoord 结果随地图缩放/平移变化，一次算死会导致悬浮层随鼠标漂移
 function renderIndoorPlan3D(data, heightM, group) {
     const areaW = data.imageWidth || PLAN_DEFAULT_W;
     const areaH = data.imageHeight || PLAN_DEFAULT_H;
     const bounds = data.geoBounds || defaultPlanBounds();
-    const cc = threeCtx.customCoords, lpm = threeCtx.lpm;
     const threeGroup = new THREE.Group();
     group.threeGroup = threeGroup;
     threeCtx.scene.add(threeGroup);
 
-    // 经纬度 → Three.js 3D 坐标（z = 高度米 × lpm）
-    const lngLatTo3D = (lng, lat, hM) => {
-        const c = cc.lngLatToCoord([lng, lat]);
-        return [c[0], c[1], hM * lpm];
-    };
-    // 平面图像素 → 3D
-    const pxTo3D = (x, y, hM) => {
+    // 方案地理锚点（geoBounds 中心）；旋转已烘焙进 pixel→lng/lat 与底图旋转，无需再转 group
+    const anchorLng = (bounds.nw[0] + bounds.se[0]) / 2;
+    const anchorLat = (bounds.nw[1] + bounds.se[1]) / 2;
+    const rot = bounds.rotation || 0;
+    const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(anchorLat * Math.PI / 180);
+
+    // 经纬度 → 本地米（x=东, y=北, 相对锚点）
+    const lngLatToLocalM = (lng, lat) => ({ x: (lng - anchorLng) * mPerDegLng, y: (lat - anchorLat) * METERS_PER_DEG_LAT });
+    // 像素 → 本地米
+    const pxToLocalM = (x, y) => {
         const ll = planPointToLngLat(x, y, bounds, areaW, areaH);
-        return lngLatTo3D(ll[0], ll[1], hM);
+        return lngLatToLocalM(ll[0], ll[1]);
     };
 
-    // 底图 Plane（水平 XY 平面，z = 楼层高度）
+    // 底图 Plane（本地米，水平 XY 平面，z=0；楼层高度由 group.position.z 体现）
+    const applyPlane = (url, wMeters, hMeters, cx, cy) => {
+        const tex = new THREE.TextureLoader().load(url);
+        if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
+        const geo = new THREE.PlaneGeometry(wMeters, hMeters);
+        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: data.bgOpacity ?? 1, side: THREE.DoubleSide, depthWrite: false });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(cx, cy, 0);
+        mesh.renderOrder = Math.round(heightM);
+        threeGroup.add(mesh);
+    };
+
     if (data.backgroundImage) {
-        const rot = bounds.rotation || 0;
-        let centerLL, wMeters, hMeters, texUrl;
         if (rot) {
             const rb = rotatedBounds(bounds, areaW, areaH);
-            centerLL = [(rb.nw[0] + rb.se[0]) / 2, (rb.nw[1] + rb.se[1]) / 2];
-            wMeters = (rb.se[0] - rb.nw[0]) * METERS_PER_DEG_LAT * Math.cos(centerLL[1] * Math.PI / 180);
-            hMeters = (rb.nw[1] - rb.se[1]) * METERS_PER_DEG_LAT;
-            texUrl = bakeRotatedImage(data.backgroundImage, areaW, areaH, rot);   // Promise
+            const cLng = (rb.nw[0] + rb.se[0]) / 2, cLat = (rb.nw[1] + rb.se[1]) / 2;
+            const wMeters = (rb.se[0] - rb.nw[0]) * METERS_PER_DEG_LAT * Math.cos(cLat * Math.PI / 180);
+            const hMeters = (rb.nw[1] - rb.se[1]) * METERS_PER_DEG_LAT;
+            const c = lngLatToLocalM(cLng, cLat);
+            bakeRotatedImage(data.backgroundImage, areaW, areaH, rot).then(url => applyPlane(url, wMeters, hMeters, c.x, c.y)).catch(() => {});
         } else {
-            centerLL = [(bounds.nw[0] + bounds.se[0]) / 2, (bounds.nw[1] + bounds.se[1]) / 2];
-            wMeters = (bounds.se[0] - bounds.nw[0]) * METERS_PER_DEG_LAT * Math.cos(centerLL[1] * Math.PI / 180);
-            hMeters = (bounds.nw[1] - bounds.se[1]) * METERS_PER_DEG_LAT;
-            texUrl = data.backgroundImage;
+            const wMeters = (bounds.se[0] - bounds.nw[0]) * mPerDegLng;
+            const hMeters = (bounds.nw[1] - bounds.se[1]) * METERS_PER_DEG_LAT;
+            applyPlane(data.backgroundImage, wMeters, hMeters, 0, 0);
         }
-        const applyTex = (url) => {
-            const tex = new THREE.TextureLoader().load(url);
-            if ('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
-            const geo = new THREE.PlaneGeometry(wMeters * lpm, hMeters * lpm);
-            const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: data.bgOpacity ?? 1, side: THREE.DoubleSide, depthWrite: false });
-            const mesh = new THREE.Mesh(geo, mat);
-            const c = lngLatTo3D(centerLL[0], centerLL[1], heightM);
-            mesh.position.set(c[0], c[1], c[2]);
-            mesh.renderOrder = Math.round(heightM);
-            threeGroup.add(mesh);
-        };
-        if (rot) { texUrl.then(applyTex).catch(() => {}); } else { applyTex(texUrl); }
     }
 
-    // 元素（线 / 面 / 文字）
+    // 元素（线 / 面 / 文字），本地米坐标，z=0
     (Array.isArray(data.elements) ? data.elements : []).forEach(el => {
         if (el.visible === false) return;
         if (el.type === 'route' && (el.points || []).length >= 2) {
-            const pts = (el.points || []).map(p => pxTo3D(p.x, p.y, heightM));
+            const pts = (el.points || []).map(p => pxToLocalM(p.x, p.y));
             const pos = new Float32Array(pts.length * 3);
-            pts.forEach((p, i) => { pos[i * 3] = p[0]; pos[i * 3 + 1] = p[1]; pos[i * 3 + 2] = p[2]; });
+            pts.forEach((p, i) => { pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = 0; });
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorToHex(el.color, '#3b82f6'), transparent: true, opacity: el.opacity ?? 0.9 }));
             threeGroup.add(line);
         } else if (el.type === 'area' && (el.points || []).length >= 3) {
-            const pts = (el.points || []).map(p => pxTo3D(p.x, p.y, heightM));
+            const pts = (el.points || []).map(p => pxToLocalM(p.x, p.y));
             const shape = new THREE.Shape();
-            shape.moveTo(pts[0][0], pts[0][1]);
-            for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
+            shape.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, pts[i].y);
             shape.closePath();
             const fill = new THREE.Mesh(
                 new THREE.ShapeGeometry(shape),
                 new THREE.MeshBasicMaterial({ color: colorToHex(el.color, '#10b981'), transparent: true, opacity: (el.opacity ?? 1) * 0.25, side: THREE.DoubleSide, depthWrite: false })
             );
-            fill.position.z = heightM * lpm;
             fill.renderOrder = Math.round(heightM);
             threeGroup.add(fill);
             const edgePos = new Float32Array(pts.length * 3);
-            pts.forEach((p, i) => { edgePos[i * 3] = p[0]; edgePos[i * 3 + 1] = p[1]; edgePos[i * 3 + 2] = heightM * lpm; });
+            pts.forEach((p, i) => { edgePos[i * 3] = p.x; edgePos[i * 3 + 1] = p.y; edgePos[i * 3 + 2] = 0; });
             const edgeGeo = new THREE.BufferGeometry();
             edgeGeo.setAttribute('position', new THREE.BufferAttribute(edgePos, 3));
             threeGroup.add(new THREE.LineLoop(edgeGeo, new THREE.LineBasicMaterial({ color: colorToHex(el.color, '#10b981') })));
         } else if (el.type === 'text' && (el.points || []).length >= 1) {
-            const p = pxTo3D(el.points[0].x, el.points[0].y, heightM);
+            const p = pxToLocalM(el.points[0].x, el.points[0].y);
             const div = document.createElement('div');
             div.textContent = el.label || '';
             div.style.cssText = 'color:' + (el.color || '#fff') + ';font-size:' + (el.fontSize || 14) + 'px;font-weight:600;background:' + (el.backgroundColor || 'rgba(0,0,0,0.7)') + ';padding:4px 8px;border-radius:4px;white-space:nowrap;';
             const label = new CSS2DObject(div);
-            label.position.set(p[0], p[1], p[2]);
+            label.position.set(p.x, p.y, 0);
             threeGroup.add(label);
         }
     });
+
+    // 每帧由 render 循环调用：锚点经纬度 → 世界坐标，刷新 position/scale（随地图缩放/平移变化）
+    threeGroup.userData.anchor = [anchorLng, anchorLat];
+    threeGroup.userData.heightM = heightM;
+    threeGroup.updateTransform = (cc, lpm) => {
+        const c = cc.lngLatToCoord([anchorLng, anchorLat]);
+        threeGroup.position.set(c[0], c[1], heightM * lpm);
+        threeGroup.scale.setScalar(lpm);
+    };
+    // 立即算一次，避免首帧出现在 (0,0,0)
+    try { threeGroup.updateTransform(threeCtx.customCoords, threeCtx.lpm); } catch (_) {}
 
     return threeGroup;
 }
