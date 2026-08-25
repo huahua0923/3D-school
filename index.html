@@ -464,6 +464,12 @@
             <div id="nav-end-line">终点：未设置</div>
             <div id="nav-dist-line" style="color:#22d3ee;font-weight:600;"></div>
         </div>
+        <div id="nav-mode-btns" style="display:flex;gap:4px;margin-top:6px;">
+            <button class="sb-btn active" data-nav-mode="walking" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚶 步行</button>
+            <button class="sb-btn" data-nav-mode="driving" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚗 驾车</button>
+            <button class="sb-btn" data-nav-mode="riding" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚲 骑行</button>
+            <button class="sb-btn" data-nav-mode="transfer" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚌 公交</button>
+        </div>
         <button class="sb-btn" id="btn-clear-nav" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除路径</button>
     </div>
 
@@ -482,6 +488,8 @@
             <button class="sb-btn active" data-effect="routes" style="flex:1;font-size:0.66rem;padding:5px 4px;">🛣️ 路线</button>
             <button class="sb-btn active" data-effect="breathing" style="flex:1;font-size:0.66rem;padding:5px 4px;">💨 呼吸点</button>
             <button class="sb-btn active" data-effect="areas" style="flex:1;font-size:0.66rem;padding:5px 4px;">🏢 区域</button>
+            <button class="sb-btn" data-effect="scatter" style="flex:1;font-size:0.66rem;padding:5px 4px;">✨ 光点</button>
+            <button class="sb-btn" data-effect="prism" style="flex:1;font-size:0.66rem;padding:5px 4px;">🏛️ 光柱</button>
         </div>
     </div>
 
@@ -1028,7 +1036,7 @@ let measureOverlays = [];           // 测量产生的临时覆盖物（清除�
 let locaContainer = null;           // Loca.Container 实例
 let locaActive = false;             // 特效总开关状态
 // 每个特效独立开关（选择性展示）：routes=路线脉冲 / breathing=呼吸点 / areas=区域3D体块
-let locaEffects = { routes: true, breathing: true, areas: true };
+let locaEffects = { routes: true, breathing: true, areas: true, scatter: false, prism: false };
 
 function toast(msg){
     const el = document.getElementById('toast');
@@ -1804,6 +1812,28 @@ function initLoca(map) {
             rippleOn = true;
         }
 
+        // 光点 → 3D 散点图层（标记点发光体块）
+        if (pts.length && locaEffects.scatter) {
+            try {
+                const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
+                const scatterLayer = new Loca.ScatterLayer({ zIndex: 110, opacity: 0.95 });
+                scatterLayer.setSource(src);
+                scatterLayer.setStyle({ unit: 'meter', size: [10, 10, 10], color: (...a) => locaColorOf(...a), borderColor: '#ffffff', borderWidth: 1 });
+                loca.add(scatterLayer);
+            } catch (e) { console.warn('⚠️ 光点图层不可用:', e && e.message); }
+        }
+
+        // 光柱 → 3D 柱状图层（标记点向上拉伸）
+        if (pts.length && locaEffects.prism) {
+            try {
+                const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: pts } });
+                const prismLayer = new Loca.PrismLayer({ zIndex: 109, opacity: 0.85 });
+                prismLayer.setSource(src);
+                prismLayer.setStyle({ unit: 'meter', topColor: (...a) => locaColorOf(...a), sideColor: (...a) => shadeHex(locaColorOf(...a), -0.35), height: 30, altitude: 0 });
+                loca.add(prismLayer);
+            } catch (e) { console.warn('⚠️ 光柱图层不可用:', e && e.message); }
+        }
+
         // 区域 → 3D 体块挤出（参照 cadmall：topColor 顶面 + sideColor 侧面 + 光照立体感）
         if (polys.length && locaEffects.areas) {
             const src = new Loca.GeoJSONSource({ data: { type: 'FeatureCollection', features: polys } });
@@ -1977,6 +2007,13 @@ let placeSearch = null;                 // AMap.PlaceSearch（周边 POI 搜索�
 let markerCluster = null;               // AMap.MarkerCluster（标记点聚合）
 let nearbyMarkers = [];                 // 周边搜索结果临时标记
 let polyEditorOn = false;               // 多边形编辑开关
+let navTravelMode = 'walking';          // 路径规划方式：walking/driving/riding/transfer
+let navDriving = null;                  // AMap.Driving 实例（驾车路线）
+let navRiding = null;                   // AMap.Riding 实例（骑行路线）
+let navTransfer = null;                 // AMap.Transfer 实例（公交路线）
+let dragRoute = null;                   // AMap.DragRoute（驾车路线拖拽调整）
+let navPointMarkers = [];               // 起点/终点弹性标记
+let elasticAvailable = false;           // AMap.ElasticMarker 插件是否就绪
 
 const LAYER_HEIGHT = 4;                 // 3D 楼层堆叠：每层高度（米）
 let threeCtx = null;                    // Three.js 上下文 {scene, customCoords, lpm, labelRenderer}，供室内方案 3D 悬浮
@@ -2395,6 +2432,7 @@ function setNavPoint(which) {
     else navEnd = currentFeature;
     if (ui) ui.hideInfo();
     updateNavPanel();
+    updateNavPointMarkers();
     if (navStart && navEnd) drawNavRoute();
 }
 
@@ -2413,12 +2451,97 @@ function updateNavPanel() {
 
 function clearNavRoute() {
     if (navOverlay) { navOverlay.setMap(null); navOverlay = null; }
+    clearDragRoute();
 }
 
 function clearNav() {
     navStart = null; navEnd = null;
-    navReqSeq++;   // 使在途步行规划失效
-    clearNavRoute(); updateNavPanel();
+    navReqSeq++;   // 使在途路线规划失效
+    clearNavRoute(); updateNavPointMarkers(); updateNavPanel();
+}
+
+// —— 高德官方路线规划（步行/驾车/骑行/公交）：统一提取路径 + 渲染 ——
+const NAV_MODE_LABEL = { walking: '步行', driving: '驾车', riding: '骑行', transfer: '公交' };
+
+// 从规划结果拼接完整路径：步行/驾车/骑行用 steps[].path；公交的站点段存于 step.bus.path
+function routePathOf(route) {
+    const path = [];
+    (route.steps || []).forEach(s => {
+        if (!s) return;
+        const p = s.path || (s.bus && s.bus.path) || [];
+        if (p && p.length) path.push(...p);
+    });
+    return path;
+}
+
+function clearDragRoute() {
+    if (dragRoute) { try { if (dragRoute.clear) dragRoute.clear(); } catch (_) {} dragRoute = null; }
+}
+
+// 统一渲染规划结果：清直线兜底 → 画真实路线 + 距离/时长；驾车额外挂 DragRoute 供拖拽调整
+function renderNavRoute(route, straight, seq, dl) {
+    const distText = (r) => NAV_MODE_LABEL[navTravelMode] + '：约 ' + formatNavDistance(r.distance || straight)
+        + (r.time ? ' · 约 ' + Math.ceil(r.time / 60) + ' 分钟' : '')
+        + '（直线 ' + formatNavDistance(straight) + '）';
+    if (dl) dl.textContent = distText(route);
+
+    // 驾车：用 DragRoute 画路线并支持拖拽调整；其余模式手动画折线
+    clearDragRoute();
+    if (navTravelMode === 'driving' && window.AMap && AMap.DragRoute) {
+        try {
+            if (navOverlay) { navOverlay.setMap(null); navOverlay = null; }
+            dragRoute = new AMap.DragRoute(planMap, route, AMap.DrivingPolicy ? AMap.DrivingPolicy.LEAST_TIME : 0, {
+                polyOptions: { strokeColor: '#22d3ee', strokeWeight: 5, strokeOpacity: 0.95 },
+            });
+            dragRoute.on('complete', (ev) => {
+                if (seq !== navReqSeq) return;
+                const nr = ev && ev.route;
+                if (nr && dl) dl.textContent = distText(nr) + '（已拖拽调整）';
+            });
+            dragRoute.search();
+            return;
+        } catch (_) {}
+    }
+
+    const path = routePathOf(route);
+    if (path.length < 2) return;
+    if (navOverlay) { navOverlay.setMap(null); }
+    navOverlay = new AMap.Polyline({
+        path, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30,
+    });
+    navOverlay.setMap(planMap);
+}
+
+// 起点/终点标记：优先高德弹性标记（弹跳动画），插件未就绪回退普通圆点
+function navPointMarker(lng, lat, color, label) {
+    if (elasticAvailable && window.AMap && AMap.ElasticMarker) {
+        try {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="42" viewBox="0 0 32 42">'
+                + '<circle cx="16" cy="16" r="12" fill="' + color + '" stroke="#fff" stroke-width="2.5"/>'
+                + '<path d="M16 30 C16 30 8 22 8 16 A8 8 0 0 1 24 16 C24 22 16 30 16 30" fill="' + color + '"/></svg>';
+            const m = new AMap.ElasticMarker({
+                position: [lng, lat],
+                styles: [{ icon: { img: 'data:image/svg+xml;utf8,' + encodeURIComponent(svg), size: [32, 42], anchor: 'bottom-center' } }],
+                zoomStyleMapping: { 14: 0, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0 },
+            });
+            m.setMap(planMap);
+            try { m.elasticMarker(); } catch (_) {}
+            return m;
+        } catch (_) {}
+    }
+    const dot = '<div style="width:14px;height:14px;border-radius:50%;background:' + color
+        + ';border:2px solid #fff;box-shadow:0 0 10px ' + color + ';" title="' + label + '"></div>';
+    const m = new AMap.Marker({ position: [lng, lat], content: dot, anchor: 'bottom-center', zIndex: 120 });
+    m.setMap(planMap);
+    return m;
+}
+
+function updateNavPointMarkers() {
+    navPointMarkers.forEach(m => { try { m.setMap(null); } catch (_) {} });
+    navPointMarkers = [];
+    if (!planMap) return;
+    if (navStart) navPointMarkers.push(navPointMarker(navStart.lng, navStart.lat, '#22c55e', '起点'));
+    if (navEnd) navPointMarkers.push(navPointMarker(navEnd.lng, navEnd.lat, '#ef4444', '终点'));
 }
 
 function drawNavRoute() {
@@ -2438,25 +2561,16 @@ function drawNavRoute() {
     navOverlay.setMap(planMap);
     if (dl) dl.textContent = '直线距离：约 ' + formatNavDistance(straight);
 
-    // 2) 真实步行路线（高德自带 AMap.Walking）
-    if (navWalking) {
-        navWalking.search(start, end, (status, result) => {
+    // 2) 真实路线规划（步行/驾车/骑行/公交，高德官方），失败保留直线虚线
+    const planner = navTravelMode === 'driving' ? navDriving
+        : navTravelMode === 'riding' ? navRiding
+        : navTravelMode === 'transfer' ? navTransfer
+        : navWalking;
+    if (planner) {
+        planner.search(start, end, (status, result) => {
             if (seq !== navReqSeq) return;   // 已被新请求 / 清除取代
             if (status !== 'complete' || !result.routes || !result.routes[0]) return; // 失败保留直线
-            const route = result.routes[0];
-            // 拼接各路段 path 得到完整步行路径
-            const path = [];
-            (route.steps || []).forEach(s => { if (s && s.path && s.path.length) path.push(...s.path); });
-            if (path.length < 2) return;
-            if (navOverlay) { navOverlay.setMap(null); }
-            navOverlay = new AMap.Polyline({
-                path, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30,
-            });
-            navOverlay.setMap(planMap);
-            const mins = route.time ? Math.ceil(route.time / 60) : null;
-            if (dl) dl.textContent = '步行：约 ' + formatNavDistance(route.distance || straight)
-                + (mins ? ' · 约 ' + mins + ' 分钟' : '')
-                + '（直线 ' + formatNavDistance(straight) + '）';
+            renderNavRoute(result.routes[0], straight, seq, dl);
         });
     }
 
@@ -2959,6 +3073,19 @@ async function boot() {
         catch (e) { console.warn('⚠️ 步行路线规划不可用:', e && e.message); }
     });
 
+    // 驾车/骑行/公交路线规划（配合路径导航出行方式切换）
+    AMap.plugin(['AMap.Driving', 'AMap.Riding', 'AMap.Transfer'], () => {
+        try { navDriving = new AMap.Driving({ policy: AMap.DrivingPolicy ? AMap.DrivingPolicy.LEAST_TIME : 0, hideMarkers: true }); }
+        catch (e) { console.warn('⚠️ 驾车路线规划不可用:', e && e.message); }
+        try { navRiding = new AMap.Riding({}); }
+        catch (e) { console.warn('⚠️ 骑行路线规划不可用:', e && e.message); }
+        try { navTransfer = new AMap.Transfer({ city: '成都', policy: AMap.TransferPolicy ? AMap.TransferPolicy.LEAST_TIME : 0 }); }
+        catch (e) { console.warn('⚠️ 公交路线规划不可用:', e && e.message); }
+    });
+
+    // 弹性标记：起点/终点弹跳动画（插件就绪后，setNavPoint 优先使用）
+    AMap.plugin('AMap.ElasticMarker', () => { elasticAvailable = true; });
+
     // 官方信息窗体：地物详情弹出（替代手写侧栏 showFeature）
     featureInfoWindow = new AMap.InfoWindow({ isCustom: true, offset: new AMap.Pixel(0, -12), autoMove: true });
 
@@ -3010,6 +3137,16 @@ async function boot() {
     if (btnGuideFollow) btnGuideFollow.addEventListener('click', () => {
         guideFollow = !guideFollow;
         btnGuideFollow.textContent = '🚶 漫游跟随：' + (guideFollow ? '开' : '关');
+    });
+
+    // 路径导航出行方式切换（步行/驾车/骑行/公交）
+    const navModeBtns = document.getElementById('nav-mode-btns');
+    if (navModeBtns) navModeBtns.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-nav-mode]');
+        if (!b) return;
+        navTravelMode = b.dataset.navMode;
+        navModeBtns.querySelectorAll('button[data-nav-mode]').forEach(x => x.classList.toggle('active', x === b));
+        if (navStart && navEnd) drawNavRoute();
     });
 
     // 周边建筑显隐（高德默认 3D 建筑层）
