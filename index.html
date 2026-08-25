@@ -2106,12 +2106,37 @@ function addNameLabel(map, text, lngLat, anchor, offsetPx) {
     return t;
 }
 
+// 递归清理 3D 楼层悬浮对象：Three r160 的 CSS2DRenderer 只 append 不清理，对象脱离 scene 后其 DOM
+// 仍挂在 domElement 上（停留在最后渲染位置），需手动移除，否则文字标签残留屏幕；顺带 dispose 几何体/材质
+function disposeThreeGroup(group) {
+    if (!group) return;
+    group.traverse(obj => {
+        if (obj.isCSS2DObject && obj.element) {
+            try {
+                const el = obj.element;
+                if (el.parentNode) el.parentNode.removeChild(el);
+                else if (el.remove) el.remove();
+            } catch (_) {}
+        }
+        if (obj.geometry && obj.geometry.dispose) { try { obj.geometry.dispose(); } catch (_) {} }
+        if (obj.material) {
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            mats.forEach(m => { if (m && m.dispose) { try { m.dispose(); } catch (_) {} } });
+        }
+    });
+}
+
 function removePlanOverlay(map, planId) {
     const g = planOverlayGroups[planId];
     if (!g) return;
     g.overlays.forEach(o => disposeOverlay(o, map));
-    // 移除 3D 楼层悬浮对象
-    if (g.threeGroup && threeCtx) { try { threeCtx.scene.remove(g.threeGroup); } catch (_) {} }
+    // 移除 3D 楼层悬浮对象（含 CSS2D 标签 DOM + 几何体/材质）
+    if (g.threeGroup && threeCtx) {
+        try {
+            disposeThreeGroup(g.threeGroup);
+            threeCtx.scene.remove(g.threeGroup);
+        } catch (_) {}
+    }
     // 移除该方案的流动虚线
     (g.flowIds || []).forEach(id => removeFlowRoute(id));
     delete planOverlayGroups[planId];
