@@ -29,6 +29,7 @@
   const state = {
     projectId: null,
     projectName: '未命名项目',
+    floor: 0,
     geoBounds: null,
     geoBoundsExplicit: false,
     backgroundImage: null,
@@ -66,6 +67,7 @@
   let ctx = canvas.getContext('2d'); // let — exportPNG 需要临时切换为离屏上下文
   const canvasWrap = document.getElementById('canvas-wrap');
   const $name = document.getElementById('project-name');
+  const $floor = document.getElementById('project-floor');
   const $layerList = document.getElementById('layer-list');
   const $propsPanel = document.getElementById('props-panel');
   const $noSelection = document.getElementById('no-selection');
@@ -1305,13 +1307,14 @@
     };
   }
 
-  function loadProjectData(data) {
+  function loadProjectData(data, floor) {
     setState({
       backgroundImage: data.backgroundImage || null,
       imageWidth: data.imageWidth || 0, imageHeight: data.imageHeight || 0,
       bgOpacity: data.bgOpacity ?? 1,
       elements: Array.isArray(data.elements) ? data.elements : [],
       projectName: data.projectName || '未命名项目',
+      floor: floor !== undefined ? floor : 0,
       geoBounds: data.geoBounds || null,
       geoBoundsExplicit: !!(data.geoBounds),
       selectedElementId: null, selectedElementIds: [],
@@ -1338,10 +1341,11 @@
     const data = getProjectData();
     const headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
     let res;
+    const payload = { name, data, floor: state.floor };
     if (state.projectId) {
-      res = await fetch(`/api/editor/projects/${state.projectId}`, { method: 'PUT', headers, body: JSON.stringify({ name, data }) });
+      res = await fetch(`/api/editor/projects/${state.projectId}`, { method: 'PUT', headers, body: JSON.stringify(payload) });
     } else {
-      res = await fetch('/api/editor/projects', { method: 'POST', headers, body: JSON.stringify({ name, data }) });
+      res = await fetch('/api/editor/projects', { method: 'POST', headers, body: JSON.stringify(payload) });
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -1396,7 +1400,7 @@
         const id = Number(row.dataset.id);
         const res = await fetch(`/api/editor/projects/${id}`);
         const json = await res.json();
-        if (json.data) { state.projectId = id; loadProjectData(json.data.data || json.data); overlay.remove(); showToast('✅ 项目已加载'); }
+        if (json.data) { state.projectId = id; loadProjectData(json.data.data || json.data, json.data.floor); overlay.remove(); showToast('✅ 项目已加载'); }
       };
     });
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
@@ -1512,7 +1516,7 @@
         if (e.target.tagName === 'INPUT') return;
         const res = await fetch('/api/editor/projects/' + p.id, { headers: authHeaders() });
         const json = await res.json();
-        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data); showToast('✅ 已加载：' + (json.data.name || p.name)); removePlanOverlay(String(p.id)); renderPlanList(); }
+        if (json.data) { state.projectId = p.id; loadProjectData(json.data.data || json.data, json.data.floor); showToast('✅ 已加载：' + (json.data.name || p.name)); removePlanOverlay(String(p.id)); renderPlanList(); }
       });
       box.appendChild(row);
     });
@@ -1520,7 +1524,7 @@
 
   function blankProject() {
     setState({
-      projectId: null, projectName: '未命名项目', geoBounds: null, geoBoundsExplicit: false,
+      projectId: null, projectName: '未命名项目', floor: 0, geoBounds: null, geoBoundsExplicit: false,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
       stageScale: 1, stagePosition: { x: 0, y: 0 },
@@ -1594,6 +1598,7 @@
 
   function updateUI() {
     $name.value = state.projectName;
+    $floor.value = String(state.floor ?? 0);
     $zoomSlider.value = Math.round(state.stageScale * 100);
     $zoomLabel.textContent = Math.round(state.stageScale * 100) + '%';
     document.getElementById('btn-undo').disabled = state.historyIndex < 0;
@@ -1892,6 +1897,8 @@
 
   $name.addEventListener('input', function () { setState({ projectName: this.value || '未命名项目' }); });
 
+  $floor.addEventListener('change', function () { setState({ floor: parseInt(this.value, 10) || 0 }); });
+
   document.querySelectorAll('#toolbar button').forEach(btn => {
     btn.addEventListener('click', () => {
       const tool = btn.dataset.tool; if (!tool) return;
@@ -1989,7 +1996,7 @@
   document.getElementById('btn-new').addEventListener('click', () => {
     if (state.elements.length > 0 && !confirm('确定新建？未保存更改将丢失。')) return;
     setState({
-      projectId: null, projectName: '未命名项目', geoBounds: null, geoBoundsExplicit: false,
+      projectId: null, projectName: '未命名项目', floor: 0, geoBounds: null, geoBoundsExplicit: false,
       backgroundImage: null, imageWidth: 0, imageHeight: 0, bgOpacity: 1,
       elements: [], selectedElementId: null, selectedElementIds: [],
       stageScale: 1, stagePosition: { x: 0, y: 0 },
