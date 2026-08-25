@@ -797,7 +797,7 @@ async function renderPlans() {
         const name = p.name || ('方案 ' + p.id);
         const vis = p.visibility || 'public';
         const floor = (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 1;
-        const floorOptions = [1, 2, 3, 4, 5, 6].map(f =>
+        const floorOptions = Array.from({ length: 12 }, (_, i) => i + 1).map(f =>
             `<option value="${f}" ${floor === f ? 'selected' : ''}>${f}F</option>`).join('');
         return `<div class="section">
             <h3>🗂️ ${escHtml(name)}</h3>

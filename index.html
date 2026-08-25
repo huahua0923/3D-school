@@ -786,6 +786,9 @@ function setupThreeScene(map) {
             });
             renderer.autoClear = false;
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            // 关键：GLCustomLayer 共享 GL 上下文，渲染器尺寸必须与地图视口一致，
+            // 否则每帧 viewport 会被重置为默认 300×150，悬浮层随之错位/漂移
+            renderer.setSize(window.innerWidth, window.innerHeight);
 
             // 计算缩放（init 后 lngLatToCoord 才可靠）
             let lpm;
@@ -830,22 +833,10 @@ function setupThreeScene(map) {
             camera.far = params.far || 1 << 30;
             camera.fov = params.fov || CONFIG.camera.fov;
 
-            // 直接用矩阵构建相机
-            const p = params.position;
-            const t = params.lookAt;
-            const u = params.up;
-            const fwd = new THREE.Vector3(t[0]-p[0], t[1]-p[1], t[2]-p[2]).normalize();
-            const rgt = new THREE.Vector3().crossVectors(
-                new THREE.Vector3(u[0], u[1], u[2]), fwd).normalize();
-            const up2 = new THREE.Vector3().crossVectors(fwd, rgt);
-
-            const m = camera.matrix.elements;
-            m[0]=rgt.x; m[4]=up2.x; m[8]=-fwd.x; m[12]=p[0];
-            m[1]=rgt.y; m[5]=up2.y; m[9]=-fwd.y; m[13]=p[1];
-            m[2]=rgt.z; m[6]=up2.z; m[10]=-fwd.z; m[14]=p[2];
-            m[3]=0;     m[7]=0;     m[11]=0;      m[15]=1;
-            camera.matrixAutoUpdate = false;
-            camera.matrixWorld.copy(camera.matrix);
+            // 高德官方 GLCustomLayer + Three.js 同步相机：position/up/lookAt 交给 THREE 计算矩阵
+            camera.position.set(params.position[0], params.position[1], params.position[2]);
+            camera.up.set(params.up[0], params.up[1], params.up[2]);
+            camera.lookAt(params.lookAt[0], params.lookAt[1], params.lookAt[2]);
             camera.updateProjectionMatrix();
 
             // 每帧刷新方案 3D 悬浮层：lngLatToCoord 结果随地图缩放/平移变化，需重算锚点位置
