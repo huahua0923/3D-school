@@ -519,13 +519,6 @@
         <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">显示/隐藏高德默认的周边城市建筑</div>
     </div>
 
-    <!-- 多边形编辑：在地图上拖动区域顶点 -->
-    <div class="sb-section">
-        <div class="sb-label">✏️ 多边形编辑</div>
-        <button class="sb-btn" id="btn-poly-edit" style="width:100%;font-size:0.72rem;padding:6px 8px;">✏️ 编辑区域顶点</button>
-        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">拖动可见区域的顶点（仅临时预览，不保存）</div>
-    </div>
-
     <!-- 登录 / 角色 -->
     <div class="sb-section sb-actions">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -2006,7 +1999,6 @@ let geocoder = null;                    // AMap.Geocoder（逆地理编码）
 let placeSearch = null;                 // AMap.PlaceSearch（周边 POI 搜索）
 let markerCluster = null;               // AMap.MarkerCluster（标记点聚合）
 let nearbyMarkers = [];                 // 周边搜索结果临时标记
-let polyEditorOn = false;               // 多边形编辑开关
 let navTravelMode = 'walking';          // 路径规划方式：walking/driving/riding/transfer
 let navDriving = null;                  // AMap.Driving 实例（驾车路线）
 let navRiding = null;                   // AMap.Riding 实例（骑行路线）
@@ -3111,25 +3103,6 @@ async function boot() {
             }));
         }
         catch (e) { console.warn('⚠️ 点聚合不可用:', e && e.message); }
-    });
-
-    // 多边形编辑：拖动可见区域顶点（临时预览，不保存）
-    AMap.plugin('AMap.PolyEditor', () => {});
-    let polyEditors = [];
-    const btnPolyEdit = document.getElementById('btn-poly-edit');
-    if (btnPolyEdit) btnPolyEdit.addEventListener('click', () => {
-        polyEditorOn = !polyEditorOn;
-        btnPolyEdit.textContent = polyEditorOn ? '✏️ 编辑中（再点退出）' : '✏️ 编辑区域顶点';
-        polyEditors.forEach(pe => { try { pe.close(); } catch (_) {} });
-        polyEditors = [];
-        if (polyEditorOn) {
-            const polys = [];
-            Object.values(planOverlayGroups).forEach(g => g.overlays.forEach(o => {
-                if (o instanceof AMap.Polygon && typeof o.getPath === 'function') polys.push(o);
-            }));
-            polys.forEach(p => { try { const pe = new AMap.PolyEditor(map, p); pe.open(); polyEditors.push(pe); } catch (_) {} });
-            toast(polys.length ? ('✏️ 可编辑 ' + polys.length + ' 个区域') : '⚠️ 当前无可见区域多边形');
-        }
     });
 
     // 漫游跟随开关
