@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node seed.js",
-    "test-db": "node db.test.js"
+    "test-db": "node db.test.js",
+    "test-nav": "node indoor-nav.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

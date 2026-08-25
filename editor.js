@@ -12,6 +12,7 @@
   const DEFAULT_AREA_COLOR = '#10b981';
   const DEFAULT_TEXT_COLOR = '#ffffff';
   const DEFAULT_TEXT_BG = 'rgba(0,0,0,0.7)';
+  const DEFAULT_STAIR_COLOR = '#8b5cf6';
   const COLOR_PRESETS = [
     '#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4',
     '#f97316','#84cc16','#14b8a6','#6366f1','#d946ef','#0ea5e9','#e11d48',
@@ -181,6 +182,7 @@
     if (el.type === 'route') drawRoute(el);
     else if (el.type === 'area') drawArea(el);
     else if (el.type === 'text') drawText(el);
+    else if (el.type === 'stair') drawStair(el);
     ctx.restore();
 
     if (el.id === state.selectedElementId && !el.locked && (el.type === 'route' || el.type === 'area')) {
@@ -222,6 +224,10 @@
       ctx.fillStyle = '#9ca3af';
       ctx.textBaseline = 'middle';
       ctx.fillText(el.label || '', p.x + 8, p.y);
+    } else if (el.type === 'stair') {
+      const p = el.points[0]; if (!p) { ctx.restore(); return; }
+      ctx.fillStyle = 'rgba(156,163,175,0.5)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
   }
@@ -319,6 +325,34 @@
     ctx.fillText(text, p.x + 8, p.y);
   }
 
+  function drawStair(el) {
+    const p = el.points[0]; if (!p) return;
+    const r = 7;
+    // 菱形标记（旋转 45° 的方块）
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = el.color || DEFAULT_STAIR_COLOR;
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.restore();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - r * 1.15);
+    ctx.lineTo(p.x + r * 1.15, p.y);
+    ctx.lineTo(p.x, p.y + r * 1.15);
+    ctx.lineTo(p.x - r * 1.15, p.y);
+    ctx.closePath();
+    ctx.stroke();
+    // 楼梯名标注
+    if (el.name) {
+      ctx.font = '11px "Inter","PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.fillStyle = '#111';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(el.name, p.x + 12, p.y - 4);
+    }
+  }
+
   function drawVertexHandles(el) {
     el.points.forEach(p => {
       ctx.fillStyle = '#3b82f6';
@@ -412,6 +446,9 @@
           const ph = fs + 10;
           if (mx >= p.x - 2 && mx <= p.x + pw + 2 && my >= p.y - ph / 2 - 2 && my <= p.y + ph / 2 + 2) return el;
         }
+      } else if (el.type === 'stair') {
+        const p = el.points[0];
+        if (p && Math.hypot(mx - p.x, my - p.y) < threshold + 6) return el;
       }
     }
     const sel = getSelEl();
@@ -637,6 +674,55 @@
     textInputEl.style.display = 'none';
     textInputEl.blur();
     pendingTextPoint = null;
+  }
+
+  let stairInputEl = null;
+  let pendingStairPoint = null;
+
+  // 楼梯：单击画一个点，弹出内联输入框填「楼梯名」；同名（不同楼层）在寻路时自动连成垂直边
+  function addStair(point) {
+    pendingStairPoint = point;
+    if (!stairInputEl) {
+      stairInputEl = document.createElement('input');
+      stairInputEl.type = 'text';
+      stairInputEl.className = 'inline-text-input';
+      stairInputEl.placeholder = '输入楼梯名（如：东楼梯），同名校内各层自动相连';
+      canvasWrap.appendChild(stairInputEl);
+      stairInputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commitStair(); }
+        if (e.key === 'Escape') { e.preventDefault(); cancelStair(); }
+      });
+      stairInputEl.addEventListener('blur', commitStair);
+    }
+    const sx = state.stagePosition.x + point.x * state.stageScale;
+    const sy = state.stagePosition.y + point.y * state.stageScale;
+    stairInputEl.style.left = sx + 'px';
+    stairInputEl.style.top = (sy - 16) + 'px';
+    stairInputEl.value = '';
+    stairInputEl.style.display = 'block';
+    stairInputEl.focus();
+  }
+
+  function commitStair() {
+    if (!stairInputEl || stairInputEl.style.display === 'none') return;
+    const name = stairInputEl.value.trim();
+    const p = pendingStairPoint;
+    stairInputEl.style.display = 'none';
+    stairInputEl.blur();
+    pendingStairPoint = null;
+    if (!name || !p) { showToast('⚠️ 楼梯名不能为空'); return; }
+    const newEl = {
+      id: genId(), type: 'stair', name, visible: true, locked: false,
+      points: [p], color: DEFAULT_STAIR_COLOR, strokeWidth: 0, opacity: 1,
+      stairId: name, category: '楼梯',
+    };
+    setState({ elements: [...state.elements, newEl], selectedElementId: newEl.id });
+    saveHistory();
+  }
+
+  function cancelStair() {
+    if (stairInputEl) { stairInputEl.style.display = 'none'; stairInputEl.blur(); }
+    pendingStairPoint = null;
   }
 
   // ===================== 比例尺标定（参考线：画一段已知距离的线 → 输入米数） =====================
@@ -1610,7 +1696,7 @@
     document.getElementById('stat-project').textContent = state.projectName;
     updateSaveStatus();
     document.getElementById('stat-elements').textContent =
-      `路线:${state.elements.filter(e => e.type === 'route').length} 区域:${state.elements.filter(e => e.type === 'area').length} 文字:${state.elements.filter(e => e.type === 'text').length} | 共${state.elements.length}个`;
+      `路线:${state.elements.filter(e => e.type === 'route').length} 区域:${state.elements.filter(e => e.type === 'area').length} 文字:${state.elements.filter(e => e.type === 'text').length} 楼梯:${state.elements.filter(e => e.type === 'stair').length} | 共${state.elements.length}个`;
     document.getElementById('stat-zoom').textContent = '缩放 ' + Math.round(state.stageScale * 100) + '%';
     document.getElementById('stat-snap').textContent = '吸附 ' + (state.snapToGrid ? '✓' : '✗');
     document.getElementById('stat-history').textContent = '历史 ' + (state.history.length > 0 ? `${state.historyIndex + 1}/${state.history.length}` : '0/0');
@@ -1665,7 +1751,9 @@
     document.getElementById('prop-opacity').value = Math.round((el.opacity ?? 1) * 100);
 
     const isText = el.type === 'text';
+    const isArea = el.type === 'area';
     $textProps.style.display = isText ? '' : 'none';
+    document.getElementById('category-props').style.display = isArea ? '' : 'none';
     document.getElementById('label-stroke').style.display = isText ? 'none' : '';
     document.getElementById('prop-stroke').style.display = isText ? 'none' : '';
     document.getElementById('label-fontsize').style.display = isText ? '' : 'none';
@@ -1674,6 +1762,10 @@
     if (isText) {
       document.getElementById('prop-text').value = el.label || '';
       document.getElementById('prop-fontsize').value = el.fontSize || 16;
+    }
+
+    if (isArea) {
+      document.getElementById('prop-category').value = el.category || '';
     }
 
     // Point info
@@ -1746,6 +1838,11 @@
 
     if (state.currentTool === 'text-tool') {
       addTextAnnotation({ x: snap(world.x), y: snap(world.y) });
+      return;
+    }
+
+    if (state.currentTool === 'draw-stair') {
+      addStair({ x: snap(world.x), y: snap(world.y) });
       return;
     }
 
@@ -1888,6 +1985,7 @@
     if (k === 'l') { setState({ currentTool: 'draw-route', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
     if (k === 'r') { setState({ currentTool: 'draw-area', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
     if (k === 't') { setState({ currentTool: 'text-tool', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
+    if (k === 's' && !ctrl) { setState({ currentTool: 'draw-stair', isDrawing: false, drawingPoints: [] }); updateToolBtns(); }
     if (k === 'escape') { setState({ isDrawing: false, drawingPoints: [], currentTool: 'select' }); updateToolBtns(); }
     if (k === 'enter' && state.isDrawing) { finishDrawing(); }
     if (k === '?' && !ctrl) { document.getElementById('btn-shortcuts').click(); }
@@ -2083,6 +2181,7 @@
   document.getElementById('prop-opacity').addEventListener('input', function () { updateSelEl({ opacity: Number(this.value) / 100 }); });
   document.getElementById('prop-fontsize').addEventListener('input', function () { updateSelEl({ fontSize: Number(this.value) }); });
   document.getElementById('prop-text').addEventListener('input', function () { updateSelEl({ label: this.value }); });
+  document.getElementById('prop-category').addEventListener('change', function () { updateSelEl({ category: this.value || null }); });
 
   // Color presets
   document.getElementById('color-presets').addEventListener('click', (e) => {
