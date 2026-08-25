@@ -963,7 +963,9 @@ function createMarkers(scene, localToAmap) {
 // ========================================================
 let flowCanvas = null;              // 流动虚线 canvas
 let flowCtx = null;                 // canvas 2D context
-let flowRoutes = [];                // 流动虚线路线 [{id, pts, color, width, speed, offset}]
+let flowRoutes = [];                // 流动虚线路线（低 zoom 用 Canvas 手绘，保留滚动动画）[{id, pts, color, width, speed, offset}]
+let flowPolylines = {};             // 流动虚线原生覆盖物（高 zoom 用高德 Polyline 精确贴线）id -> AMap.Polyline
+let flowUseNative = false;          // 当前是否使用高德原生虚线（zoom >= FLOW_NATIVE_MIN_ZOOM 时切换）
 let flowLastT = 0;                  // 上一帧时间戳
 let hideRoutes = false;             // 卫星图「隐藏路线」开关：隐藏流动虚线 + 路线名称标签
 let routeOverlays = [];             // 路线相关 AMap 覆盖物（透明点击线 + 名称标签），供隐藏开关控制
@@ -1018,6 +1020,7 @@ function formatArea(m2){
 const FLOW_DASH = 12;               // 虚线实线段长度（px）
 const FLOW_GAP = 12;                // 虚线空隙长度（px）
 const FLOW_SPEED_BASE = 40;         // speed=1 时的滚动速度（px/秒）
+const FLOW_NATIVE_MIN_ZOOM = 18;    // >= 此 zoom 改用高德原生虚线（lngLatToContainer 在 3D 高 zoom 下会错位）
 
 function initFlowLayer(map) {
     if (flowCanvas) return;
@@ -1047,6 +1050,7 @@ function resizeFlowLayer() {
 
 function addFlowRoute(id, pts, color, width, speed, direction) {
     removeFlowRoute(id);
+    // ① Canvas 流动虚线数据：低 zoom 用，保留滚动动画
     flowRoutes.push({
         id,
         pts: pts.map(p => [p[0], p[1]]),
@@ -1056,11 +1060,29 @@ function addFlowRoute(id, pts, color, width, speed, direction) {
         dir: (direction === -1 ? -1 : 1),   // 1=正向（起点→终点），-1=反向
         offset: Math.random() * (FLOW_DASH + FLOW_GAP),
     });
+    // ② 高德原生虚线：高 zoom 用（lngLatToContainer 在 3D 高 zoom 下会错位，改用 AMap 自投影精确贴线）
+    if (planMap) {
+        const polyline = new AMap.Polyline({
+            path: pts.map(p => new AMap.LngLat(p[0], p[1])),
+            strokeColor: colorToHex(color, '#3b82f6'),
+            strokeWeight: width || 3,
+            strokeStyle: 'dashed',
+            strokeOpacity: 0.9,
+            lineJoin: 'round',
+            lineCap: 'round',
+            zIndex: 9,   // 低于透明点击线(10)，避免吞掉路线点击
+        });
+        flowPolylines[id] = polyline;
+        // 立即按当前渲染模式显隐（避免初始 zoom 已 >= 阈值时，后续 applyFlowPolylineVisibility 未触发导致原生虚线不显示）
+        try { polyline.setMap((!hideRoutes && flowUseNative) ? planMap : null); } catch (_) {}
+    }
 }
 
 function removeFlowRoute(id) {
     const i = flowRoutes.findIndex(r => r.id === id);
     if (i >= 0) flowRoutes.splice(i, 1);
+    const p = flowPolylines[id];
+    if (p) { try { p.setMap(null); } catch (_) {} delete flowPolylines[id]; }
 }
 
 function drawFlowLayer(map) {
@@ -1068,7 +1090,7 @@ function drawFlowLayer(map) {
     const dpr = window.devicePixelRatio || 1;
     const w = flowCanvas.width / dpr, h = flowCanvas.height / dpr;
     flowCtx.clearRect(0, 0, w, h);
-    if (!hideRoutes) {   // 卫星图隐藏路线：清空后不绘制流动虚线
+    if (!hideRoutes && !flowUseNative) {   // 卫星图隐藏路线 / 高 zoom 已切原生虚线：Canvas 不再画流动虚线
         for (const r of flowRoutes) {
             if (!r.pts || r.pts.length < 2) continue;
             const px = [];
@@ -1107,6 +1129,24 @@ function animateFlow(map, now) {
     flowLastT = now;
     drawFlowLayer(map);
     requestAnimationFrame((t) => animateFlow(map, t));
+}
+
+// 原生虚线的显隐：未隐藏路线 && 高 zoom 原生模式 时才显示（与 Canvas 虚线互斥，避免叠两层）
+function applyFlowPolylineVisibility() {
+    const show = !hideRoutes && flowUseNative && !!planMap;
+    Object.values(flowPolylines).forEach(p => {
+        try { p.setMap(show ? planMap : null); } catch (_) {}
+    });
+}
+
+// 缩放变化时切换渲染方式：低 zoom 用 Canvas 流动虚线（有动画），高 zoom 用高德原生虚线（精确贴线）
+function updateFlowRenderMode() {
+    if (!planMap) return;
+    const zoom = planMap.getZoom();
+    const useNative = zoom >= FLOW_NATIVE_MIN_ZOOM;
+    if (useNative === flowUseNative) return;
+    flowUseNative = useNative;
+    applyFlowPolylineVisibility();
 }
 
 // —— 路线引导动画：折线弧长参数化 + 发光点绘制 ——
@@ -2730,6 +2770,7 @@ async function boot() {
                 else o.setMap(map);
             } catch (_) {}
         });
+        applyFlowPolylineVisibility();   // 原生虚线也跟随「隐藏路线」开关
         const btn = document.getElementById('btn-hide-routes');
         if (btn) btn.textContent = hideRoutes ? '🛣️ 显示路线' : '🚫 隐藏路线';
     }
@@ -2890,6 +2931,10 @@ async function boot() {
         resizeFlowLayer();
         resizeRippleLayer();
     });
+
+    // 缩放变化：低 zoom 用 Canvas 流动虚线，高 zoom 切高德原生虚线（根治 lngLatToContainer 在 3D 高 zoom 下的错位）
+    map.on('zoomchange', () => updateFlowRenderMode());
+    updateFlowRenderMode();
 
     console.log('✅ ' + (CONFIG.brand?.name||'3D 智慧导览') + ' 已就绪');
     console.log('   🗺️  高德地图底图 + Three.js 3D 叠加层');
