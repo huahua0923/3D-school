@@ -459,6 +459,13 @@
         <button class="sb-btn" id="btn-clear-nav" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除路径</button>
     </div>
 
+    <!-- 室内地图：高德自带室内图层（放大到 18 级，被收录的建筑自动显示楼层图） -->
+    <div class="sb-section">
+        <div class="sb-label">🏢 室内地图</div>
+        <button class="sb-btn" id="btn-indoor-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🏢 室内地图：开</button>
+        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">放大到 18 级，被收录的建筑会自动显示楼层图</div>
+    </div>
+
     <!-- Loca 3D 可视化特效（每效果独立开关，可选择展示） -->
     <div class="sb-section">
         <div class="sb-label">🎆 可视化特效</div>
@@ -1511,6 +1518,7 @@ async function initAmap() {
         showBuildingBlock: false,
         showLabel: true,
         buildingAnimation: true,
+        showIndoorMap: true,   // 高德室内地图：zoom>17 且建筑被收录室内数据时自动显示
         // 允许 WebGL 内容
         webglParams: { preserveDrawingBuffer: false },
     });
@@ -1848,7 +1856,9 @@ let ui = null;                          // UI 控制器引用（供 applyPlan / 
 let suppressMapClickUntil = 0;          // 覆盖物点击后短暂屏蔽 map click 的 hideInfo
 let navStart = null;                    // 路径起点 {lng,lat,title,floor}
 let navEnd = null;                      // 路径终点 {lng,lat,title,floor}
-let navOverlay = null;                  // 路径直线 AMap.Polyline
+let navOverlay = null;                  // 路径线 AMap.Polyline（直线兜底 / 真实步行路线）
+let navWalking = null;                  // AMap.Walking 实例（真实步行路线规划）
+let navReqSeq = 0;                      // 路线请求序号，防异步竞态
 let currentFeature = null;              // 当前详情卡地物 {lng,lat,title,floor}
 
 function defaultPlanBounds(center) {
@@ -2170,23 +2180,50 @@ function clearNavRoute() {
 }
 
 function clearNav() {
-    navStart = null; navEnd = null; clearNavRoute(); updateNavPanel();
+    navStart = null; navEnd = null;
+    navReqSeq++;   // 使在途步行规划失效
+    clearNavRoute(); updateNavPanel();
 }
 
 function drawNavRoute() {
     if (!planMap || !navStart || !navEnd) return;
     clearNavRoute();
+    const start = new AMap.LngLat(navStart.lng, navStart.lat);
+    const end = new AMap.LngLat(navEnd.lng, navEnd.lat);
+    const straight = AMap.GeometryUtil.distance(start, end);
+    const seq = ++navReqSeq;
+    const dl = document.getElementById('nav-dist-line');
+
+    // 1) 先用直线虚线兜底（高德原生），真实步行路线算好后替换
     navOverlay = new AMap.Polyline({
-        path: [new AMap.LngLat(navStart.lng, navStart.lat), new AMap.LngLat(navEnd.lng, navEnd.lat)],
-        strokeColor: '#22d3ee', strokeWeight: 4, strokeStyle: 'dashed', strokeOpacity: 0.95, zIndex: 30,
+        path: [start, end],
+        strokeColor: '#22d3ee', strokeWeight: 4, strokeStyle: 'dashed', strokeOpacity: 0.45, zIndex: 30,
     });
     navOverlay.setMap(planMap);
-    const dist = AMap.GeometryUtil.distance(
-        new AMap.LngLat(navStart.lng, navStart.lat),
-        new AMap.LngLat(navEnd.lng, navEnd.lat)
-    );
-    const dl = document.getElementById('nav-dist-line');
-    if (dl) dl.textContent = '直线距离：约 ' + formatNavDistance(dist);
+    if (dl) dl.textContent = '直线距离：约 ' + formatNavDistance(straight);
+
+    // 2) 真实步行路线（高德自带 AMap.Walking）
+    if (navWalking) {
+        navWalking.search(start, end, (status, result) => {
+            if (seq !== navReqSeq) return;   // 已被新请求 / 清除取代
+            if (status !== 'complete' || !result.routes || !result.routes[0]) return; // 失败保留直线
+            const route = result.routes[0];
+            // 拼接各路段 path 得到完整步行路径
+            const path = [];
+            (route.steps || []).forEach(s => { if (s && s.path && s.path.length) path.push(...s.path); });
+            if (path.length < 2) return;
+            if (navOverlay) { navOverlay.setMap(null); }
+            navOverlay = new AMap.Polyline({
+                path, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30,
+            });
+            navOverlay.setMap(planMap);
+            const mins = route.time ? Math.ceil(route.time / 60) : null;
+            if (dl) dl.textContent = '步行：约 ' + formatNavDistance(route.distance || straight)
+                + (mins ? ' · 约 ' + mins + ' 分钟' : '')
+                + '（直线 ' + formatNavDistance(straight) + '）';
+        });
+    }
+
     if (navStart.floor !== navEnd.floor) {
         toast('⚠️ 终点「' + navEnd.title + '」在 ' + navEnd.floor + 'F，请切换楼层查看');
     }
@@ -2557,6 +2594,28 @@ async function boot() {
             map.addControl(new AMap.ControlBar({ position: { top: '72px', right: '20px' } }));
             map.addControl(new AMap.OverView({ position: { bottom: '84px', right: '24px' }, isOpen: false }));
         } catch (e) { console.warn('⚠️ 原生控件加载失败:', e && e.message); }
+    });
+
+    // 室内地图：高德自带室内图层（zoom>17 且建筑被收录室内数据时自动显示）
+    let indoorLayerOn = true;
+    function applyIndoorVisibility() {
+        const im = map && map.indoorMap;
+        if (!im) return;
+        try { indoorLayerOn ? im.show() : im.hide(); } catch (_) {}
+    }
+    map.on('indoor_create', () => { applyIndoorVisibility(); });
+    const btnIndoor = document.getElementById('btn-indoor-toggle');
+    if (btnIndoor) btnIndoor.addEventListener('click', () => {
+        indoorLayerOn = !indoorLayerOn;
+        btnIndoor.textContent = '🏢 室内地图：' + (indoorLayerOn ? '开' : '关');
+        if (!map.indoorMap) toast('该区域暂无高德室内地图数据');
+        else applyIndoorVisibility();
+    });
+
+    // 真实路线规划：高德自带步行导航（AMap.Walking），失败回退直线
+    AMap.plugin('AMap.Walking', () => {
+        try { navWalking = new AMap.Walking(); }
+        catch (e) { console.warn('⚠️ 步行路线规划不可用:', e && e.message); }
     });
 
     // 可视化特效开关（Loca v2）
