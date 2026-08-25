@@ -485,6 +485,39 @@
         </div>
     </div>
 
+    <!-- 路线漫游：点击路线后相机沿路跟随 -->
+    <div class="sb-section">
+        <div class="sb-label">🚶 路线漫游</div>
+        <button class="sb-btn" id="btn-guide-follow" style="width:100%;font-size:0.72rem;padding:6px 8px;">🚶 漫游跟随：开</button>
+        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">点击路线后，相机自动沿路线移动</div>
+    </div>
+
+    <!-- 周边服务：高德 POI 搜索 -->
+    <div class="sb-section">
+        <div class="sb-label">🔍 周边服务</div>
+        <div id="nearby-btns" style="display:flex;flex-wrap:wrap;gap:5px;">
+            <button class="sb-btn" data-nearby="停车场" style="flex:1;font-size:0.66rem;padding:5px 4px;">🅿️ 停车</button>
+            <button class="sb-btn" data-nearby="地铁站" style="flex:1;font-size:0.66rem;padding:5px 4px;">🚇 地铁</button>
+            <button class="sb-btn" data-nearby="餐厅" style="flex:1;font-size:0.66rem;padding:5px 4px;">🍜 餐饮</button>
+            <button class="sb-btn" data-nearby="公共厕所" style="flex:1;font-size:0.66rem;padding:5px 4px;">🚻 洗手间</button>
+        </div>
+        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">以地图中心为圆心搜索周边</div>
+    </div>
+
+    <!-- 周边建筑：高德默认 3D 建筑层显隐 -->
+    <div class="sb-section">
+        <div class="sb-label">🏙 周边建筑</div>
+        <button class="sb-btn" id="btn-buildings-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🏙 周边建筑：开</button>
+        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">显示/隐藏高德默认的周边城市建筑</div>
+    </div>
+
+    <!-- 多边形编辑：在地图上拖动区域顶点 -->
+    <div class="sb-section">
+        <div class="sb-label">✏️ 多边形编辑</div>
+        <button class="sb-btn" id="btn-poly-edit" style="width:100%;font-size:0.72rem;padding:6px 8px;">✏️ 编辑区域顶点</button>
+        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">拖动可见区域的顶点（仅临时预览，不保存）</div>
+    </div>
+
     <!-- 登录 / 角色 -->
     <div class="sb-section sb-actions">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -982,6 +1015,7 @@ let rippleOn = false;               // 是否绘制（受「呼吸点」开关�
 
 // —— 路线引导动画：点击路线后一个发光点从起点匀速滑到终点 ——
 let guide = null;                   // { pts, color, t } t∈[0,1]，走完自动清除
+let guideFollow = true;             // 漫游跟随：发光点移动时相机自动跟随居中（可关）
 const GUIDE_DURATION = 6;           // 完整走完一条路线所需秒数
 
 // —— 首页测量工具：测距（RangingTool）+ 测面积（MouseTool 多边形）——
@@ -1091,6 +1125,11 @@ function animateFlow(map, now) {
         if (guide) {
             guide.t += dt / GUIDE_DURATION;
             if (guide.t >= 1) guide = null;   // 走完全程自动清除
+            else if (guideFollow) {
+                // 漫游跟随：相机沿路线平滑跟随移动点（官方 moveAlong 语义，这里用 map.setCenter 逐帧同步）
+                const p = pathPointAt(guide.pts, guide.t);
+                if (p) map.setCenter([p[0], p[1]]);
+            }
         }
     }
     flowLastT = now;
@@ -1401,36 +1440,6 @@ class UIController {
         this.infoBackdrop.classList.add('show');
     }
 
-    /** 显示路线/区域的名称/介绍（复用信息卡，隐藏导航按钮与特征列表） */
-    showFeature({ icon, title, badge, desc, images, lng, lat }) {
-        document.getElementById('info-icon').textContent = icon || '📍';
-        document.getElementById('info-title-text').textContent = title || '';
-        const badgeEl = document.getElementById('info-badge');
-        if (badge) { badgeEl.textContent = badge; badgeEl.className = 'badge'; badgeEl.style.display = ''; }
-        else badgeEl.style.display = 'none';
-        document.getElementById('info-desc').textContent = desc || '';
-        document.getElementById('info-features').innerHTML = '';
-        const imgBox = document.getElementById('info-images');
-        imgBox.innerHTML = '';
-        if (images && images.length) {
-            imgBox.style.display = 'flex';
-            images.forEach((src, i) => {
-                const t = document.createElement('img');
-                t.src = src; t.className = 'info-img-thumb'; t.alt = title || '图片';
-                t.addEventListener('click', () => openLightbox(images, i));
-                imgBox.appendChild(t);
-            });
-        } else {
-            imgBox.style.display = 'none';
-        }
-        // 记录当前地物（含坐标/楼层），供「设为起点/终点」使用
-        currentFeature = (lng != null && lat != null) ? { lng, lat, title, floor: currentFloor } : null;
-        document.getElementById('info-btn-start').style.display = currentFeature ? '' : 'none';
-        document.getElementById('info-btn-end').style.display = currentFeature ? '' : 'none';
-        this.infoCard.classList.add('show');
-        this.infoBackdrop.classList.add('show');
-    }
-
     hideInfo() {
         this.infoCard.classList.remove('show');
         this.infoBackdrop.classList.remove('show');
@@ -1535,6 +1544,105 @@ function colorToHex(c, fallback = '#3b82f6') {
 }
 
 /** 覆盖物点击：阻止冒泡并短暂屏蔽 map click 的 hideInfo，再执行展示逻辑 */
+/** 官方 AMap.InfoWindow 地物详情弹出：icon+标题+badge+描述+图片缩略图+设为起点/终点 */
+function showFeaturePopup(map, f) {
+    if (!map || !featureInfoWindow) return;
+    const box = document.createElement('div');
+    box.style.cssText = 'background:rgba(17,20,32,0.95);border:1px solid rgba(255,255,255,0.16);border-radius:10px;padding:10px 12px;min-width:220px;max-width:280px;box-shadow:0 8px 30px rgba(0,0,0,0.5);';
+
+    // 头部：icon + 标题 + badge + 关闭
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+    const icon = document.createElement('span');
+    icon.textContent = f.icon || '📍';
+    icon.style.cssText = 'font-size:18px;line-height:1;';
+    const title = document.createElement('strong');
+    title.textContent = f.title || '';
+    title.style.cssText = 'color:#fff;font-size:14px;flex:1;';
+    head.appendChild(icon); head.appendChild(title);
+    if (f.badge) {
+        const b = document.createElement('span');
+        b.textContent = f.badge;
+        b.style.cssText = 'font-size:10px;color:#22d3ee;border:1px solid rgba(34,211,238,0.45);border-radius:8px;padding:1px 6px;white-space:nowrap;';
+        head.appendChild(b);
+    }
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.style.cssText = 'background:none;border:none;color:rgba(255,255,255,0.6);font-size:14px;cursor:pointer;padding:0 2px;';
+    close.addEventListener('click', () => featureInfoWindow.close());
+    head.appendChild(close);
+    box.appendChild(head);
+
+    // 描述
+    if (f.desc) {
+        const d = document.createElement('div');
+        d.textContent = f.desc;
+        d.style.cssText = 'color:rgba(255,255,255,0.78);font-size:12px;line-height:1.6;margin-bottom:6px;';
+        box.appendChild(d);
+    }
+
+    // 图片缩略图（点击放大灯箱）
+    if (f.images && f.images.length) {
+        const imgs = document.createElement('div');
+        imgs.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;';
+        f.images.forEach((src, i) => {
+            const im = document.createElement('img');
+            im.src = src; im.alt = f.title || '图片';
+            im.style.cssText = 'width:56px;height:42px;object-fit:cover;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);';
+            im.addEventListener('click', () => openLightbox(f.images, i));
+            imgs.appendChild(im);
+        });
+        box.appendChild(imgs);
+    }
+
+    // 设为起点 / 终点
+    if (f.lng != null && f.lat != null) {
+        currentFeature = { lng: f.lng, lat: f.lat, title: f.title || '该位置', floor: currentFloor };
+        const nav = document.createElement('div');
+        nav.style.cssText = 'display:flex;gap:6px;';
+        const mkBtn = (txt, which) => {
+            const b = document.createElement('button');
+            b.textContent = txt;
+            b.style.cssText = 'flex:1;font-size:11px;padding:4px 6px;border-radius:5px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;';
+            b.addEventListener('click', () => { setNavPoint(which); featureInfoWindow.close(); });
+            return b;
+        };
+        nav.appendChild(mkBtn('🚩 设为起点', 'start'));
+        nav.appendChild(mkBtn('🏁 设为终点', 'end'));
+        box.appendChild(nav);
+    }
+
+    featureInfoWindow.setContent(box);
+    featureInfoWindow.open(map, [f.lng, f.lat]);
+}
+
+/** 周边服务搜索：以地图中心为圆心搜周边 POI，结果临时落点 */
+function searchNearby(map, keyword) {
+    if (!placeSearch) { toast('⚠️ 周边搜索未就绪'); return; }
+    const c = map.getCenter();
+    nearbyMarkers.forEach(m => { try { m.setMap(null); } catch (_) {} });
+    nearbyMarkers = [];
+    placeSearch.searchNearBy(keyword, [c.lng, c.lat], 2000, (status, result) => {
+        if (status === 'complete' && result && result.poiList) {
+            const pois = result.poiList.pois || [];
+            pois.slice(0, 10).forEach(p => {
+                const lng = p.location.lng, lat = p.location.lat;
+                const mk = new AMap.Marker({
+                    position: new AMap.LngLat(lng, lat),
+                    content: '<div style="width:12px;height:12px;background:#22d3ee;border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.6)"></div>',
+                    offset: new AMap.Pixel(-8, -8),
+                    zIndex: 16,
+                });
+                mk.on('click', (ev) => onFeatureClick(ev, () => showFeaturePopup(map, { icon: '🔍', title: p.name, badge: keyword, desc: (p.address || '') + (p.distance != null ? ' · ' + Math.round(p.distance) + '米' : ''), images: [], lng, lat })));
+                map.add(mk); nearbyMarkers.push(mk);
+            });
+            toast('🔍 找到 ' + pois.length + ' 个' + keyword);
+        } else {
+            toast('⚠️ 周边未找到' + keyword);
+        }
+    });
+}
+
 function onFeatureClick(e, fn) {
     if (e && e.originalEvent && e.originalEvent.stopPropagation) e.originalEvent.stopPropagation();
     suppressMapClickUntil = performance.now() + 300;
@@ -1583,7 +1691,7 @@ function displayRoutesAndAreas(map) {
             const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
             // 透明折线仅作点击热区，虚线视觉由 flow 层绘制
             const line = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 8, strokeOpacity: 0.01, zIndex: 10 });
-            line.on('click', (e) => onFeatureClick(e, () => { const mp = r.pts[Math.floor(r.pts.length / 2)]; ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [], lng: mp[0], lat: mp[1] }); startGuide(r.pts, r.color, name); }));
+            line.on('click', (e) => onFeatureClick(e, () => { const mp = r.pts[Math.floor(r.pts.length / 2)]; showFeaturePopup(map,{ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [], lng: mp[0], lat: mp[1] }); startGuide(r.pts, r.color, name); }));
             map.add(line);
             addFlowRoute('config:' + name, r.pts, r.color, 3, r.speed);
             const mid = r.pts[Math.floor(r.pts.length / 2)];
@@ -1595,7 +1703,7 @@ function displayRoutesAndAreas(map) {
             if (!a.pts || a.pts.length < 3) return;
             const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
             const poly = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity || 0.2, zIndex: 5 });
-            poly.on('click', (e) => onFeatureClick(e, () => { let ax = 0, ay = 0; a.pts.forEach(p => { ax += p[0]; ay += p[1]; }); ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '', images: a.images || [], lng: ax / a.pts.length, lat: ay / a.pts.length }); }));
+            poly.on('click', (e) => onFeatureClick(e, () => { let ax = 0, ay = 0; a.pts.forEach(p => { ax += p[0]; ay += p[1]; }); showFeaturePopup(map,{ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '', images: a.images || [], lng: ax / a.pts.length, lat: ay / a.pts.length }); }));
             map.add(poly);
             let cx = 0, cy = 0;
             a.pts.forEach(p => { cx += p[0]; cy += p[1]; });
@@ -1862,6 +1970,14 @@ let navWalking = null;                  // AMap.Walking 实例（真实步行路
 let navReqSeq = 0;                      // 路线请求序号，防异步竞态
 let currentFeature = null;              // 当前详情卡地物 {lng,lat,title,floor}
 
+// —— 高德官方增强能力（插件实例，boot 中初始化）——
+let featureInfoWindow = null;           // AMap.InfoWindow（地物详情弹出）
+let geocoder = null;                    // AMap.Geocoder（逆地理编码）
+let placeSearch = null;                 // AMap.PlaceSearch（周边 POI 搜索）
+let markerCluster = null;               // AMap.MarkerCluster（标记点聚合）
+let nearbyMarkers = [];                 // 周边搜索结果临时标记
+let polyEditorOn = false;               // 多边形编辑开关
+
 const LAYER_HEIGHT = 4;                 // 3D 楼层堆叠：每层高度（米）
 let threeCtx = null;                    // Three.js 上下文 {scene, customCoords, lpm, labelRenderer}，供室内方案 3D 悬浮
 
@@ -1939,6 +2055,7 @@ function disposeOverlay(o, map) {
     try {
         const i = routeOverlays.indexOf(o);
         if (i >= 0) routeOverlays.splice(i, 1);
+        if (markerCluster && o instanceof AMap.Marker) { try { markerCluster.removeMarker(o); } catch (_) {} }
         if (o && typeof o.setMap === 'function') o.setMap(null);
         else if (o) map.remove(o);
     } catch (_) {}
@@ -2102,7 +2219,7 @@ function applyPlan(map, plan) {
                 if (!r.pts || r.pts.length < 2) return;
                 const path = r.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polyline({ path, strokeColor: colorToHex(r.color), strokeWeight: 8, strokeOpacity: 0.01, zIndex: 10 });
-                o.on('click', (e) => onFeatureClick(e, () => { const mp = r.pts[Math.floor(r.pts.length / 2)]; ui && ui.showFeature({ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [], lng: mp[0], lat: mp[1] }); startGuide(r.pts, r.color, name); }));
+                o.on('click', (e) => onFeatureClick(e, () => { const mp = r.pts[Math.floor(r.pts.length / 2)]; showFeaturePopup(map,{ icon: '🛣️', title: name, badge: '路线', desc: r.desc || '', images: r.images || [], lng: mp[0], lat: mp[1] }); startGuide(r.pts, r.color, name); }));
                 map.add(o); overlays.push(o); group.route++; added++;
                 // 流动虚线（Canvas 层绘制，严格贴线）
                 const flowId = 'plan:' + plan.id + ':' + name;
@@ -2120,7 +2237,7 @@ function applyPlan(map, plan) {
                 if (!a.pts || a.pts.length < 3) return;
                 const path = a.pts.map(p => new AMap.LngLat(p[0], p[1]));
                 const o = new AMap.Polygon({ path, strokeColor: colorToHex(a.color, '#10b981'), strokeWeight: a.strokeWidth || 2, fillColor: colorToHex(a.color, '#10b981'), fillOpacity: a.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (e) => onFeatureClick(e, () => { let ax = 0, ay = 0; a.pts.forEach(p => { ax += p[0]; ay += p[1]; }); ui && ui.showFeature({ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '', images: a.images || [], lng: ax / a.pts.length, lat: ay / a.pts.length }); }));
+                o.on('click', (e) => onFeatureClick(e, () => { let ax = 0, ay = 0; a.pts.forEach(p => { ax += p[0]; ay += p[1]; }); showFeaturePopup(map,{ icon: '🗺️', title: name, badge: '区域', desc: a.desc || '', images: a.images || [], lng: ax / a.pts.length, lat: ay / a.pts.length }); }));
                 map.add(o); overlays.push(o); group.area++; added++;
                 // 区域名称标签（质心）
                 let cx = 0, cy = 0;
@@ -2139,8 +2256,9 @@ function applyPlan(map, plan) {
                     offset: new AMap.Pixel(-8, -8),
                     zIndex: 15,
                 });
-                mk.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '📍', title: name, badge: '标记点', desc: m.desc || '', images: m.images || [], lng: m.lng, lat: m.lat })));
-                map.add(mk); overlays.push(mk); added++;
+                mk.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '📍', title: name, badge: '标记点', desc: m.desc || '', images: m.images || [], lng: m.lng, lat: m.lat })));
+                if (markerCluster) markerCluster.addMarker(mk); else map.add(mk);
+                overlays.push(mk); added++;
                 // 标记点名称标签（圆点下方）
                 overlays.push(addNameLabel(map, name, [m.lng, m.lat], 'top-center', [0, 10]));
             });
@@ -2152,7 +2270,7 @@ function applyPlan(map, plan) {
                 const o = rot
                     ? new AMap.Polygon({ path: rectCorners(r.bounds, rot), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 })
                     : new AMap.Rectangle({ bounds: new AMap.Bounds(r.bounds[0], r.bounds[1]), strokeColor: colorToHex(r.color, '#8b5cf6'), strokeWeight: r.strokeWidth || 2, fillColor: colorToHex(r.color, '#8b5cf6'), fillOpacity: r.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '▭', title: name, badge: '画框', desc: r.desc || '', images: r.images || [], lng: (r.bounds[0][0] + r.bounds[1][0]) / 2, lat: (r.bounds[0][1] + r.bounds[1][1]) / 2 })));
+                o.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '▭', title: name, badge: '画框', desc: r.desc || '', images: r.images || [], lng: (r.bounds[0][0] + r.bounds[1][0]) / 2, lat: (r.bounds[0][1] + r.bounds[1][1]) / 2 })));
                 map.add(o); overlays.push(o); group.rect++; added++;
                 const c = [(r.bounds[0][0] + r.bounds[1][0]) / 2, (r.bounds[0][1] + r.bounds[1][1]) / 2];
                 overlays.push(addNameLabel(map, name, c, 'center'));
@@ -2162,7 +2280,7 @@ function applyPlan(map, plan) {
             Object.entries(data.circles).forEach(([name, c]) => {
                 if (!c.center || c.radius == null) return;
                 const o = new AMap.Circle({ center: c.center, radius: c.radius, strokeColor: colorToHex(c.color, '#ec4899'), strokeWeight: c.strokeWidth || 2, fillColor: colorToHex(c.color, '#ec4899'), fillOpacity: c.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '◯', title: name, badge: '画圆', desc: c.desc || '', images: c.images || [], lng: c.center[0], lat: c.center[1] })));
+                o.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '◯', title: name, badge: '画圆', desc: c.desc || '', images: c.images || [], lng: c.center[0], lat: c.center[1] })));
                 map.add(o); overlays.push(o); group.circle++; added++;
                 overlays.push(addNameLabel(map, name, c.center, 'center'));
             });
@@ -2172,7 +2290,7 @@ function applyPlan(map, plan) {
                 if (!e.center || e.radius == null) return;
                 const r = Array.isArray(e.radius) ? e.radius : [e.radius, e.radius];
                 const o = new AMap.Ellipse({ center: e.center, radius: r, strokeColor: colorToHex(e.color, '#06b6d4'), strokeWeight: e.strokeWidth || 2, fillColor: colorToHex(e.color, '#06b6d4'), fillOpacity: e.opacity ?? 0.2, zIndex: 5 });
-                o.on('click', (ev) => onFeatureClick(ev, () => ui && ui.showFeature({ icon: '⬭', title: name, badge: '椭圆', desc: e.desc || '', images: e.images || [], lng: e.center[0], lat: e.center[1] })));
+                o.on('click', (ev) => onFeatureClick(ev, () => showFeaturePopup(map,{ icon: '⬭', title: name, badge: '椭圆', desc: e.desc || '', images: e.images || [], lng: e.center[0], lat: e.center[1] })));
                 map.add(o); overlays.push(o); group.ellipse++; added++;
                 overlays.push(addNameLabel(map, name, e.center, 'center'));
             });
@@ -2239,12 +2357,12 @@ function applyPlan(map, plan) {
         if (el.type === 'route' && pts.length >= 2) {
             o = new AMap.Polyline({ path, strokeColor: colorToHex(el.color, '#3b82f6'), strokeWeight: el.strokeWidth || 3, strokeOpacity: el.opacity ?? 0.9, zIndex: 10 });
             const mid = pts[Math.floor(pts.length / 2)];
-            o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🛣️', title, badge: '路线', desc: '', images: [], lng: mid[0], lat: mid[1] })));
+            o.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '🛣️', title, badge: '路线', desc: '', images: [], lng: mid[0], lat: mid[1] })));
             group.route++;
         } else if (el.type === 'area' && pts.length >= 3) {
             o = new AMap.Polygon({ path, strokeColor: colorToHex(el.color, '#10b981'), strokeWeight: el.strokeWidth || 2, fillColor: colorToHex(el.color, '#10b981'), fillOpacity: (el.opacity ?? 1) * 0.25, zIndex: 5 });
             let ax = 0, ay = 0; pts.forEach(p => { ax += p[0]; ay += p[1]; });
-            o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '🗺️', title, badge: '区域', desc: '', images: [], lng: ax / pts.length, lat: ay / pts.length })));
+            o.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '🗺️', title, badge: '区域', desc: '', images: [], lng: ax / pts.length, lat: ay / pts.length })));
             group.area++;
         } else if (el.type === 'text' && pts.length >= 1) {
             o = new AMap.Text({
@@ -2255,7 +2373,7 @@ function applyPlan(map, plan) {
                     'padding': '4px 8px', 'border-radius': '14px',
                 },
             });
-            o.on('click', (e) => onFeatureClick(e, () => ui && ui.showFeature({ icon: '💬', title, badge: '文字', desc: '', images: [], lng: pts[0][0], lat: pts[0][1] })));
+            o.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '💬', title, badge: '文字', desc: '', images: [], lng: pts[0][0], lat: pts[0][1] })));
         }
         if (o) { map.add(o); overlays.push(o); }
     });
@@ -2841,6 +2959,77 @@ async function boot() {
         catch (e) { console.warn('⚠️ 步行路线规划不可用:', e && e.message); }
     });
 
+    // 官方信息窗体：地物详情弹出（替代手写侧栏 showFeature）
+    featureInfoWindow = new AMap.InfoWindow({ isCustom: true, offset: new AMap.Pixel(0, -12), autoMove: true });
+
+    // 逆地理编码：点击空白处显示地址
+    AMap.plugin('AMap.Geocoder', () => {
+        try { geocoder = new AMap.Geocoder({ city: '成都' }); }
+        catch (e) { console.warn('⚠️ 逆地理编码不可用:', e && e.message); }
+    });
+
+    // 周边 POI 搜索：停车场/地铁/餐饮/洗手间
+    AMap.plugin('AMap.PlaceSearch', () => {
+        try { placeSearch = new AMap.PlaceSearch({ city: '成都', pageSize: 10, pageIndex: 1 }); }
+        catch (e) { console.warn('⚠️ 周边搜索不可用:', e && e.message); }
+    });
+
+    // 标记点聚合：几十个标记时聚合成簇
+    AMap.plugin('AMap.MarkerCluster', () => {
+        try {
+            markerCluster = new AMap.MarkerCluster(map, [], { gridSize: 80, maxZoom: 18 });
+            // 收编已加载方案的标记点（插件加载晚于 applyPlan，初始标记当时直接 map.add）
+            Object.values(planOverlayGroups).forEach(g => (g.overlays || []).forEach(o => {
+                if (o instanceof AMap.Marker) { try { o.setMap(null); markerCluster.addMarker(o); } catch (_) {} }
+            }));
+        }
+        catch (e) { console.warn('⚠️ 点聚合不可用:', e && e.message); }
+    });
+
+    // 多边形编辑：拖动可见区域顶点（临时预览，不保存）
+    AMap.plugin('AMap.PolyEditor', () => {});
+    let polyEditors = [];
+    const btnPolyEdit = document.getElementById('btn-poly-edit');
+    if (btnPolyEdit) btnPolyEdit.addEventListener('click', () => {
+        polyEditorOn = !polyEditorOn;
+        btnPolyEdit.textContent = polyEditorOn ? '✏️ 编辑中（再点退出）' : '✏️ 编辑区域顶点';
+        polyEditors.forEach(pe => { try { pe.close(); } catch (_) {} });
+        polyEditors = [];
+        if (polyEditorOn) {
+            const polys = [];
+            Object.values(planOverlayGroups).forEach(g => g.overlays.forEach(o => {
+                if (o instanceof AMap.Polygon && typeof o.getPath === 'function') polys.push(o);
+            }));
+            polys.forEach(p => { try { const pe = new AMap.PolyEditor(map, p); pe.open(); polyEditors.push(pe); } catch (_) {} });
+            toast(polys.length ? ('✏️ 可编辑 ' + polys.length + ' 个区域') : '⚠️ 当前无可见区域多边形');
+        }
+    });
+
+    // 漫游跟随开关
+    const btnGuideFollow = document.getElementById('btn-guide-follow');
+    if (btnGuideFollow) btnGuideFollow.addEventListener('click', () => {
+        guideFollow = !guideFollow;
+        btnGuideFollow.textContent = '🚶 漫游跟随：' + (guideFollow ? '开' : '关');
+    });
+
+    // 周边建筑显隐（高德默认 3D 建筑层）
+    let amapBuildingsOn = true;
+    const btnBuildings = document.getElementById('btn-buildings-toggle');
+    if (btnBuildings) btnBuildings.addEventListener('click', () => {
+        amapBuildingsOn = !amapBuildingsOn;
+        const feats = ['bg', 'road', 'point'];
+        if (amapBuildingsOn) feats.push('building');
+        map.setFeatures(feats);
+        btnBuildings.textContent = '🏙 周边建筑：' + (amapBuildingsOn ? '开' : '关');
+    });
+
+    // 周边服务搜索按钮
+    const nearbyBtns = document.getElementById('nearby-btns');
+    if (nearbyBtns) nearbyBtns.addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-nearby]');
+        if (b) searchNearby(map, b.dataset.nearby);
+    });
+
     // 可视化特效开关（Loca v2）
     const btnLoca = document.getElementById('btn-loca-toggle');
     if (btnLoca) btnLoca.addEventListener('click', () => toggleLoca(map));
@@ -2927,7 +3116,7 @@ async function boot() {
                     searchResults.style.display = 'none';
                     searchInput.value = it.name;
                     flyTo([it.lng, it.lat], 18, map.getPitch(), map.getRotation());
-                    ui.showFeature({ icon: it.icon, title: it.name, badge: it.badge, desc: it.desc, images: it.images, lng: it.lng, lat: it.lat });
+                    showFeaturePopup(map,{ icon: it.icon, title: it.name, badge: it.badge, desc: it.desc, images: it.images, lng: it.lng, lat: it.lat });
                     if (it.type === 'route' && it.pts) startGuide(it.pts, it.color, it.name);
                 }
                 return;
@@ -2957,6 +3146,15 @@ async function boot() {
             }
         }
         ui.hideInfo();
+        // 逆地理编码：点击空白处显示地址（官方 AMap.Geocoder）
+        if (geocoder) {
+            geocoder.getAddress([clicked.lng, clicked.lat], (status, result) => {
+                if (status === 'complete' && result && result.regeocode) {
+                    const addr = result.regeocode.formattedAddress || '';
+                    if (addr) toast('📍 ' + addr);
+                }
+            });
+        }
     });
 
     // Smooth camera animation helper
