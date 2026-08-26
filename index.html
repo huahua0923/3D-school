@@ -2728,7 +2728,7 @@ function syncFloorVisibility() {
         const isMap = p.data && p.data.kind === 'map';
         const want = active.has(id)
             && (isMap || currentBuilding === '' || buildingOf(p) === currentBuilding)
-            && (currentFloor === 0 || floorOf(p) === currentFloor);
+            && (isMap || currentFloor === 0 || floorOf(p) === currentFloor);
         const shown = !!planOverlayGroups[id];
         if (want && !shown) {
             fetchPlanData(p.id).then(plan => {
@@ -2736,7 +2736,7 @@ function syncFloorVisibility() {
                 // 二次校验：异步期间建筑/楼层/勾选可能已变（map 方案不受建筑过滤）
                 const isMapP = plan.data && plan.data.kind === 'map';
                 if ((isMapP || currentBuilding === '' || buildingOf(plan) === currentBuilding)
-                    && (currentFloor === 0 || floorOf(plan) === currentFloor)
+                    && (isMapP || currentFloor === 0 || floorOf(plan) === currentFloor)
                     && getActivePlanIds().map(String).includes(id)
                     && !planOverlayGroups[id]) {
                     applyPlan(planMap, plan);
