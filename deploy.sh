@@ -14,7 +14,7 @@ if [ -n "$1" ]; then
 else
   # 用 node 解析 API（服务器必有 node），取 main 分支最新 commit sha
   SHA=$(curl -s "https://api.github.com/repos/$REPO/commits/main" \
-    | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d)[0].sha)}catch(e){console.log('')}})")
+    | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d);console.log(Array.isArray(j)?j[0].sha:j.sha)}catch(e){console.log('')}})")
 fi
 
 if [ -z "$SHA" ]; then
