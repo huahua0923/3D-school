@@ -796,9 +796,10 @@ async function renderPlans() {
     box.innerHTML = rows.map(p => {
         const name = p.name || ('方案 ' + p.id);
         const vis = p.visibility || 'public';
-        const floor = (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 1;
-        const floorOptions = Array.from({ length: 12 }, (_, i) => i + 1).map(f =>
-            `<option value="${f}" ${floor === f ? 'selected' : ''}>${f}F</option>`).join('');
+        const floor = (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 0;
+        const floorOptions = `<option value="0" ${floor === 0 ? 'selected' : ''}>0F（默认）</option>` +
+            Array.from({ length: 12 }, (_, i) => i + 1).map(f =>
+                `<option value="${f}" ${floor === f ? 'selected' : ''}>${f}F</option>`).join('');
         return `<div class="section">
             <h3>🗂️ ${escHtml(name)}</h3>
             <div class="form-grid">
