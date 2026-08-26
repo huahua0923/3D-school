@@ -1990,7 +1990,6 @@ let currentFeature = null;              // 当前详情卡地物 {lng,lat,title,
 let featureInfoWindow = null;           // AMap.InfoWindow（地物详情弹出）
 let geocoder = null;                    // AMap.Geocoder（逆地理编码）
 let placeSearch = null;                 // AMap.PlaceSearch（周边 POI 搜索）
-let markerCluster = null;               // AMap.MarkerCluster（标记点聚合）
 let nearbyMarkers = [];                 // 周边搜索结果临时标记
 let navTravelMode = 'walking';          // 路径规划方式：walking/driving/riding/transfer
 let navDriving = null;                  // AMap.Driving 实例（驾车路线）
@@ -2077,7 +2076,6 @@ function disposeOverlay(o, map) {
     try {
         const i = routeOverlays.indexOf(o);
         if (i >= 0) routeOverlays.splice(i, 1);
-        if (markerCluster && o instanceof AMap.Marker) { try { markerCluster.removeMarker(o); } catch (_) {} }
         if (o && typeof o.setMap === 'function') o.setMap(null);
         else if (o) map.remove(o);
     } catch (_) {}
@@ -2312,7 +2310,7 @@ function applyPlan(map, plan) {
                     zIndex: 15,
                 });
                 mk.on('click', (e) => onFeatureClick(e, () => showFeaturePopup(map,{ icon: '📍', title: name, badge: '标记点', desc: m.desc || '', images: m.images || [], lng: m.lng, lat: m.lat })));
-                if (markerCluster) markerCluster.addMarker(mk); else map.add(mk);
+                map.add(mk);
                 overlays.push(mk); added++;
                 // 标记点名称标签（圆点下方）
                 overlays.push(addNameLabel(map, name, [m.lng, m.lat], 'top-center', [0, 10]));
@@ -3113,18 +3111,6 @@ async function boot() {
     AMap.plugin('AMap.PlaceSearch', () => {
         try { placeSearch = new AMap.PlaceSearch({ city: '成都', pageSize: 10, pageIndex: 1 }); }
         catch (e) { console.warn('⚠️ 周边搜索不可用:', e && e.message); }
-    });
-
-    // 标记点聚合：几十个标记时聚合成簇
-    AMap.plugin('AMap.MarkerCluster', () => {
-        try {
-            markerCluster = new AMap.MarkerCluster(map, [], { gridSize: 80, maxZoom: 18 });
-            // 收编已加载方案的标记点（插件加载晚于 applyPlan，初始标记当时直接 map.add）
-            Object.values(planOverlayGroups).forEach(g => (g.overlays || []).forEach(o => {
-                if (o instanceof AMap.Marker) { try { o.setMap(null); markerCluster.addMarker(o); } catch (_) {} }
-            }));
-        }
-        catch (e) { console.warn('⚠️ 点聚合不可用:', e && e.message); }
     });
 
     // 漫游跟随开关
