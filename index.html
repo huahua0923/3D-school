@@ -1542,27 +1542,27 @@ function colorToHex(c, fallback = '#3b82f6') {
 function showFeaturePopup(map, f) {
     if (!map || !featureInfoWindow) return;
     const box = document.createElement('div');
-    box.style.cssText = 'background:rgba(17,20,32,0.95);border:1px solid rgba(255,255,255,0.16);border-radius:10px;padding:10px 12px;min-width:220px;max-width:280px;box-shadow:0 8px 30px rgba(0,0,0,0.5);';
+    box.style.cssText = 'background:rgba(17,20,32,0.97);border:1px solid rgba(255,255,255,0.2);border-radius:16px;padding:20px 22px;min-width:360px;max-width:min(480px,calc(100vw - 40px));box-shadow:0 12px 40px rgba(0,0,0,0.6);';
 
     // 头部：icon + 标题 + badge + 关闭
     const head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+    head.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:12px;';
     const icon = document.createElement('span');
     icon.textContent = f.icon || '📍';
-    icon.style.cssText = 'font-size:18px;line-height:1;';
+    icon.style.cssText = 'font-size:32px;line-height:1;';
     const title = document.createElement('strong');
     title.textContent = f.title || '';
-    title.style.cssText = 'color:#fff;font-size:14px;flex:1;';
+    title.style.cssText = 'color:#fff;font-size:20px;flex:1;line-height:1.3;';
     head.appendChild(icon); head.appendChild(title);
     if (f.badge) {
         const b = document.createElement('span');
         b.textContent = f.badge;
-        b.style.cssText = 'font-size:10px;color:#22d3ee;border:1px solid rgba(34,211,238,0.45);border-radius:8px;padding:1px 6px;white-space:nowrap;';
+        b.style.cssText = 'font-size:13px;color:#22d3ee;border:1px solid rgba(34,211,238,0.5);border-radius:10px;padding:3px 10px;white-space:nowrap;';
         head.appendChild(b);
     }
     const close = document.createElement('button');
     close.textContent = '✕';
-    close.style.cssText = 'background:none;border:none;color:rgba(255,255,255,0.6);font-size:14px;cursor:pointer;padding:0 2px;';
+    close.style.cssText = 'background:none;border:none;color:rgba(255,255,255,0.7);font-size:20px;cursor:pointer;padding:2px 6px;';
     close.addEventListener('click', () => featureInfoWindow.close());
     head.appendChild(close);
     box.appendChild(head);
@@ -1571,18 +1571,18 @@ function showFeaturePopup(map, f) {
     if (f.desc) {
         const d = document.createElement('div');
         d.textContent = f.desc;
-        d.style.cssText = 'color:rgba(255,255,255,0.78);font-size:12px;line-height:1.6;margin-bottom:6px;';
+        d.style.cssText = 'color:rgba(255,255,255,0.82);font-size:15px;line-height:1.7;margin-bottom:12px;';
         box.appendChild(d);
     }
 
     // 图片缩略图（点击放大灯箱）
     if (f.images && f.images.length) {
         const imgs = document.createElement('div');
-        imgs.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;';
+        imgs.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;';
         f.images.forEach((src, i) => {
             const im = document.createElement('img');
             im.src = src; im.alt = f.title || '图片';
-            im.style.cssText = 'width:56px;height:42px;object-fit:cover;border-radius:4px;cursor:pointer;border:1px solid rgba(255,255,255,0.15);';
+            im.style.cssText = 'width:96px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.2);';
             im.addEventListener('click', () => openLightbox(f.images, i));
             imgs.appendChild(im);
         });
@@ -1593,11 +1593,11 @@ function showFeaturePopup(map, f) {
     if (f.lng != null && f.lat != null) {
         currentFeature = { lng: f.lng, lat: f.lat, title: f.title || '该位置', floor: currentFloor };
         const nav = document.createElement('div');
-        nav.style.cssText = 'display:flex;gap:6px;';
+        nav.style.cssText = 'display:flex;gap:10px;';
         const mkBtn = (txt, which) => {
             const b = document.createElement('button');
             b.textContent = txt;
-            b.style.cssText = 'flex:1;font-size:11px;padding:4px 6px;border-radius:5px;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.08);color:#fff;cursor:pointer;';
+            b.style.cssText = 'flex:1;font-size:15px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;';
             b.addEventListener('click', () => { setNavPoint(which); featureInfoWindow.close(); });
             return b;
         };
