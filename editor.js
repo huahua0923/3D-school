@@ -2113,9 +2113,11 @@
   function showBatchImport() {
     const token = getToken();
     if (!token) { showLoginPrompt(() => showBatchImport()); return; }
-    const example = JSON.stringify([
-      { name: '会展中心主馆', center: [104.0636, 30.6725], widthM: 80, heightM: 60, rotation: 0, floors: [1, 2, 3, 4, 5] }
-    ], null, 2);
+    const example = JSON.stringify({
+      buildings: [
+        { name: '会展中心主馆', center: [104.0636, 30.6725], widthM: 80, heightM: 60, rotation: 0, floors: [1, 2, 3, 4, 5] }
+      ]
+    }, null, 2);
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `<div class="modal-box" style="min-width:560px;"><h2>🧱 批量导入建筑</h2>
@@ -2133,7 +2135,8 @@
       catch (e) { alert('JSON 解析失败：' + e.message); return; }
       const t = getToken();
       try {
-        const res = await fetch('/api/editor/projects/batch', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: JSON.stringify(payload) });
+        const buildings = Array.isArray(payload) ? payload : payload.buildings;
+        const res = await fetch('/api/editor/projects/batch', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: JSON.stringify({ buildings }) });
         const j = await res.json().catch(() => ({}));
         if (!res.ok) { alert('导入失败：' + (j.error || ('HTTP ' + res.status))); return; }
         overlay.remove();
@@ -2373,7 +2376,7 @@
     fetch('/api/editor/projects/' + id, { headers: authHeaders() }).then(r => r.ok ? r.json() : null).then(json => {
       if (json && json.data) {
         state.projectId = id;
-        loadProjectData(json.data.data || json.data);
+        loadProjectData(json.data.data || json.data, json.data.floor, json.data.building);
         showToast('✅ 已加载项目：' + (state.projectName || ('方案 ' + id)));
         loadPlanList();
       }

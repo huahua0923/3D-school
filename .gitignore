@@ -12,3 +12,6 @@ server.log
 mobile-check.*
 yx*.png
 yx*.jpeg
+
+# 楼层平面图原始素材（16MB 死资产，暂无代码引用，勿提交）
+tu/

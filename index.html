@@ -2866,6 +2866,7 @@ async function refreshPlansAfterAuthChange() {
         Promise.all(allIds.map(id => fetchPlanData(id))).then(plans => {
             plans.forEach(plan => { if (plan) applyPlan(planMap, plan); });
             rebuildLocaIfActive();
+            syncFloorVisibility();
         });
     }
 }
