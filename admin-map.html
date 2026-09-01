@@ -228,13 +228,13 @@ body{font-family:'Inter','PingFang SC','Microsoft YaHei',sans-serif;background:#
     <span id="img-lb-count"></span>
 </div>
 
+<script src="shared.js"></script>
 <script>
 (function(){
 'use strict';
 
 const DEFAULT_CENTER = [104.14141, 30.67133], DEFAULT_ZOOM = 17;
 const SEARCH_CITY = '成都';   // 高德 POI 联想限定城市（场馆在成都）
-const COLOR_PRESETS = ['#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#f97316','#84cc16','#14b8a6','#6366f1','#d946ef','#0ea5e9','#e11d48','#eab308','#a855f7','#64748b','#ffffff','#000000'];
 const MAX_HISTORY = 50;
 
 let map, mouseTool, rangingTool=null, currentTool='pointer', overlays=[], selectedOv=null;
@@ -1403,7 +1403,6 @@ function updateUI(){
     document.getElementById('btn-redo').disabled=historyIdx>=history.length-2;
 }
 
-function toast(msg){const e=document.getElementById('toast');e.textContent=msg;e.style.opacity='1';setTimeout(()=>{e.style.opacity='0'},2000)}
 
 // ========================================================
 // 轨迹回放：逐条播放路线（图层列表每条路线一个 ▶，点击播放 / 再点停止）

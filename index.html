@@ -605,6 +605,7 @@
 <!-- ============================================================
 Three.js Import Map
 ============================================================ -->
+<script src="shared.js"></script>
 <script src="indoor-nav.js"></script>
 
 <script type="importmap">
@@ -982,14 +983,6 @@ let locaActive = false;             // 特效总开关状态
 // 每个特效独立开关（选择性展示）：routes=路线脉冲 / breathing=呼吸点 / areas=区域3D体块
 let locaEffects = { routes: true, breathing: true, areas: true, scatter: false, prism: false };
 
-function toast(msg){
-    const el = document.getElementById('toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.style.opacity = '1';
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => { el.style.opacity = '0'; }, 2500);
-}
 
 // 测面积：等距圆柱局部近似 + shoelace（校园尺度精度足够）
 function polygonAreaMeters(path){
@@ -1484,13 +1477,6 @@ async function initAmap(amapKeyCfg) {
     return map;
 }
 
-/** 颜色统一转为 #hex 字符串（config 中路线颜色已被 loadConfig 转为 int） */
-function colorToHex(c, fallback = '#3b82f6') {
-    if (c == null) return fallback;
-    if (typeof c === 'string') return c.startsWith('#') ? c : '#' + c;
-    if (typeof c === 'number') return '#' + c.toString(16).padStart(6, '0');
-    return fallback;
-}
 
 /** 覆盖物点击：阻止冒泡并短暂屏蔽 map click 的 hideInfo，再执行展示逻辑 */
 /** 官方 AMap.InfoWindow 地物详情弹出：icon+标题+badge+描述+图片缩略图+设为起点/终点 */
@@ -1674,24 +1660,6 @@ function locaColorOf(...args) {
     return fallback;
 }
 
-// hex → rgba() 字符串（canvas 渐变用）
-function hexToRgba(hex, alpha) {
-    const h = String(hex || '#f59e0b').replace('#', '');
-    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : (h.length === 6 ? h : 'f59e0b');
-    const r = parseInt(full.slice(0, 2), 16), g = parseInt(full.slice(2, 4), 16), b = parseInt(full.slice(4, 6), 16);
-    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-}
-
-// hex 颜色明暗调整（amount 负=变暗，正=变亮），用于 3D 体块侧面
-function shadeHex(hex, amount) {
-    const h = String(hex || '#10b981').replace('#', '');
-    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : (h.length === 6 ? h : '10b981');
-    const n = parseInt(full, 16);
-    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-    if (amount < 0) { r = Math.round(r * (1 + amount)); g = Math.round(g * (1 + amount)); b = Math.round(b * (1 + amount)); }
-    else { r = Math.round(r + (255 - r) * amount); g = Math.round(g + (255 - g) * amount); b = Math.round(b + (255 - b) * amount); }
-    return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
-}
 
 function initLoca(map) {
     if (!window.Loca) { toast('⚠️ Loca SDK 未加载'); return; }

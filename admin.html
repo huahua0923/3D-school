@@ -306,6 +306,7 @@ a { color: #58a6ff; }
 <!-- Toast -->
 <div id="toast"></div>
 
+<script src="shared.js"></script>
 <script>
 // ============================================================
 // Admin Panel JS
@@ -615,7 +616,6 @@ function renderBuilding() {
             : `<button class="btn-del" style="margin-top:8px" onclick="delRoad()">✕ 删除道路</button>`);
 }
 
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 // 生成可安全嵌入 onclick/onchange 双引号 HTML 属性的 JS 字符串字面量：
 // JSON.stringify 会输出 "key"，直接内联会把属性撑断（表现为点按钮报 SyntaxError: Unexpected end of input）
 function jkey(v) { return escHtml(JSON.stringify(v)); }

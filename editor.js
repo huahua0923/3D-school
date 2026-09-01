@@ -13,11 +13,6 @@
   const DEFAULT_TEXT_COLOR = '#ffffff';
   const DEFAULT_TEXT_BG = 'rgba(0,0,0,0.7)';
   const DEFAULT_STAIR_COLOR = '#8b5cf6';
-  const COLOR_PRESETS = [
-    '#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4',
-    '#f97316','#84cc16','#14b8a6','#6366f1','#d946ef','#0ea5e9','#e11d48',
-    '#22c55e','#eab308','#a855f7','#64748b','#ffffff','#000000'
-  ];
   const TEXT_BG_PRESETS = [
     'rgba(0,0,0,0.7)','rgba(255,255,255,0.8)','rgba(59,130,246,0.6)',
     'rgba(16,185,129,0.6)','rgba(239,68,68,0.6)','rgba(245,158,11,0.6)',
@@ -397,12 +392,6 @@
 
   // ===================== Helpers =====================
 
-  function hexToRgba(hex, alpha) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
-  }
 
   function roundRect(c, x, y, w, h, r) {
     c.moveTo(x + r, y); c.lineTo(x + w - r, y);
