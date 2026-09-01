@@ -468,16 +468,6 @@ function getNested(obj, path) {
 }
 
 // ---------- Add / Delete helpers ----------
-function addArea() {
-    const k = prompt('新区域的 key（英文）');
-    if (!k || !k.trim()) return;
-    config.areas = config.areas || {};
-    if (config.areas[k]) { alert('该 key 已存在'); return; }
-    config.areas[k] = { color: '#10b981', strokeWidth: 2, opacity: 0.2, pts: [[104.14, 30.67], [104.141, 30.671]] };
-    renderAreas();
-}
-function delArea(key) { if (confirm('删除区域「' + key + '」？')) { delete config.areas[key]; renderAreas(); saveConfig(); } }
-
 function addPreset() {
     const k = prompt('新视角预设的名称（如 overview）');
     if (!k || !k.trim()) return;

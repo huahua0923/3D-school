@@ -472,11 +472,10 @@ function getFullConfig() {
     }
   }
 
-  // 透传字段：SQLite 未建模的 brand / areas / planName / 路线样式，从 config.json 补齐
-  // （否则后台保存时这些字段会被抹掉，导致首页标题/Logo/区域叠加/线宽丢失）
-  // 先给默认值，确保 config.brand / config.areas 始终存在（否则后台无法设置品牌名）
+  // 透传字段：SQLite 未建模的 brand / planName，从 config.json 补齐
+  // （否则后台保存时这些字段会被抹掉，导致首页标题/Logo 丢失）
+  // 先给默认值，确保 config.brand 始终存在（否则后台无法设置品牌名）
   config.brand = { name: '', subtitle: '', logo: '', logoText: '' };
-  config.areas = [];
   let fileCfg = null;
   try {
     if (configPath && fs.existsSync(configPath)) {
@@ -485,7 +484,6 @@ function getFullConfig() {
   } catch (e) {}
   if (fileCfg) {
     if (fileCfg.brand) config.brand = fileCfg.brand;
-    if (fileCfg.areas) config.areas = fileCfg.areas;
     if (fileCfg.planName !== undefined) config.planName = fileCfg.planName;
   }
 
