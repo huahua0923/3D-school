@@ -473,6 +473,16 @@
         <button class="sb-btn" id="btn-clear-nav" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除路径</button>
     </div>
 
+    <!-- 室内寻路：同楼跨层 Dijkstra 最短路径（indoor-nav.js 内核） -->
+    <div class="sb-section">
+        <div class="sb-label">🏠 室内寻路</div>
+        <div id="indoor-nav-hint" style="font-size:0.66rem;color:rgba(255,255,255,0.4);margin-bottom:4px;"></div>
+        <select id="indoor-nav-start" style="width:100%;margin-bottom:4px;background:#141a2c;color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.72rem;"></select>
+        <select id="indoor-nav-end" style="width:100%;margin-bottom:6px;background:#141a2c;color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.72rem;"></select>
+        <button class="sb-btn" id="btn-indoor-nav" style="width:100%;font-size:0.72rem;padding:6px 8px;">🧭 计算室内路线</button>
+        <div id="indoor-nav-result" style="margin-top:6px;color:#22d3ee;font-weight:600;line-height:1.6;white-space:pre-wrap;"></div>
+    </div>
+
     <!-- Loca 3D 可视化特效（每效果独立开关，可选择展示） -->
     <div class="sb-section">
         <div class="sb-label">🎆 可视化特效</div>
@@ -595,6 +605,8 @@
 <!-- ============================================================
 Three.js Import Map
 ============================================================ -->
+<script src="indoor-nav.js"></script>
+
 <script type="importmap">
 {
     "imports": {
@@ -2638,6 +2650,188 @@ function drawNavRoute() {
 function floorOf(p) { return (p.floor && Number(p.floor) > 0) ? Number(p.floor) : 0; }
 function buildingOf(p) { return (p.building && String(p.building).trim()) || ''; }
 
+// ============================================================
+// 室内寻路：同楼跨层 Dijkstra 最短路径（indoor-nav.js 内核）
+// 楼内沿走廊/楼梯走比高德步行更真实；与「路径导航」的户外路线互补
+// ============================================================
+let indoorPathGroup = null;            // 室内路径 3D 折线组（Three.Group）
+let indoorNavPois = [];                // 当前建筑可路由点位 [{floor,name,type,elementId}]
+
+// 解析室内寻路目标建筑：''=全部时若仅一栋则自动取之
+function resolveIndoorBuilding() {
+    const blds = [...new Set(planProjects
+        .filter(p => !(p.data && p.data.kind === 'map') && buildingOf(p))
+        .map(buildingOf))].sort();
+    if (currentBuilding) return currentBuilding;
+    if (blds.length === 1) return blds[0];
+    return '';
+}
+
+// 拉取目标建筑所有楼层方案 + 收集可路由点位（房间 area / 楼梯 stair）
+async function loadIndoorBuilding(building) {
+    const floorPlans = planProjects.filter(p => !(p.data && p.data.kind === 'map') && buildingOf(p) === building);
+    const loaded = await Promise.all(floorPlans.map(p => fetchPlanData(p.id)));
+    const plans = [];
+    const pois = [];
+    floorPlans.forEach((p, i) => {
+        const proj = loaded[i];
+        const data = (proj && proj.data) || {};
+        const els = Array.isArray(data.elements) ? data.elements : [];
+        const floor = floorOf(p);
+        plans.push({ floor, elements: els, data });
+        for (const el of els) {
+            if (el.visible === false) continue;
+            if (el.type === 'area' && (el.points || []).length >= 3) {
+                const name = el.name || el.label || '';
+                if (name) pois.push({ floor, name, type: 'area', elementId: el.id });
+            } else if (el.type === 'stair' && (el.points || []).length >= 1) {
+                const name = el.name || el.label || '';
+                if (name) pois.push({ floor, name, type: 'stair', elementId: el.id });
+            }
+        }
+    });
+    plans.sort((a, b) => a.floor - b.floor);
+    pois.sort((a, b) => (a.floor - b.floor) || a.name.localeCompare(b.name, 'zh'));
+    return { plans, pois };
+}
+
+// 刷新下拉选项（切换建筑 / 方案列表变化时调用）
+async function refreshIndoorNavPois() {
+    const startSel = document.getElementById('indoor-nav-start');
+    const endSel = document.getElementById('indoor-nav-end');
+    const hint = document.getElementById('indoor-nav-hint');
+    if (!startSel || !endSel) return;
+    const building = resolveIndoorBuilding();
+    indoorNavPois = [];
+    if (!building) {
+        const blds = [...new Set(planProjects.filter(p => !(p.data && p.data.kind === 'map') && buildingOf(p)).map(buildingOf))];
+        if (hint) hint.textContent = blds.length > 1 ? '请先在「方案」面板选择一栋建筑' : '暂无室内方案（需在编辑器绘制房间/楼梯）';
+        startSel.innerHTML = '<option value="">请选择</option>';
+        endSel.innerHTML = '<option value="">请选择</option>';
+        return;
+    }
+    if (hint) hint.textContent = '';
+    try {
+        const { pois } = await loadIndoorBuilding(building);
+        indoorNavPois = pois;
+        const opts = pois.map((p, idx) => `<option value="${idx}">${p.floor}F · ${p.name}</option>`).join('');
+        startSel.innerHTML = '<option value="">请选择</option>' + opts;
+        endSel.innerHTML = '<option value="">请选择</option>' + opts;
+    } catch (_) {
+        indoorNavPois = [];
+    }
+}
+
+function clearIndoorPath() {
+    if (indoorPathGroup && threeCtx) {
+        try { disposeThreeGroup(indoorPathGroup); threeCtx.scene.remove(indoorPathGroup); } catch (_) {}
+    }
+    indoorPathGroup = null;
+}
+
+// 像素→本地米（与 renderIndoorPlan3D 同一换算；同楼各层共享 geoBounds）
+function indoorPlanLocalTransform(plans) {
+    const meta = plans.find(p => p.data && p.data.geoBounds) || null;
+    if (!meta || !meta.data || !meta.data.geoBounds) return null;
+    const data = meta.data;
+    const areaW = data.imageWidth || PLAN_DEFAULT_W;
+    const areaH = data.imageHeight || PLAN_DEFAULT_H;
+    const bounds = data.geoBounds;
+    const anchorLng = (bounds.nw[0] + bounds.se[0]) / 2;
+    const anchorLat = (bounds.nw[1] + bounds.se[1]) / 2;
+    const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(anchorLat * Math.PI / 180);
+    const pxToLocalM = (x, y) => {
+        const ll = planPointToLngLat(x, y, bounds, areaW, areaH);
+        return { x: (ll[0] - anchorLng) * mPerDegLng, y: (ll[1] - anchorLat) * METERS_PER_DEG_LAT };
+    };
+    return { pxToLocalM, anchorLng, anchorLat };
+}
+
+// 把室内路径画成 3D 折线（每层高度 (floor-1)*LAYER_HEIGHT，楼梯段呈斜线上升）
+function renderIndoorPath3D(path, plans) {
+    if (!threeCtx || !path || path.length < 2) return;
+    clearIndoorPath();
+    const t = indoorPlanLocalTransform(plans);
+    if (!t) return;
+    const { pxToLocalM, anchorLng, anchorLat } = t;
+
+    const group = new THREE.Group();
+    const pts = path.map(n => {
+        const m = pxToLocalM(n.x, n.y);
+        return new THREE.Vector3(m.x, m.y, (n.floor - 1) * LAYER_HEIGHT);
+    });
+    group.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.95 })
+    ));
+
+    // 每个路径节点补一个小光点，标记经过的楼层/楼梯
+    const dotMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: 0.9 });
+    path.forEach(n => {
+        const m = pxToLocalM(n.x, n.y);
+        const sp = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 10), dotMat);
+        sp.position.set(m.x, m.y, (n.floor - 1) * LAYER_HEIGHT);
+        group.add(sp);
+    });
+
+    group.userData.anchor = [anchorLng, anchorLat];
+    group.updateTransform = (cc, lpm) => {
+        const c = cc.lngLatToCoord([anchorLng, anchorLat]);
+        group.position.set(c[0], c[1], 0);
+        group.scale.setScalar(lpm);
+    };
+    threeCtx.scene.add(group);
+    try { group.updateTransform(threeCtx.customCoords, threeCtx.lpm); } catch (_) {}
+    indoorPathGroup = group;
+}
+
+async function computeIndoorRoute() {
+    const resultEl = document.getElementById('indoor-nav-result');
+    const startSel = document.getElementById('indoor-nav-start');
+    const endSel = document.getElementById('indoor-nav-end');
+    if (!startSel || !endSel) return;
+    if (!window.IndoorNav) { if (resultEl) resultEl.textContent = '⚠️ 室内寻路内核未加载'; return; }
+
+    const s = indoorNavPois[+startSel.value];
+    const e = indoorNavPois[+endSel.value];
+    if (!s || !e) { if (resultEl) resultEl.textContent = '请选择起点和终点'; return; }
+    if (s.floor === e.floor && s.elementId === e.elementId) { if (resultEl) resultEl.textContent = '起点和终点相同'; return; }
+
+    const building = resolveIndoorBuilding();
+    if (!building) { toast('⚠️ 请先在「方案」面板选择一栋建筑'); return; }
+
+    clearIndoorPath();
+    if (resultEl) resultEl.textContent = '计算中…';
+
+    const { plans } = await loadIndoorBuilding(building);
+    const graph = window.IndoorNav.buildGraph(plans.map(p => ({ floor: p.floor, elements: p.elements })));
+    const nodeTypeOf = type => (type === 'area' ? 'room' : 'stair');
+    const startNode = graph.nodes.find(n => n.floor === s.floor && n.type === nodeTypeOf(s.type) && n.elementId === s.elementId);
+    const endNode = graph.nodes.find(n => n.floor === e.floor && n.type === nodeTypeOf(e.type) && n.elementId === e.elementId);
+    if (!startNode || !endNode) { if (resultEl) resultEl.textContent = '⚠️ 未在楼内找到该点位（可能未连到走廊）'; return; }
+
+    const res = window.IndoorNav.findPath(graph, startNode.id, endNode.id);
+    if (!res) { if (resultEl) resultEl.textContent = '⚠️ 无法到达（可能缺少楼梯连接）'; return; }
+
+    const stairCount = res.path.filter(n => n.type === 'stair').length;
+    const steps = res.path.filter(n => n.type !== 'corridor')
+        .map(n => `${n.floor}F ${n.type === 'stair' ? '🪜' + n.name : n.name}`).join(' → ');
+    if (resultEl) resultEl.textContent = `约 ${Math.round(res.distance)} 米 · 跨 ${res.floorsCrossed} 层 · 经 ${stairCount} 处楼梯\n${steps}`;
+    renderIndoorPath3D(res.path, plans);
+}
+
+function initIndoorNav() {
+    const btn = document.getElementById('btn-indoor-nav');
+    if (btn) btn.addEventListener('click', computeIndoorRoute);
+    const startSel = document.getElementById('indoor-nav-start');
+    const endSel = document.getElementById('indoor-nav-end');
+    const resultEl = document.getElementById('indoor-nav-result');
+    const onPick = () => { if (resultEl) resultEl.textContent = ''; clearIndoorPath(); };
+    if (startSel) startSel.addEventListener('change', onPick);
+    if (endSel) endSel.addEventListener('change', onPick);
+    refreshIndoorNavPois();
+}
+
 function renderPlanList() {
     const active = new Set(getActivePlanIds().map(String));
     const mapPlans = planProjects.filter(p => p.data && p.data.kind === 'map');
@@ -2733,6 +2927,8 @@ function setBuilding(b) {
     renderFloorSwitcher();
     renderPlanList();
     syncFloorVisibility();
+    clearIndoorPath();
+    refreshIndoorNavPois();
 }
 
 function setFloor(f) {
@@ -2911,6 +3107,7 @@ async function refreshPlanList() {
         planProjects = json.data || [];
     } catch (e) {}
     renderPlanList();
+    refreshIndoorNavPois();
 }
 
 function togglePlan(planId, on) {
@@ -3098,6 +3295,7 @@ async function boot() {
     // 先解析登录态（角色决定方案可见性），再加载「导览方案」
     await initAuth();
     initPlanSelector(map);
+    initIndoorNav();
 
     // 首页测量工具：测距 + 测面积
     initMeasureTools(map);
