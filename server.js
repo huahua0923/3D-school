@@ -53,7 +53,10 @@ app.use((_req, res, next) => {
 // node_modules、projects 等被公开下载。生产环境由 Nginx 处理时此段同样生效。
 const PUBLIC_PATHS = new Set([
     '/index.html', '/index-classic.html', '/admin.html', '/admin-map.html',
-    '/editor.html', '/editor.css', '/editor.js', '/indoor-nav.js', '/shared.js', '/favicon.svg', '/config.json'
+    '/editor.html', '/editor.css', '/editor.js', '/indoor-nav.js', '/shared.js', '/favicon.svg', '/config.json',
+    // index.html 拆分出的 ES 模块（2026-09-01 重构）
+    '/state.js', '/config.js', '/coords.js', '/tween.js', '/three-scene.js', '/flow.js', '/loca.js',
+    '/weather.js', '/poi.js', '/measure.js', '/route.js', '/indoor.js', '/auth.js', '/app.js'
 ]);
 app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
