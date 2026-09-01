@@ -16,6 +16,9 @@ require('dotenv').config();
 const db = require('./db');
 
 const app = express();
+// 信任一层反向代理（Nginx）：让 req.ip 取 X-Forwarded-For 的真实客户端 IP，
+// 否则登录限流按 127.0.0.1 计数，反代下会把全站锁死
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
@@ -28,6 +31,17 @@ if (!ADMIN_PASSWORD) {
 // 中间件
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
+
+// 写接口（POST/PUT）请求体必须是 JSON 对象：拒绝 null / 数组 / 标量，防类型混淆
+// （空对象与缺失 body 放行，由各路由自行校验必填字段）
+app.use((req, res, next) => {
+    if ((req.method === 'POST' || req.method === 'PUT') && req.body !== undefined && req.body !== null) {
+        if (typeof req.body !== 'object' || Array.isArray(req.body)) {
+            return res.status(400).json({ error: '请求体必须是 JSON 对象' });
+        }
+    }
+    next();
+});
 
 // 强制所有响应使用 UTF-8（解决 Windows 浏览器中文乱码）
 app.use((_req, res, next) => {
@@ -80,7 +94,12 @@ function verifyPassword(password, stored) {
 }
 
 // ---------- 无状态 token 管理（HMAC 签名，服务器重启不丢失）----------
-const TOKEN_SECRET = process.env.ADMIN_SECRET || ADMIN_PASSWORD;
+// 签名密钥必须显式配置，绝不回退到 ADMIN_PASSWORD（弱口令且已入 git 历史，可被伪造 admin token）
+const TOKEN_SECRET = process.env.ADMIN_SECRET;
+if (!TOKEN_SECRET) {
+    console.error('❌ 请设置环境变量 ADMIN_SECRET（token 签名密钥，勿与 ADMIN_PASSWORD 相同）');
+    process.exit(1);
+}
 const TOKEN_TTL = 24 * 60 * 60 * 1000; // 24 小时
 
 function generateToken(username, role) {
@@ -113,7 +132,12 @@ function readUser(req) {
     const auth = req.headers.authorization;
     const token = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null;
     if (!token) return null;
-    return verifyToken(token);
+    const claims = verifyToken(token);
+    if (!claims) return null;
+    // 重查 DB 获取最新角色：防止被降权/删除后旧 token 仍保留管理员特权（token 只证明身份，角色以 DB 为准）
+    const dbUser = db.getUserByUsername(claims.username);
+    if (!dbUser) return null;
+    return { username: dbUser.username, role: dbUser.role };
 }
 
 // 任意已登录角色可访问（super/user 也能通过）
@@ -207,7 +231,7 @@ app.get('/api/check', authMiddleware, (req, res) => {
 
 app.get('/api/users', adminOnly, (_req, res) => {
     try { res.json({ data: db.getUsers() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.post('/api/users', adminOnly, (req, res) => {
@@ -221,7 +245,7 @@ app.post('/api/users', adminOnly, (req, res) => {
         if (db.getUserByUsername(uname)) return res.status(409).json({ error: '用户名已存在' });
         const id = db.createUser({ username: uname, password_hash: hashPassword(String(password)), role });
         res.status(201).json({ message: 'ok', id });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/users/:id', adminOnly, (req, res) => {
@@ -251,7 +275,7 @@ app.put('/api/users/:id', adminOnly, (req, res) => {
         }
         db.updateUser(id, patch);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.delete('/api/users/:id', adminOnly, (req, res) => {
@@ -267,7 +291,7 @@ app.delete('/api/users/:id', adminOnly, (req, res) => {
         }
         db.deleteUser(id);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // 高德地图 JS API Key + 安全密钥（从 .env 注入，不进仓库、不进 config.json）
@@ -283,6 +307,10 @@ app.get('/api/amap', (_req, res) => {
 // 前端调用 GET /api/weather?type=now|3d，本接口转发到 QWeather 并原样返回 JSON
 // 注意：新版 QWeather 每个开发者有专属 API Host（形如 https://xxx.qweatherapi.com），
 //       必须用 QWEATHER_HOST 指定，通用 devapi/api.qweather.com 会返回 403 Invalid Host。
+// 内置内存缓存：同一 type+location 结果缓存 10 分钟，避免每次刷新都打 QWeather 配额。
+const WEATHER_TTL_MS = 10 * 60 * 1000;
+const weatherCache = new Map();   // `${type}:${loc}` -> { data, expireAt }
+
 app.get('/api/weather', async (req, res) => {
     const key = process.env.QWEATHER_KEY || '';
     if (!key) return res.status(500).json({ code: '500', error: 'QWEATHER_KEY 未配置' });
@@ -294,14 +322,31 @@ app.get('/api/weather', async (req, res) => {
         const geo = db.getGeo();
         if (geo && geo.center && geo.center.length >= 2) loc = geo.center[0] + ',' + geo.center[1];
     } catch (_) {}
+
+    // 命中缓存直接返回（不动上游）
+    const cacheKey = type + ':' + loc;
+    const cached = weatherCache.get(cacheKey);
+    if (cached && cached.expireAt > Date.now()) {
+        res.setHeader('X-Weather-Cache', 'hit');
+        return res.json(cached.data);
+    }
+
     const url = host + '/v7/weather/' + type +
         '?location=' + encodeURIComponent(loc) + '&key=' + encodeURIComponent(key);
     try {
         const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) {
+            // 上游非 2xx：不透传 body（可能含内部信息），返回通用错误
+            console.error('天气服务返回 ' + r.status);
+            return res.status(502).json({ code: '502', error: '天气服务暂不可用' });
+        }
         const data = await r.json();
+        weatherCache.set(cacheKey, { data, expireAt: Date.now() + WEATHER_TTL_MS });
+        res.setHeader('X-Weather-Cache', 'miss');
         res.json(data);
     } catch (err) {
-        res.status(502).json({ code: '502', error: '天气服务请求失败: ' + err.message });
+        console.error('天气服务请求失败:', err);
+        res.status(502).json({ code: '502', error: '天气服务暂不可用' });
     }
 });
 
@@ -313,7 +358,8 @@ app.get('/api/config', (req, res) => {
         const config = db.getFullConfig();
         res.json(config);
     } catch (err) {
-        res.status(500).json({ error: '读取配置失败: ' + err.message });
+        console.error('读取配置失败:', err);
+        res.status(500).json({ error: '读取配置失败' });
     }
 });
 
@@ -338,7 +384,8 @@ app.post('/api/config', adminOnly, (req, res) => {
         if (fs.existsSync(backupPath)) {
             try { fs.copyFileSync(backupPath, CONFIG_PATH); } catch (_) {}
         }
-        res.status(500).json({ error: '保存配置失败: ' + err.message });
+        console.error('保存配置失败:', err);
+        res.status(500).json({ error: '保存配置失败' });
     }
 });
 
@@ -346,69 +393,69 @@ app.post('/api/config', adminOnly, (req, res) => {
 
 app.get('/api/geo', (req, res) => {
     try { res.json({ data: db.getGeo() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/geo', adminOnly, (req, res) => {
     try { db.updateGeo(req.body); res.json({ message: 'ok' }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Scene ====================
 
 app.get('/api/scene', (req, res) => {
     try { res.json({ data: db.getScene() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/scene', adminOnly, (req, res) => {
     try { db.updateScene(req.body); res.json({ message: 'ok' }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Buildings ====================
 
 app.get('/api/buildings/main', (req, res) => {
     try { res.json({ data: db.getBuildingMain() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/buildings/main', adminOnly, (req, res) => {
     try { db.updateBuildingMain(req.body); res.json({ message: 'ok' }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.get('/api/buildings/subs', (req, res) => {
     try { res.json({ data: db.getBuildingSubs() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.post('/api/buildings/subs', adminOnly, (req, res) => {
     try {
         const id = db.addBuildingSub(req.body);
         res.status(201).json({ message: 'ok', id });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/buildings/subs/:id', adminOnly, (req, res) => {
     try {
         db.updateBuildingSub(Number(req.params.id), req.body);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.delete('/api/buildings/subs/:id', adminOnly, (req, res) => {
     try {
         db.deleteBuildingSub(Number(req.params.id));
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Markers ====================
 
 app.get('/api/markers', (req, res) => {
     try { res.json({ data: db.getMarkers() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.get('/api/markers/:key', (req, res) => {
@@ -416,35 +463,35 @@ app.get('/api/markers/:key', (req, res) => {
         const m = db.getMarkerByKey(req.params.key);
         if (!m) return res.status(404).json({ error: '标记不存在' });
         res.json({ data: m });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.post('/api/markers', adminOnly, (req, res) => {
     try {
         db.addMarker(req.body);
         res.status(201).json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/markers/:key', adminOnly, (req, res) => {
     try {
         db.updateMarker(req.params.key, req.body);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.delete('/api/markers/:key', adminOnly, (req, res) => {
     try {
         db.deleteMarker(req.params.key);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Routes ====================
 
 app.get('/api/routes', (req, res) => {
     try { res.json({ data: db.getRoutes() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.get('/api/routes/:key', (req, res) => {
@@ -452,80 +499,80 @@ app.get('/api/routes/:key', (req, res) => {
         const r = db.getRouteByKey(req.params.key);
         if (!r) return res.status(404).json({ error: '路线不存在' });
         res.json({ data: r });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.post('/api/routes', adminOnly, (req, res) => {
     try {
         db.addRoute(req.body);
         res.status(201).json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/routes/:key', adminOnly, (req, res) => {
     try {
         db.updateRoute(req.params.key, req.body);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.delete('/api/routes/:key', adminOnly, (req, res) => {
     try {
         db.deleteRoute(req.params.key);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Parking ====================
 
 app.get('/api/parking', (req, res) => {
     try { res.json({ data: db.getParking() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.post('/api/parking', adminOnly, (req, res) => {
     try {
         const id = db.addParking(req.body);
         res.status(201).json({ message: 'ok', id });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/parking/:id', adminOnly, (req, res) => {
     try {
         db.updateParking(Number(req.params.id), req.body);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.delete('/api/parking/:id', adminOnly, (req, res) => {
     try {
         db.deleteParking(Number(req.params.id));
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Particles ====================
 
 app.get('/api/particles', (req, res) => {
     try { res.json({ data: db.getParticles() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/particles', adminOnly, (req, res) => {
     try { db.updateParticles(req.body); res.json({ message: 'ok' }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 细粒度 CRUD — Camera ====================
 
 app.get('/api/camera', (req, res) => {
     try { res.json({ data: db.getCamera() }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 app.put('/api/camera', adminOnly, (req, res) => {
     try { db.updateCamera(req.body); res.json({ message: 'ok' }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 路线图编辑器 ====================
@@ -536,7 +583,7 @@ app.get('/api/editor/projects', (req, res) => {
         const user = readUser(req);
         const role = user ? user.role : 'user';
         res.json({ data: db.getEditorProjectsForRole(role) });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // 获取单个项目（受限方案对 user/访客隐藏）
@@ -548,7 +595,7 @@ app.get('/api/editor/projects/:id', (req, res) => {
         const role = user ? user.role : 'user';
         if (!db.canViewProject(role, p)) return res.status(403).json({ error: '无权查看该项目' });
         res.json({ data: p });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // 创建新项目
@@ -557,7 +604,7 @@ app.post('/api/editor/projects', adminOnly, (req, res) => {
         const { name, data, visibility, floor, building } = req.body;
         const id = db.saveEditorProject(null, name || '未命名项目', data || {}, visibility, floor, building);
         res.status(201).json({ message: 'ok', id });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // 更新项目（支持部分更新：只改名时保留已有 data；可单独改可见性）
@@ -573,7 +620,7 @@ app.put('/api/editor/projects/:id', adminOnly, (req, res) => {
         const nextBuilding = building !== undefined ? building : (existing.building || '');
         db.saveEditorProject(Number(req.params.id), nextName, nextData, nextVis, nextFloor, nextBuilding);
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // 删除项目
@@ -581,7 +628,7 @@ app.delete('/api/editor/projects/:id', adminOnly, (req, res) => {
     try {
         db.deleteEditorProject(Number(req.params.id));
         res.json({ message: 'ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // 批量导入：按「建筑清单」一次性生成每栋 × 每层的方案骨架（无底图，位置+比例尺由实地宽高算）
@@ -629,7 +676,7 @@ app.post('/api/editor/projects/batch', adminOnly, (req, res) => {
             }
         }
         res.status(201).json({ message: 'ok', created });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
 // ==================== 启动服务器 ====================
