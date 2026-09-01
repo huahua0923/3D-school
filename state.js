@@ -32,9 +32,8 @@ export const state = {
 
     // —— 首页测量工具 ——
     measureMouseTool: null,
-    measureRanging: null,
     measureMode: null,          // 'distance' | 'area' | null
-    measureOverlays: [],
+    measureOverlays: [],        // 常驻测量覆盖物（线/多边形/端点/结果标签），清除测量才移除
 
     // —— Loca v2 可视化特效 ——
     locaContainer: null,
