@@ -1453,8 +1453,8 @@
     } else {
       projects.forEach(p => {
         html += `<div class="project-row" data-id="${p.id}">
-          <span class="name">${esc(p.name)}</span>
-          <span class="time">${esc(p.updated_at || '')}</span>
+          <span class="name">${escHtml(p.name)}</span>
+          <span class="time">${escHtml(p.updated_at || '')}</span>
           <button class="toolbar-btn danger" data-delete="${p.id}" style="padding:2px 8px;font-size:0.7rem;">🗑</button>
         </div>`;
       });
@@ -1670,7 +1670,6 @@
     }
   }
 
-  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]); }
 
   // ===================== UI =====================
 
@@ -1712,7 +1711,7 @@
       const sel = el.id === state.selectedElementId;
       html += `<div class="layer-item${sel ? ' selected' : ''}" data-id="${el.id}">
         <span class="color-dot" style="background:${el.color};opacity:${el.opacity}"></span>
-        <span class="name">${esc(el.name)}</span>
+        <span class="name">${escHtml(el.name)}</span>
         <button class="${el.visible ? '' : 'off'}" data-action="toggle-vis">👁</button>
         <button class="${el.locked ? '' : 'off'}" data-action="toggle-lock">🔒</button>
       </div>`;
