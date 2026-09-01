@@ -637,7 +637,7 @@ const DEFAULT_CONFIG = {
 
 async function loadConfig() {
     try {
-        const resp = await fetch('/config.json?t=' + Date.now());
+        const resp = await fetch('/config.json');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         CONFIG = await resp.json();
         if (CONFIG.camera.maxPolarFactor) {
@@ -946,6 +946,10 @@ function buildVenue(scene, localToAmap) {
     return { clickables };
 }
 
+// 脉冲标记预收集数组：animate 每帧只遍历这几个，避免全场景 scene.children 字符串比较
+let pulseRings = [];   // RingGeometry 地面光环
+let pulseCones = [];   // ConeGeometry 发光锥
+
 /** Create entrance markers */
 function createMarkers(scene, localToAmap) {
     const markerData = [];
@@ -962,6 +966,7 @@ function createMarkers(scene, localToAmap) {
         cone.castShadow = true;
         cone.userData = { markerKey: key, baseEmissive: 0.7, phase: Math.random() * Math.PI * 2 };
         scene.add(cone);
+        pulseCones.push(cone);
 
         // Ground ring (flat on XY, Z is up)
         const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.0, 32),
@@ -969,6 +974,7 @@ function createMarkers(scene, localToAmap) {
         ring.position.set(amap.x, amap.y, amap.z + 0.12);
         ring.userData = { markerKey: key, phase: Math.random() * Math.PI * 2 };
         scene.add(ring);
+        pulseRings.push(ring);
 
         // CSS2D Label
         const div = document.createElement('div');
@@ -1118,56 +1124,60 @@ function animateFlow(map, now) {
         const dt = Math.min((now - flowLastT) / 1000, 0.1);
         if (guide) {
             guide.t += dt / GUIDE_DURATION;
-            if (guide.t >= 1) guide = null;   // 走完全程自动清除
-            else if (guideFollow) {
+            if (guide.t >= 1) {
+                guide = null;           // 走完全程自动清除
+                drawFlowLayer(map);     // 立即清屏，避免光点残留
+            } else if (guideFollow) {
                 // 漫游跟随：相机沿路线平滑跟随移动点（官方 moveAlong 语义，这里用 map.setCenter 逐帧同步）
-                const p = pathPointAt(guide.pts, guide.t);
+                const p = pathPointAt(guide.pts, guide.t, guide.cum);
                 if (p) map.setCenter([p[0], p[1]]);
             }
         }
     }
     flowLastT = now;
-    drawFlowLayer(map);
+    if (guide) drawFlowLayer(map);   // 无引导光点时跳过 Canvas 重绘（静止零开销）
     requestAnimationFrame((t) => animateFlow(map, t));
 }
 
 // —— 路线引导动画：折线弧长参数化 + 发光点绘制 ——
-function pathLength(pts) {
-    let len = 0;
+// 预计算折线各顶点累计弧长（guide 的 pts 固定，仅算一次，消除每帧 O(n) distance 累加）
+function computeArcLengths(pts) {
+    const cum = [0];
     for (let i = 1; i < pts.length; i++) {
-        len += AMap.GeometryUtil.distance([pts[i - 1][0], pts[i - 1][1]], [pts[i][0], pts[i][1]]);
+        cum.push(cum[i - 1] + AMap.GeometryUtil.distance([pts[i - 1][0], pts[i - 1][1]], [pts[i][0], pts[i][1]]));
     }
-    return len;
+    return cum;   // cum[i] = 起点到第 i 点的累计弧长，cum[last] = 总长
 }
 
-// 按弧长比例 t∈[0,1] 取折线上的点（分段线性插值，匀速滑过整条路线）
-function pathPointAt(pts, t) {
+// 按弧长比例 t∈[0,1] 取折线上的点（复用预计算的累计弧长，匀速滑过整条路线）
+function pathPointAt(pts, t, cum) {
     if (!pts || !pts.length) return null;
     if (pts.length === 1) return [pts[0][0], pts[0][1]];
-    const total = pathLength(pts);
+    if (!cum) cum = computeArcLengths(pts);
+    const total = cum[cum.length - 1];
     if (total <= 0) return [pts[0][0], pts[0][1]];
-    let target = Math.max(0, Math.min(1, t)) * total, acc = 0;
+    const target = Math.max(0, Math.min(1, t)) * total;
     for (let i = 1; i < pts.length; i++) {
-        const seg = AMap.GeometryUtil.distance([pts[i - 1][0], pts[i - 1][1]], [pts[i][0], pts[i][1]]);
-        if (acc + seg >= target) {
-            const k = seg > 0 ? (target - acc) / seg : 0;
+        if (cum[i] >= target) {
+            const seg = cum[i] - cum[i - 1];
+            const k = seg > 0 ? (target - cum[i - 1]) / seg : 0;
             return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k];
         }
-        acc += seg;
     }
     return [pts[pts.length - 1][0], pts[pts.length - 1][1]];
 }
 
 function startGuide(pts, color, name) {
     if (!pts || pts.length < 2) return;
-    guide = { pts: pts.map(p => [p[0], p[1]]), color: colorToHex(color, '#f59e0b'), t: 0 };
+    const gpts = pts.map(p => [p[0], p[1]]);
+    guide = { pts: gpts, color: colorToHex(color, '#f59e0b'), t: 0, cum: computeArcLengths(gpts) };
     toast('✨ 路线引导中' + (name ? '：' + name : ''));
 }
 
 // 在流动层画一个发光点（白心 + 颜色光环 + 渐隐拖尾），沿路线滑动
 function drawGuide(map) {
     if (!flowCtx || !guide || !guide.pts) return;
-    const pt = pathPointAt(guide.pts, guide.t);
+    const pt = pathPointAt(guide.pts, guide.t, guide.cum);
     if (!pt) return;
     const c = map.lngLatToContainer(new AMap.LngLat(pt[0], pt[1]));
     if (!c) return;
@@ -1177,7 +1187,7 @@ function drawGuide(map) {
     for (let i = 1; i <= TRAIL; i++) {
         const tt = guide.t - i * 0.015;
         if (tt < 0) break;
-        const tp = pathPointAt(guide.pts, tt);
+        const tp = pathPointAt(guide.pts, tt, guide.cum);
         if (!tp) continue;
         const tc = map.lngLatToContainer(new AMap.LngLat(tp[0], tp[1]));
         if (!tc) continue;
@@ -1468,17 +1478,25 @@ function loadScript(url) {
     });
 }
 
-async function initAmap() {
+// 预取高德 Key/安全密钥（独立于 config.json，可与 loadConfig 并行，消除串行等待链）
+async function fetchAmapKey() {
+    try {
+        const r = await fetch('/api/amap');
+        const d = await r.json();
+        if (d && d.key) return d;
+    } catch (_) { /* 回退到 config.json 中的值 */ }
+    return null;
+}
+
+async function initAmap(amapKeyCfg) {
     const geo = CONFIG.geo;
     // 优先用服务端 .env 注入的高德 Key/安全密钥（高德官方建议：key 不进仓库）
     let amapKey = geo && geo.amapKey;
     let amapSecurityCode = geo && geo.amapSecurityCode;
-    try {
-        const r = await fetch('/api/amap');
-        const d = await r.json();
-        if (d && d.key) amapKey = d.key;
-        if (d && d.securityJsCode) amapSecurityCode = d.securityJsCode;
-    } catch (_) { /* 回退到 config.json 中的值 */ }
+    if (amapKeyCfg) {
+        if (amapKeyCfg.key) amapKey = amapKeyCfg.key;
+        if (amapKeyCfg.securityJsCode) amapSecurityCode = amapKeyCfg.securityJsCode;
+    }
 
     if (!amapKey || amapKey === 'YOUR_AMAP_KEY_HERE') {
         // Show setup hint, fallback to classic
@@ -2119,7 +2137,15 @@ function disposeThreeGroup(group) {
         if (obj.geometry && obj.geometry.dispose) { try { obj.geometry.dispose(); } catch (_) {} }
         if (obj.material) {
             const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-            mats.forEach(m => { if (m && m.dispose) { try { m.dispose(); } catch (_) {} } });
+            mats.forEach(m => {
+                if (!m) return;
+                // 释放材质引用的纹理（室内方案底图等），避免 GPU 显存泄漏
+                ['map', 'emissiveMap', 'alphaMap', 'roughnessMap', 'metalnessMap', 'normalMap', 'bumpMap', 'aoMap', 'envMap', 'lightMap'].forEach(k => {
+                    const t = m[k];
+                    if (t && t.isTexture && t.dispose) { try { t.dispose(); } catch (_) {} }
+                });
+                if (m.dispose) { try { m.dispose(); } catch (_) {} }
+            });
         }
     });
 }
@@ -2945,15 +2971,19 @@ async function initPlanSelector(map) {
 async function refreshActivePlans() {
     if (!planMap) return;
     const ids = getActivePlanIds();
-    let changed = false;
-    for (const id of ids) {
+    // 并行拉取所有激活方案数据（原为串行 await，逐个等待网络往返）
+    const results = await Promise.all(ids.map(async id => {
         try {
             const plan = await fetchPlanData(id);
-            if (!plan) continue;
-            const prev = JSON.stringify(activePlanData[id] || null);
-            const next = JSON.stringify(plan.data || null);
-            if (prev !== next) { applyPlan(planMap, plan); changed = true; }
-        } catch (_) {}
+            return { id, plan };
+        } catch (_) { return { id, plan: null }; }
+    }));
+    let changed = false;
+    for (const { id, plan } of results) {
+        if (!plan) continue;
+        const prev = JSON.stringify(activePlanData[id] || null);
+        const next = JSON.stringify(plan.data || null);
+        if (prev !== next) { applyPlan(planMap, plan); changed = true; }
     }
     if (changed) rebuildLocaIfActive();
 }
@@ -3036,12 +3066,13 @@ async function boot() {
     ui = new UIController();
     ui.setProgress('加载配置...', 5);
 
-    // Load config
+    // Load config —— 高德密钥与配置互不依赖，并行拉取
+    const amapKeyPromise = fetchAmapKey();
     await loadConfig();
 
     // Init Amap
     ui.setProgress('初始化地图...', 20);
-    const map = await initAmap();
+    const map = await initAmap(await amapKeyPromise);
     if (!map) return; // Fallback handled in initAmap
 
     // Setup Three.js — wait for GLCustomLayer init, then create objects
@@ -3442,33 +3473,36 @@ async function boot() {
         const dt = Math.min(clock.getDelta(), 0.1);
         const elapsed = clock.elapsedTime;
 
+        let needsRender = false;
+
         // Auto-rotate
         if (autoRotate) {
             rotationAngle += dt * 8;
             map.setRotation(rotationAngle % 360);
+            needsRender = true;
         }
 
+        // Pulse marker rings & cones（预收集数组，避免每帧全场景 scene.children 字符串比较）
+        for (const ring of pulseRings) {
+            const s = 1 + 0.25 * Math.sin(elapsed * 2.2 + ring.userData.phase);
+            ring.scale.set(s, s, 1);
+            ring.material.opacity = 0.25 + 0.2 * Math.sin(elapsed * 2.2 + ring.userData.phase);
+        }
+        for (const cone of pulseCones) {
+            const base = cone.userData.baseEmissive;
+            cone.material.emissiveIntensity = base + 0.3 * Math.sin(elapsed * 2.5 + (cone.userData.phase || 0));
+        }
+        if (pulseRings.length || pulseCones.length) needsRender = true;
 
-        // Pulse marker rings & cones
-        scene.children.forEach(child => {
-            if (child.isMesh && child.geometry.type === 'RingGeometry' && child.userData.phase !== undefined) {
-                const s = 1 + 0.25 * Math.sin(elapsed * 2.2 + child.userData.phase);
-                child.scale.set(s, s, 1);
-                child.material.opacity = 0.25 + 0.2 * Math.sin(elapsed * 2.2 + child.userData.phase);
-            }
-            if (child.isMesh && child.geometry.type === 'ConeGeometry' && child.userData.baseEmissive !== undefined) {
-                const base = child.userData.baseEmissive;
-                child.material.emissiveIntensity = base + 0.3 * Math.sin(elapsed * 2.5 + (child.userData.phase || 0));
-            }
-        });
+        // 引导光点漫游跟随时会 setCenter，需重绘（ripple/flow 走各自 Canvas 覆盖层，不依赖 map.render）
+        if (guide) needsRender = true;
 
-        // Trigger Amap re-render → GLCustomLayer.render() → Three.js renders
-        map.render();
+        // 仅在有动画活动时触发 Amap 重绘（→ GLCustomLayer.render() → Three.js 渲染），静止零重绘
+        if (needsRender) map.render();
     }
 
-    // Simulate loading finish
+    // 就绪，立即收起加载屏（去掉人为 500ms 延迟）
     ui.setProgress('就绪', 100);
-    await new Promise(r => setTimeout(r, 500));
     ui.hideLoading();
 
     // Start animation loop
