@@ -468,26 +468,6 @@ function getNested(obj, path) {
 }
 
 // ---------- Add / Delete helpers ----------
-function addMarker() {
-    const k = prompt('新标记的 key（英文，如 entrance）');
-    if (!k || !k.trim()) return;
-    config.markers = config.markers || {};
-    if (config.markers[k]) { alert('该 key 已存在'); return; }
-    config.markers[k] = { label: '新标记', icon: '📍', badge: '', color: '#4ea1ff', pos: [0, 0, 30], desc: '', features: [] };
-    renderMarkers();
-}
-function delMarker(key) { if (confirm('删除标记「' + key + '」？')) { delete config.markers[key]; renderMarkers(); saveConfig(); } }
-
-function addRoute() {
-    const k = prompt('新路线的 key（如 public / vip）');
-    if (!k || !k.trim()) return;
-    config.routes = config.routes || {};
-    if (config.routes[k]) { alert('该 key 已存在'); return; }
-    config.routes[k] = { color: '#4ea1ff', speed: 2, strokeWidth: 3, opacity: 1, pts: [[0, 0.6, 0]] };
-    renderRoutes();
-}
-function delRoute(key) { if (confirm('删除路线「' + key + '」？')) { delete config.routes[key]; renderRoutes(); saveConfig(); } }
-
 function addArea() {
     const k = prompt('新区域的 key（英文）');
     if (!k || !k.trim()) return;
@@ -995,13 +975,6 @@ async function deleteUser(id, username) {
 
 function collectAll() {
     // All updates happen live via onchange, this is a no-op but kept for explicitness.
-    // Ensure colors are valid hex strings
-    for (const [, m] of Object.entries(config.markers)) {
-        if (m.color && !m.color.startsWith('#')) m.color = '#' + m.color;
-    }
-    for (const [, r] of Object.entries(config.routes)) {
-        if (r.color && !r.color.startsWith('#')) r.color = '#' + r.color;
-    }
 }
 
 // ---------- Init ----------

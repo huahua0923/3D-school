@@ -142,52 +142,6 @@ function createTables() {
   `);
 
   db.run(`
-    CREATE TABLE IF NOT EXISTS markers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT UNIQUE NOT NULL,
-      pos_x REAL NOT NULL DEFAULT 0,
-      pos_y REAL NOT NULL DEFAULT 0,
-      pos_z REAL NOT NULL DEFAULT 0,
-      color TEXT NOT NULL DEFAULT '#4da6ff',
-      icon TEXT NOT NULL DEFAULT '📍',
-      label TEXT NOT NULL DEFAULT '',
-      badge TEXT NOT NULL DEFAULT '',
-      description TEXT NOT NULL DEFAULT ''
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS marker_features (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      marker_id INTEGER NOT NULL,
-      feature_text TEXT NOT NULL DEFAULT '',
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      FOREIGN KEY (marker_id) REFERENCES markers(id) ON DELETE CASCADE
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS routes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT UNIQUE NOT NULL,
-      color TEXT NOT NULL DEFAULT '#4da6ff',
-      speed REAL NOT NULL DEFAULT 0.9
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS route_points (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      route_id INTEGER NOT NULL,
-      x REAL NOT NULL DEFAULT 0,
-      y REAL NOT NULL DEFAULT 0,
-      z REAL NOT NULL DEFAULT 0,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE
-    )
-  `);
-
-  db.run(`
     CREATE TABLE IF NOT EXISTS parking (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL DEFAULT '',
@@ -316,7 +270,6 @@ function seedFromConfig(config) {
   // 先清空所有表
   const tables = [
     'geo', 'scene_settings', 'buildings_main', 'buildings_subs',
-    'markers', 'marker_features', 'routes', 'route_points',
     'parking', 'particles', 'camera', 'camera_presets', 'schema_version'
   ];
   for (const t of tables) {
@@ -361,44 +314,6 @@ function seedFromConfig(config) {
   subs.forEach((s, i) => {
     insertSub.run([s.w || 10, s.d || 10, s.h || 6, s.x || 0, s.z || 0, s.color || '#253a6a', i]);
   });
-
-  // --- Markers ---
-  const markers = config.markers || {};
-  const insertMarker = db.prepare(
-    `INSERT INTO markers (key, pos_x, pos_y, pos_z, color, icon, label, badge, description)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  const insertFeature = db.prepare(
-    `INSERT INTO marker_features (marker_id, feature_text, sort_order) VALUES (?, ?, ?)`
-  );
-  for (const [key, m] of Object.entries(markers)) {
-    const res = insertMarker.run([
-      key,
-      (m.pos || [0, 0, 0])[0], (m.pos || [0, 0, 0])[1], (m.pos || [0, 0, 0])[2],
-      m.color || '#4da6ff', m.icon || '📍', m.label || '', m.badge || '', m.desc || ''
-    ]);
-    const markerId = res.lastInsertRowid || Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
-    (m.features || []).forEach((f, fi) => {
-      insertFeature.run([markerId, f, fi]);
-    });
-  }
-
-  // --- Routes ---
-  const routes = config.routes || {};
-  const insertRoute = db.prepare(
-    `INSERT INTO routes (key, color, speed) VALUES (?, ?, ?)`
-  );
-  const insertPoint = db.prepare(
-    `INSERT INTO route_points (route_id, x, y, z, sort_order) VALUES (?, ?, ?, ?, ?)`
-  );
-  for (const [key, r] of Object.entries(routes)) {
-    const res = insertRoute.run([key, r.color || '#4da6ff', r.speed || 0.9]);
-    const routeId = Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
-    (r.pts || []).forEach((pt, pi) => {
-      // 地图编辑器保存的是 [lng, lat]（2 元素），z 缺省为 0；undefined 会导致 sql.js 抛错
-      insertPoint.run([routeId, pt[0], pt[1], pt[2] || 0, pi]);
-    });
-  }
 
   // --- Parking ---
   const parking = config.parking || [];
@@ -486,8 +401,6 @@ function getFullConfig() {
   const sceneRow = one('SELECT * FROM scene_settings WHERE id = 1');
   const bmRow = one('SELECT * FROM buildings_main WHERE id = 1');
   const subRows = all('SELECT * FROM buildings_subs ORDER BY sort_order');
-  const markerRows = all('SELECT * FROM markers ORDER BY id');
-  const routeRows = all('SELECT * FROM routes ORDER BY id');
   const parkingRows = all('SELECT * FROM parking ORDER BY id');
   const particlesRow = one('SELECT * FROM particles WHERE id = 1');
   const cameraRow = one('SELECT * FROM camera WHERE id = 1');
@@ -542,26 +455,6 @@ function getFullConfig() {
     } : {}
   };
 
-  // Markers（含 features）
-  for (const m of markerRows) {
-    const features = all('SELECT feature_text FROM marker_features WHERE marker_id = ? ORDER BY sort_order', [m.id]);
-    config.markers[m.key] = {
-      pos: [m.pos_x, m.pos_y, m.pos_z],
-      color: m.color, icon: m.icon, label: m.label, badge: m.badge,
-      desc: m.description,
-      features: features.map(f => f.feature_text)
-    };
-  }
-
-  // Routes（含 points）
-  for (const r of routeRows) {
-    const points = all('SELECT x, y, z FROM route_points WHERE route_id = ? ORDER BY sort_order', [r.id]);
-    config.routes[r.key] = {
-      pts: points.map(p => [p.x, p.y, p.z]),
-      color: r.color, speed: r.speed
-    };
-  }
-
   // Parking
   config.parking = parkingRows.map(p => ({
     name: p.name,
@@ -594,15 +487,6 @@ function getFullConfig() {
     if (fileCfg.brand) config.brand = fileCfg.brand;
     if (fileCfg.areas) config.areas = fileCfg.areas;
     if (fileCfg.planName !== undefined) config.planName = fileCfg.planName;
-    if (fileCfg.routes) {
-      for (const key of Object.keys(config.routes)) {
-        const fr = fileCfg.routes[key];
-        if (fr) {
-          if (fr.strokeWidth !== undefined) config.routes[key].strokeWidth = fr.strokeWidth;
-          if (fr.opacity !== undefined) config.routes[key].opacity = fr.opacity;
-        }
-      }
-    }
   }
 
   // 迁移：老版本 logo 字段存的是文字/emoji，拆成 logo(图片) + logoText(文字)
@@ -693,109 +577,6 @@ function updateBuildingSub(id, data) {
 
 function deleteBuildingSub(id) {
   db.run('DELETE FROM buildings_subs WHERE id = ?', [id]);
-  syncToDisk();
-}
-
-// --- Markers ---
-function getMarkers() {
-  const rows = db.exec('SELECT * FROM markers ORDER BY id');
-  if (rows.length === 0) return [];
-  return rows[0].values.map(r => {
-    const features = db.exec('SELECT feature_text FROM marker_features WHERE marker_id = ? ORDER BY sort_order', [r[0]]);
-    const featList = features.length > 0 ? features[0].values.map(f => f[0]) : [];
-    return {
-      key: r[1], pos: [r[2], r[3], r[4]], color: r[5], icon: r[6],
-      label: r[7], badge: r[8], desc: r[9], features: featList
-    };
-  });
-}
-
-function getMarkerByKey(key) {
-  return getMarkers().find(m => m.key === key) || null;
-}
-
-function addMarker(data) {
-  db.run(`INSERT INTO markers (key, pos_x, pos_y, pos_z, color, icon, label, badge, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [data.key, (data.pos || [0, 0, 0])[0], (data.pos || [0, 0, 0])[1], (data.pos || [0, 0, 0])[2],
-     data.color || '#4da6ff', data.icon || '📍', data.label || '', data.badge || '', data.desc || '']);
-  const id = Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
-  (data.features || []).forEach((f, i) => {
-    db.run('INSERT INTO marker_features (marker_id, feature_text, sort_order) VALUES (?, ?, ?)', [id, f, i]);
-  });
-  syncToDisk();
-}
-
-function updateMarker(key, data) {
-  db.run(`UPDATE markers SET pos_x=?, pos_y=?, pos_z=?, color=?, icon=?, label=?, badge=?, description=? WHERE key=?`,
-    [(data.pos || [0, 0, 0])[0], (data.pos || [0, 0, 0])[1], (data.pos || [0, 0, 0])[2],
-     data.color || '#4da6ff', data.icon || '📍', data.label || '', data.badge || '', data.desc || '', key]);
-  const mRow = db.exec('SELECT id FROM markers WHERE key = ?', [key]);
-  if (mRow.length > 0 && mRow[0].values.length > 0) {
-    const id = mRow[0].values[0][0];
-    db.run('DELETE FROM marker_features WHERE marker_id = ?', [id]);
-    (data.features || []).forEach((f, i) => {
-      db.run('INSERT INTO marker_features (marker_id, feature_text, sort_order) VALUES (?, ?, ?)', [id, f, i]);
-    });
-  }
-  syncToDisk();
-}
-
-function deleteMarker(key) {
-  const mRow = db.exec('SELECT id FROM markers WHERE key = ?', [key]);
-  if (mRow.length > 0 && mRow[0].values.length > 0) {
-    const id = mRow[0].values[0][0];
-    db.run('DELETE FROM marker_features WHERE marker_id = ?', [id]);
-  }
-  db.run('DELETE FROM markers WHERE key = ?', [key]);
-  syncToDisk();
-}
-
-// --- Routes ---
-function getRoutes() {
-  const rows = db.exec('SELECT * FROM routes ORDER BY id');
-  if (rows.length === 0) return [];
-  return rows[0].values.map(r => {
-    const points = db.exec('SELECT x, y, z FROM route_points WHERE route_id = ? ORDER BY sort_order', [r[0]]);
-    const ptsList = points.length > 0 ? points[0].values.map(p => [p[0], p[1], p[2]]) : [];
-    return { key: r[1], color: r[2], speed: r[3], pts: ptsList };
-  });
-}
-
-function getRouteByKey(key) {
-  return getRoutes().find(r => r.key === key) || null;
-}
-
-function addRoute(data) {
-  db.run('INSERT INTO routes (key, color, speed) VALUES (?, ?, ?)',
-    [data.key, data.color || '#4da6ff', data.speed ?? 0.9]);
-  const id = Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
-  (data.pts || []).forEach((pt, i) => {
-    db.run('INSERT INTO route_points (route_id, x, y, z, sort_order) VALUES (?, ?, ?, ?, ?)', [id, pt[0], pt[1], pt[2], i]);
-  });
-  syncToDisk();
-}
-
-function updateRoute(key, data) {
-  db.run('UPDATE routes SET color=?, speed=? WHERE key=?', [data.color || '#4da6ff', data.speed ?? 0.9, key]);
-  const rRow = db.exec('SELECT id FROM routes WHERE key = ?', [key]);
-  if (rRow.length > 0 && rRow[0].values.length > 0) {
-    const id = rRow[0].values[0][0];
-    db.run('DELETE FROM route_points WHERE route_id = ?', [id]);
-    (data.pts || []).forEach((pt, i) => {
-      db.run('INSERT INTO route_points (route_id, x, y, z, sort_order) VALUES (?, ?, ?, ?, ?)', [id, pt[0], pt[1], pt[2], i]);
-    });
-  }
-  syncToDisk();
-}
-
-function deleteRoute(key) {
-  const rRow = db.exec('SELECT id FROM routes WHERE key = ?', [key]);
-  if (rRow.length > 0 && rRow[0].values.length > 0) {
-    const id = rRow[0].values[0][0];
-    db.run('DELETE FROM route_points WHERE route_id = ?', [id]);
-  }
-  db.run('DELETE FROM routes WHERE key = ?', [key]);
   syncToDisk();
 }
 
@@ -1030,8 +811,6 @@ module.exports = {
   getScene, updateScene,
   getBuildingMain, updateBuildingMain,
   getBuildingSubs, addBuildingSub, updateBuildingSub, deleteBuildingSub,
-  getMarkers, getMarkerByKey, addMarker, updateMarker, deleteMarker,
-  getRoutes, getRouteByKey, addRoute, updateRoute, deleteRoute,
   getParking, addParking, updateParking, deleteParking,
   getParticles, updateParticles,
   getCamera, updateCamera,
