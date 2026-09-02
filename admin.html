@@ -1209,6 +1209,19 @@ function enablePathDrag(pts) {
 
 function formatNavDist(m) { return m >= 1000 ? (m / 1000).toFixed(1) + ' 公里' : Math.round(m) + ' 米'; }
 
+// 带重试的路线规划：高德骑行/驾车偶发 QPS 限流返回 status='error'（result 为 undefined），延迟重试两次
+function planNavWithRetry(planner, start, end, onResult, attempt = 0) {
+    planner.search(start, end, (status, result) => {
+        if (status === 'complete' && result && result.routes && result.routes[0]) {
+            onResult(result.routes[0]);
+        } else if (status === 'error' && attempt < 2) {
+            setTimeout(() => planNavWithRetry(planner, start, end, onResult, attempt + 1), 700 * (attempt + 1));
+        } else {
+            onResult(null);
+        }
+    });
+}
+
 function planNavRoute() {
     if (!navMap || !navPoint.start || !navPoint.end) { showToast('请先设起点和终点', 'err'); return; }
     const mode = document.getElementById('nav-travel-mode').value;
@@ -1219,9 +1232,9 @@ function planNavRoute() {
     if (!planner) { showToast('规划插件加载中，请稍后重试', 'err'); return; }
     navOverlay = new AMap.Polyline({ path: [start, end], strokeColor: '#22d3ee', strokeWeight: 4, strokeStyle: 'dashed', strokeOpacity: 0.45, zIndex: 30 });
     navOverlay.setMap(navMap);
-    planner.search(start, end, (status, result) => {
-        if (status !== 'complete' || !result.routes || !result.routes[0]) { showToast('规划失败，请换交通方式或起终点', 'err'); return; }
-        renderNavPreview(result.routes[0], mode);
+    planNavWithRetry(planner, start, end, (route) => {
+        if (!route) { showToast('规划失败，请换交通方式或起终点', 'err'); return; }
+        renderNavPreview(route, mode);
     });
 }
 

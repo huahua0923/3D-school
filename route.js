@@ -91,6 +91,20 @@ function renderNavRoute(route, straight, seq, dl) {
     state.navOverlay.setMap(state.planMap);
 }
 
+// 带重试的路线规划：高德骑行/驾车等偶发 QPS 限流会返回 status='error'（result 为 undefined），
+// 短暂延迟重试两次；仍失败则回调 null（保留直线虚线并提示）
+function planRouteWithRetry(planner, start, end, onResult, attempt = 0) {
+    planner.search(start, end, (status, result) => {
+        if (status === 'complete' && result && result.routes && result.routes[0]) {
+            onResult(result.routes[0]);
+        } else if (status === 'error' && attempt < 2) {
+            setTimeout(() => planRouteWithRetry(planner, start, end, onResult, attempt + 1), 700 * (attempt + 1));
+        } else {
+            onResult(null);
+        }
+    });
+}
+
 // 起点/终点标记：优先高德弹性标记（弹跳动画），插件未就绪回退普通圆点
 function navPointMarker(lng, lat, color, label) {
     if (state.elasticAvailable && window.AMap && AMap.ElasticMarker) {
@@ -146,10 +160,10 @@ export function drawNavRoute() {
         : state.navTravelMode === 'transfer' ? state.navTransfer
         : state.navWalking;
     if (planner) {
-        planner.search(start, end, (status, result) => {
+        planRouteWithRetry(planner, start, end, (route) => {
             if (seq !== state.navReqSeq) return;   // 已被新请求 / 清除取代
-            if (status !== 'complete' || !result.routes || !result.routes[0]) return; // 失败保留直线
-            renderNavRoute(result.routes[0], straight, seq, dl);
+            if (!route) { toast('⚠️ ' + NAV_MODE_LABEL[state.navTravelMode] + '规划失败，请重试或换出行方式'); return; }
+            renderNavRoute(route, straight, seq, dl);
         });
     }
 
