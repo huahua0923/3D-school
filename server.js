@@ -59,7 +59,11 @@ const PUBLIC_PATHS = new Set([
     '/weather.js', '/poi.js', '/measure.js', '/route.js', '/indoor.js', '/auth.js', '/app.js',
     // editor.js 拆分出的 ES 模块（2026-09-01 重构）
     '/editor-state.js', '/editor-geometry.js', '/editor-canvas.js', '/editor-history.js', '/editor-ui.js',
-    '/editor-elements.js', '/editor-export.js', '/editor-geo.js', '/editor-data.js', '/editor-main.js'
+    '/editor-elements.js', '/editor-export.js', '/editor-geo.js', '/editor-data.js', '/editor-main.js',
+    // three.js 本地自托管（2026-09-02：脱离 unpkg CDN，避免校园网/DNS 污染致首屏 3D 加载失败）
+    '/vendor/three/three.module.js',
+    '/vendor/three/addons/controls/OrbitControls.js',
+    '/vendor/three/addons/renderers/CSS2DRenderer.js'
 ]);
 app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
@@ -69,10 +73,11 @@ app.use((req, res, next) => {
     }
     next();
 });
-// 前端静态文件禁用缓存，避免编辑后浏览器仍用旧文件（表现为 SyntaxError: Unexpected end of input）
+// 前端静态文件用 ETag 校验（no-cache）：内容未变返回 304 省流量，编辑后 mtime 变化即重新下载，
+// 避免每次访问都全量重下所有 JS/CSS（原先 no-store 会强制全量重下，40+ 模块首屏负担大）
 app.use((req, res, next) => {
     if (req.path.endsWith('.html') || req.path.endsWith('.js') || req.path.endsWith('.css') || req.path === '/') {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Pragma', 'no-cache');
     }
     next();

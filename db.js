@@ -21,14 +21,49 @@ function ensureDir(dir) {
   }
 }
 
-/** 将数据库写入磁盘 */
+// ---------- 持久化状态（去抖 + 原子写 + 备份） ----------
+let saveTimer = null;   // 去抖定时器
+let saveDirty = false;  // 是否有待落盘的写
+
+/** 将数据库写入磁盘（去抖：合并短时间内的多次写，避免每次写操作都全量序列化阻塞事件循环） */
 function saveDbToDisk() {
   if (!db || !dbPath) return;
-  ensureDir(path.dirname(dbPath));
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(dbPath, buffer);
+  saveDirty = true;
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    flushDbToDisk();
+  }, 800);
 }
+
+/** 立即同步落盘（原子写 + 备份），供 closeDb / 进程退出前调用，确保去抖窗口内的写不丢 */
+function flushDbToDisk() {
+  if (!db || !dbPath || !saveDirty) return;
+  saveDirty = false;
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    ensureDir(path.dirname(dbPath));
+    // 原子写：先写 .tmp 再 rename，避免进程崩溃/断电写坏主库
+    const tmpPath = dbPath + '.tmp';
+    fs.writeFileSync(tmpPath, buffer);
+    // 备份上一份（与 writeConfigJson 的 .bak 对齐，主库损坏可回退）
+    if (fs.existsSync(dbPath)) {
+      fs.copyFileSync(dbPath, dbPath + '.bak');
+    }
+    fs.renameSync(tmpPath, dbPath);
+  } catch (err) {
+    console.error('❌ 数据库落盘失败:', err);
+  }
+}
+
+// 进程退出前刷盘，避免去抖窗口内未落盘的写因重启丢失
+function flushOnExit() {
+  if (db && saveDirty) flushDbToDisk();
+}
+process.on('SIGINT', () => { flushOnExit(); process.exit(0); });
+process.on('SIGTERM', () => { flushOnExit(); process.exit(0); });
 
 /** 将配置对象写入 config.json */
 function writeConfigJson(config) {
@@ -858,7 +893,7 @@ function countAdmins() {
 
 function closeDb() {
   if (db) {
-    saveDbToDisk();
+    flushDbToDisk();
     db.close();
     db = null;
   }
