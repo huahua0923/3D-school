@@ -190,6 +190,80 @@
         #weather-panel .w-fcond { color: rgba(255,255,255,0.85); flex: 1; text-align: center; }
         #weather-panel .w-ftemp { color: rgba(255,255,255,0.6); }
 
+        /* ====== 地图工具悬浮栈（右侧竖排） ====== */
+        #map-tools {
+            position: fixed; top: 50%; right: 16px; transform: translateY(-50%);
+            z-index: 20; display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+        }
+        .map-tool {
+            width: 44px; height: 44px; border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(12,18,30,0.9); backdrop-filter: blur(16px);
+            color: rgba(255,255,255,0.65); font-size: 1.15rem; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
+        .map-tool:hover { color: #fff; border-color: rgba(255,255,255,0.22); background: rgba(18,26,44,0.95); }
+        .map-tool.active {
+            color: #fff; background: var(--accent-main); border-color: var(--accent-main);
+            box-shadow: 0 0 16px rgba(77,166,255,0.45);
+        }
+        .map-tool-wrap { position: relative; }
+        .map-tool-panel {
+            position: absolute; right: 52px; top: 50%; transform: translateY(-50%);
+            background: rgba(12,18,30,0.97); backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+            padding: 10px; min-width: 168px; max-width: 208px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.55); display: none;
+        }
+        .map-tool-panel.open { display: block; }
+        .map-tool-panel-title {
+            font-size: 0.6rem; color: rgba(255,255,255,0.35);
+            text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px;
+        }
+        .map-tool-chip {
+            width: 100%; padding: 7px 10px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.04);
+            color: rgba(255,255,255,0.72); font-size: 0.76rem; font-family: inherit;
+            cursor: pointer; text-align: center; margin-bottom: 5px; white-space: nowrap;
+            transition: all 0.2s;
+        }
+        .map-tool-chip:last-child { margin-bottom: 0; }
+        .map-tool-chip:hover { background: rgba(255,255,255,0.1); color: #fff; }
+        .map-tool-chip.active { background: var(--accent-main); border-color: var(--accent-main); color: #fff; font-weight: 600; }
+        #nearby-btns { display: flex; flex-wrap: wrap; gap: 5px; }
+        #nearby-btns .map-tool-chip { flex: 1; margin-bottom: 0; min-width: calc(50% - 3px); font-size: 0.68rem; }
+        #loca-effects { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+        #loca-effects .map-tool-chip { flex: 1; margin-bottom: 0; min-width: calc(50% - 3px); font-size: 0.66rem; padding: 6px 6px; }
+
+        /* ====== 底部悬浮卡：路径导航 / 室内寻路 ====== */
+        #bottom-cards {
+            position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+            z-index: 20; display: flex; flex-direction: row; gap: 8px; align-items: flex-end;
+        }
+        .bottom-card {
+            width: 232px;
+            background: rgba(12,18,30,0.92); backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+            padding: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .bottom-card-head {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.72rem; font-weight: 700; color: rgba(255,255,255,0.85);
+            margin-bottom: 8px; letter-spacing: 0.02em;
+        }
+        .bottom-card-body { font-size: 0.7rem; color: rgba(255,255,255,0.6); line-height: 1.6; }
+        #nav-dist-line { color: #22d3ee; font-weight: 600; }
+        #nav-mode-btns { display: flex; gap: 4px; margin-top: 8px; }
+        #nav-mode-btns .map-tool-chip { flex: 1; font-size: 0.66rem; padding: 5px 2px; margin-bottom: 0; }
+        #indoor-card select {
+            width: 100%; margin-bottom: 5px; background: #141a2c; color: #fff;
+            border: 1px solid rgba(255,255,255,0.15); border-radius: 8px;
+            padding: 6px 8px; font-size: 0.72rem; font-family: inherit;
+        }
+        #indoor-nav-hint { font-size: 0.66rem; color: rgba(255,255,255,0.4); margin-bottom: 4px; }
+        #indoor-nav-result { margin-top: 6px; color: #22d3ee; font-weight: 600; line-height: 1.6; white-space: pre-wrap; }
+
         
         @keyframes bannerIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
 
@@ -374,6 +448,12 @@
             #lb-prev { left: 8px; }
             #lb-next { right: 8px; }
             .modal-box { min-width: auto; width: calc(100vw - 48px); padding: 22px 20px; }
+            /* 悬浮工具栏 → 底部偏右；底部卡 → 横铺在控制条上方 */
+            #map-tools { top: auto; bottom: 120px; right: 12px; transform: none; gap: 6px; }
+            .map-tool { width: 40px; height: 40px; font-size: 1rem; border-radius: 10px; }
+            .map-tool-panel { right: 48px; }
+            #bottom-cards { left: 12px; right: 12px; bottom: 56px; transform: none; flex-direction: column; align-items: stretch; }
+            #bottom-cards .bottom-card { width: auto; padding: 10px; }
         }
     </style>
 </head>
@@ -446,81 +526,7 @@
         </div>
     </div>
 
-    <!-- Measurement -->
-    <div class="sb-section">
-        <div class="sb-label">📏 测量工具</div>
-        <div style="display:flex;gap:6px;">
-            <button class="sb-btn" id="btn-measure-distance" style="flex:1;font-size:0.72rem;padding:6px 8px;">📏 测距</button>
-            <button class="sb-btn" id="btn-measure-area" style="flex:1;font-size:0.72rem;padding:6px 8px;">🧮 测面积</button>
-        </div>
-        <button class="sb-btn" id="btn-measure-clear" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除测量</button>
-    </div>
-
-    <!-- 路径导航：点地物设起点/终点，画直线 + 距离 + 楼层提示 -->
-    <div class="sb-section">
-        <div class="sb-label">🧭 路径导航</div>
-        <div id="nav-panel" style="font-size:0.72rem;color:rgba(255,255,255,0.7);line-height:1.7;">
-            <div id="nav-start-line">起点：未设置</div>
-            <div id="nav-end-line">终点：未设置</div>
-            <div id="nav-dist-line" style="color:#22d3ee;font-weight:600;"></div>
-        </div>
-        <div id="nav-mode-btns" style="display:flex;gap:4px;margin-top:6px;">
-            <button class="sb-btn active" data-nav-mode="walking" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚶 步行</button>
-            <button class="sb-btn" data-nav-mode="driving" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚗 驾车</button>
-            <button class="sb-btn" data-nav-mode="riding" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚲 骑行</button>
-            <button class="sb-btn" data-nav-mode="transfer" style="flex:1;font-size:0.66rem;padding:5px 2px;">🚌 公交</button>
-        </div>
-        <button class="sb-btn" id="btn-clear-nav" style="margin-top:6px;font-size:0.72rem;padding:6px 8px;width:100%;">🗑 清除路径</button>
-    </div>
-
-    <!-- 室内寻路：同楼跨层 Dijkstra 最短路径（indoor-nav.js 内核） -->
-    <div class="sb-section">
-        <div class="sb-label">🏠 室内寻路</div>
-        <div id="indoor-nav-hint" style="font-size:0.66rem;color:rgba(255,255,255,0.4);margin-bottom:4px;"></div>
-        <select id="indoor-nav-start" style="width:100%;margin-bottom:4px;background:#141a2c;color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.72rem;"></select>
-        <select id="indoor-nav-end" style="width:100%;margin-bottom:6px;background:#141a2c;color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 8px;font-size:0.72rem;"></select>
-        <button class="sb-btn" id="btn-indoor-nav" style="width:100%;font-size:0.72rem;padding:6px 8px;">🧭 计算室内路线</button>
-        <div id="indoor-nav-result" style="margin-top:6px;color:#22d3ee;font-weight:600;line-height:1.6;white-space:pre-wrap;"></div>
-    </div>
-
-    <!-- Loca 3D 可视化特效（每效果独立开关，可选择展示） -->
-    <div class="sb-section">
-        <div class="sb-label">🎆 可视化特效</div>
-        <button class="sb-btn" id="btn-loca-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🎆 开启 3D 特效</button>
-        <div id="loca-effects" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;">
-            <button class="sb-btn active" data-effect="routes" style="flex:1;font-size:0.66rem;padding:5px 4px;">🛣️ 路线</button>
-            <button class="sb-btn active" data-effect="breathing" style="flex:1;font-size:0.66rem;padding:5px 4px;">💨 呼吸点</button>
-            <button class="sb-btn active" data-effect="areas" style="flex:1;font-size:0.66rem;padding:5px 4px;">🏢 区域</button>
-            <button class="sb-btn" data-effect="scatter" style="flex:1;font-size:0.66rem;padding:5px 4px;">✨ 光点</button>
-            <button class="sb-btn" data-effect="prism" style="flex:1;font-size:0.66rem;padding:5px 4px;">🏛️ 光柱</button>
-        </div>
-    </div>
-
-    <!-- 路线漫游：点击路线后相机沿路跟随 -->
-    <div class="sb-section">
-        <div class="sb-label">🚶 路线漫游</div>
-        <button class="sb-btn" id="btn-guide-follow" style="width:100%;font-size:0.72rem;padding:6px 8px;">🚶 漫游跟随：开</button>
-        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">点击路线后，相机自动沿路线移动</div>
-    </div>
-
-    <!-- 周边服务：高德 POI 搜索 -->
-    <div class="sb-section">
-        <div class="sb-label">🔍 周边服务</div>
-        <div id="nearby-btns" style="display:flex;flex-wrap:wrap;gap:5px;">
-            <button class="sb-btn" data-nearby="停车场" style="flex:1;font-size:0.66rem;padding:5px 4px;">🅿️ 停车</button>
-            <button class="sb-btn" data-nearby="地铁站" style="flex:1;font-size:0.66rem;padding:5px 4px;">🚇 地铁</button>
-            <button class="sb-btn" data-nearby="餐厅" style="flex:1;font-size:0.66rem;padding:5px 4px;">🍜 餐饮</button>
-            <button class="sb-btn" data-nearby="公共厕所" style="flex:1;font-size:0.66rem;padding:5px 4px;">🚻 洗手间</button>
-        </div>
-        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">以地图中心为圆心搜索周边</div>
-    </div>
-
-    <!-- 周边建筑：高德默认 3D 建筑层显隐 -->
-    <div class="sb-section">
-        <div class="sb-label">🏙 周边建筑</div>
-        <button class="sb-btn" id="btn-buildings-toggle" style="width:100%;font-size:0.72rem;padding:6px 8px;">🏙 周边建筑：开</button>
-        <div style="font-size:0.68rem;color:rgba(255,255,255,0.4);margin-top:4px;">显示/隐藏高德默认的周边城市建筑</div>
-    </div>
+    <!-- 测量/路径导航/室内寻路/特效/漫游/周边/周边建筑 → 已移至主地图悬浮工具栏与底部卡（#map-tools / #bottom-cards） -->
 
     <!-- 登录 / 角色 -->
     <div class="sb-section sb-actions">
@@ -552,6 +558,76 @@
     </div>
     <div class="ctrl-group" id="route-visibility" style="display:none;">
         <button id="btn-hide-routes">🚫 隐藏路线</button>
+    </div>
+</div>
+
+<!-- ====== 地图工具悬浮栈（右侧竖排：测距/测面积/清除/周边/特效/漫游/周边建筑） ====== -->
+<div id="map-tools">
+    <button class="map-tool" id="btn-measure-distance" title="测距">📏</button>
+    <button class="map-tool" id="btn-measure-area" title="测面积">🧮</button>
+    <button class="map-tool" id="btn-measure-clear" title="清除测量">🗑</button>
+
+    <div class="map-tool-wrap">
+        <button class="map-tool" id="btn-nearby-toggle" title="周边服务">🔍</button>
+        <div class="map-tool-panel" id="nearby-panel">
+            <div class="map-tool-panel-title">🔍 周边服务</div>
+            <div id="nearby-btns">
+                <button class="map-tool-chip" data-nearby="停车场">🅿️ 停车</button>
+                <button class="map-tool-chip" data-nearby="地铁站">🚇 地铁</button>
+                <button class="map-tool-chip" data-nearby="餐厅">🍜 餐饮</button>
+                <button class="map-tool-chip" data-nearby="公共厕所">🚻 洗手间</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="map-tool-wrap">
+        <button class="map-tool" id="btn-effects-toggle" title="可视化特效">🎆</button>
+        <div class="map-tool-panel" id="effects-panel">
+            <div class="map-tool-panel-title">🎆 可视化特效</div>
+            <button class="map-tool-chip" id="btn-loca-toggle">🎆 开启 3D 特效</button>
+            <div id="loca-effects">
+                <button class="map-tool-chip active" data-effect="routes">🛣️ 路线</button>
+                <button class="map-tool-chip active" data-effect="breathing">💨 呼吸点</button>
+                <button class="map-tool-chip active" data-effect="areas">🏢 区域</button>
+                <button class="map-tool-chip" data-effect="scatter">✨ 光点</button>
+                <button class="map-tool-chip" data-effect="prism">🏛️ 光柱</button>
+            </div>
+        </div>
+    </div>
+
+    <button class="map-tool active" id="btn-buildings-toggle" title="周边建筑：开">🏙</button>
+    <button class="map-tool active" id="btn-guide-follow" title="漫游跟随：开">🚶</button>
+</div>
+
+<!-- ====== 底部悬浮卡：路径导航 / 室内寻路 ====== -->
+<div id="bottom-cards">
+    <div class="bottom-card">
+        <div class="bottom-card-head">
+            <span>🧭 路径导航</span>
+            <button class="map-tool-chip" id="btn-clear-nav" style="width:auto;padding:3px 12px;margin:0;font-size:0.66rem;">清除</button>
+        </div>
+        <div class="bottom-card-body">
+            <div id="nav-start-line">起点：未设置</div>
+            <div id="nav-end-line">终点：未设置</div>
+            <div id="nav-dist-line"></div>
+        </div>
+        <div id="nav-mode-btns">
+            <button class="map-tool-chip active" data-nav-mode="walking">🚶 步行</button>
+            <button class="map-tool-chip" data-nav-mode="driving">🚗 驾车</button>
+            <button class="map-tool-chip" data-nav-mode="riding">🚲 骑行</button>
+            <button class="map-tool-chip" data-nav-mode="transfer">🚌 公交</button>
+        </div>
+    </div>
+
+    <div class="bottom-card">
+        <div class="bottom-card-head"><span>🏠 室内寻路</span></div>
+        <div class="bottom-card-body">
+            <div id="indoor-nav-hint"></div>
+            <select id="indoor-nav-start"></select>
+            <select id="indoor-nav-end"></select>
+            <button class="map-tool-chip" id="btn-indoor-nav" style="margin-top:2px;">🧭 计算室内路线</button>
+            <div id="indoor-nav-result"></div>
+        </div>
     </div>
 </div>
 

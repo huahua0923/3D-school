@@ -194,11 +194,13 @@ export async function boot() {
         catch (e) { console.warn('⚠️ 周边搜索不可用:', e && e.message); }
     });
 
-    // 漫游跟随开关
+    // 漫游跟随开关（悬浮工具栏图标按钮：active 高亮表示开）
     const btnGuideFollow = document.getElementById('btn-guide-follow');
     if (btnGuideFollow) btnGuideFollow.addEventListener('click', () => {
         state.guideFollow = !state.guideFollow;
-        btnGuideFollow.textContent = '🚶 漫游跟随：' + (state.guideFollow ? '开' : '关');
+        btnGuideFollow.classList.toggle('active', state.guideFollow);
+        btnGuideFollow.title = '漫游跟随：' + (state.guideFollow ? '开' : '关');
+        toast('🚶 漫游跟随：' + (state.guideFollow ? '开' : '关'));
     });
 
     // 路径导航出行方式切换（步行/驾车/骑行/公交）
@@ -219,7 +221,9 @@ export async function boot() {
         const feats = ['bg', 'road', 'point'];
         if (amapBuildingsOn) feats.push('building');
         map.setFeatures(feats);
-        btnBuildings.textContent = '🏙 周边建筑：' + (amapBuildingsOn ? '开' : '关');
+        btnBuildings.classList.toggle('active', amapBuildingsOn);
+        btnBuildings.title = '周边建筑：' + (amapBuildingsOn ? '开' : '关');
+        toast('🏙 周边建筑：' + (amapBuildingsOn ? '开' : '关'));
     });
 
     // 周边服务搜索按钮
@@ -228,6 +232,26 @@ export async function boot() {
         const b = e.target.closest('button[data-nearby]');
         if (b) searchNearby(map, b.dataset.nearby);
     });
+
+    // —— 悬浮工具栏：周边 / 特效面板的展开收起（点图标开关，点面板外收起）——
+    function closeToolPanels() {
+        document.querySelectorAll('#map-tools .map-tool-panel.open').forEach(p => p.classList.remove('open'));
+    }
+    function bindToolPanel(btnId, panelId) {
+        const btn = document.getElementById(btnId);
+        const panel = document.getElementById(panelId);
+        if (!btn || !panel) return;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = !panel.classList.contains('open');
+            closeToolPanels();
+            panel.classList.toggle('open', willOpen);
+        });
+        panel.addEventListener('click', (e) => e.stopPropagation());
+    }
+    bindToolPanel('btn-nearby-toggle', 'nearby-panel');
+    bindToolPanel('btn-effects-toggle', 'effects-panel');
+    document.addEventListener('click', closeToolPanels);
 
     // 可视化特效开关（Loca v2）
     const btnLoca = document.getElementById('btn-loca-toggle');
