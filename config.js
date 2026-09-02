@@ -23,6 +23,16 @@ export const DEFAULT_CONFIG = {
         presets: {},
         tweenMs: 1400, orbitDamping: 0.08, minDist: 12, maxDist: 160, maxPolarFactor: 0.46,
     },
+    features: {
+        indoor:         { enabled: true, layerHeight: 4 },
+        routeNav:       { enabled: true, defaultTravelMode: 'walking', guideFollow: true },
+        weather:        { enabled: true, refreshMin: 30 },
+        nearby:         { enabled: true, radius: 2000 },
+        measure:        { enabled: true },
+        loca:           { enabled: true },
+        buildingSwitch: { enabled: true },
+        autoRotate:     { enabled: true },
+    },
 };
 
 export async function loadConfig() {

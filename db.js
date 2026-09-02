@@ -39,6 +39,18 @@ function writeConfigJson(config) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
 }
 
+// ---------- 功能模块开关默认值（透传字段，存 config.json 不进 SQLite 表）----------
+const DEFAULT_FEATURES = {
+  indoor:         { enabled: true, layerHeight: 4 },
+  routeNav:       { enabled: true, defaultTravelMode: 'walking', guideFollow: true },
+  weather:        { enabled: true, refreshMin: 30 },
+  nearby:         { enabled: true, radius: 2000 },
+  measure:        { enabled: true },
+  loca:           { enabled: true },
+  buildingSwitch: { enabled: true },
+  autoRotate:     { enabled: true },
+};
+
 // ---------- 初始化 ----------
 
 /**
@@ -476,6 +488,7 @@ function getFullConfig() {
   // （否则后台保存时这些字段会被抹掉，导致首页标题/Logo 丢失）
   // 先给默认值，确保 config.brand 始终存在（否则后台无法设置品牌名）
   config.brand = { name: '', subtitle: '', logo: '', logoText: '' };
+  config.features = JSON.parse(JSON.stringify(DEFAULT_FEATURES));
   let fileCfg = null;
   try {
     if (configPath && fs.existsSync(configPath)) {
@@ -485,6 +498,12 @@ function getFullConfig() {
   if (fileCfg) {
     if (fileCfg.brand) config.brand = fileCfg.brand;
     if (fileCfg.planName !== undefined) config.planName = fileCfg.planName;
+    if (fileCfg.features) {
+      // 浅合并补默认：老 config.json 缺某模块时回退到 DEFAULT_FEATURES
+      for (const [k, v] of Object.entries(DEFAULT_FEATURES)) {
+        config.features[k] = { ...v, ...(fileCfg.features[k] || {}) };
+      }
+    }
   }
 
   // 迁移：老版本 logo 字段存的是文字/emoji，拆成 logo(图片) + logoText(文字)

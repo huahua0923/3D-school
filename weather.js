@@ -2,6 +2,7 @@
 // weather.js — 天气预报：AMap.Weather 插件（实时 + 3 天预报），右上角面板
 // 城市默认「成都市」，可在 config.json 的 weather.city 覆盖
 // ========================================================
+import { state } from './state.js';
 
 export function initWeather() {
     const panel = document.getElementById('weather-panel');
@@ -66,6 +67,7 @@ export function initWeather() {
         render();
     }
     load();
-    setInterval(load, 30 * 60 * 1000);   // 每 30 分钟刷新一次
+    const refreshMin = (state.CONFIG && state.CONFIG.features && state.CONFIG.features.weather && state.CONFIG.features.weather.refreshMin) || 30;
+    setInterval(load, refreshMin * 60 * 1000);   // 后台可配置刷新间隔（分钟）
     panel.addEventListener('click', () => panel.classList.toggle('expanded'));
 }

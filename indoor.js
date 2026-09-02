@@ -307,7 +307,7 @@ export function applyPlan(map, plan) {
 
     // 室内方案：有楼层 + Three.js 就绪 → 3D 楼层悬浮；否则回退 2D 贴地
     if (floorOf(plan) >= 1 && state.threeCtx) {
-        renderIndoorPlan3D(data, (floorOf(plan) - 1) * LAYER_HEIGHT, group);
+        renderIndoorPlan3D(data, (floorOf(plan) - 1) * layerHeightM(), group);
         return overlays.length;   // 3D 对象计入 group.threeGroup，不占 2D overlays
     }
 
@@ -508,6 +508,11 @@ function indoorPlanLocalTransform(plans) {
     return { pxToLocalM, anchorLng, anchorLat };
 }
 
+// 楼层高度（米）：后台可配置 features.indoor.layerHeight，兜底 LAYER_HEIGHT
+function layerHeightM() {
+    return (state.CONFIG && state.CONFIG.features && state.CONFIG.features.indoor && state.CONFIG.features.indoor.layerHeight) || LAYER_HEIGHT;
+}
+
 // 像素 → 米 换算系数（从 geoBounds 推出：画布 1px 对应多少米；路径距离用它换算成真实米数）
 function metersPerPixelOf(plans) {
     const meta = plans.find(p => p.data && p.data.geoBounds) || null;
@@ -534,7 +539,7 @@ function renderIndoorPath3D(path, plans) {
     const group = new THREE.Group();
     const pts = path.map(n => {
         const m = pxToLocalM(n.x, n.y);
-        return new THREE.Vector3(m.x, m.y, (n.floor - 1) * LAYER_HEIGHT);
+        return new THREE.Vector3(m.x, m.y, (n.floor - 1) * layerHeightM());
     });
     group.add(new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(pts),
@@ -546,7 +551,7 @@ function renderIndoorPath3D(path, plans) {
     path.forEach(n => {
         const m = pxToLocalM(n.x, n.y);
         const sp = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 10), dotMat);
-        sp.position.set(m.x, m.y, (n.floor - 1) * LAYER_HEIGHT);
+        sp.position.set(m.x, m.y, (n.floor - 1) * layerHeightM());
         group.add(sp);
     });
 

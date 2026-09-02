@@ -67,7 +67,8 @@ export function searchNearby(map, keyword) {
     const c = map.getCenter();
     state.nearbyMarkers.forEach(m => { try { m.setMap(null); } catch (_) {} });
     state.nearbyMarkers = [];
-    state.placeSearch.searchNearBy(keyword, [c.lng, c.lat], 2000, (status, result) => {
+    const radius = (state.CONFIG && state.CONFIG.features && state.CONFIG.features.nearby && state.CONFIG.features.nearby.radius) || 2000;
+    state.placeSearch.searchNearBy(keyword, [c.lng, c.lat], radius, (status, result) => {
         if (status === 'complete' && result && result.poiList) {
             const pois = result.poiList.pois || [];
             pois.slice(0, 10).forEach(p => {

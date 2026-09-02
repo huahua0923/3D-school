@@ -217,6 +217,7 @@ a { color: #58a6ff; }
     <button data-panel="geo">🌍 地理信息</button>
     <button data-panel="plans">📋 方案</button>
     <button data-panel="users">👥 用户管理</button>
+    <button data-panel="features">🧩 功能模块</button>
     <a href="admin-map.html" class="nav-link">🗺️ 路线图编辑</a>
     <a href="editor.html" class="nav-link">✏️ 室内编辑</a>
 </nav>
@@ -294,6 +295,14 @@ a { color: #58a6ff; }
     <!-- ====== Users Panel ====== -->
     <div class="panel" id="panel-users">
         <div id="form-users"></div>
+    </div>
+
+    <!-- ====== Features Panel ====== -->
+    <div class="panel" id="panel-features">
+        <div class="section"><h3>🧩 功能模块开关</h3>
+            <p style="color:#8b949e;font-size:0.8rem;margin:0 0 14px;">控制首页各功能模块的显示/隐藏与关键参数，保存后立即生效。</p>
+            <div id="form-features"></div>
+        </div>
     </div>
 </div>
 
@@ -420,7 +429,13 @@ function showToast(msg, type) {
 function fld(key, label, type = 'text', opts = {}) {
     const isColor = type === 'color';
     let inputHtml;
-    if (isColor) {
+    if (type === 'checkbox') {
+        inputHtml = `<input type="checkbox" ${opts.value ? 'checked' : ''} onchange="updateNested(config, '${key}', this.checked)" />`;
+    } else if (type === 'select') {
+        const options = Object.entries(opts.options || {})
+            .map(([v, l]) => `<option value="${v}" ${opts.value === v ? 'selected' : ''}>${l}</option>`).join('');
+        inputHtml = `<select onchange="updateNested(config, '${key}', this.value)">${options}</select>`;
+    } else if (isColor) {
         inputHtml = `<div class="color-input">
             <input type="color" value="${opts.value || '#000000'}" onchange="updateNested(config, '${key}', this.value)" />
             <input type="text" value="${opts.value || ''}" onchange="updateNested(config, '${key}', this.value)" />
@@ -429,6 +444,9 @@ function fld(key, label, type = 'text', opts = {}) {
         inputHtml = `<textarea onchange="updateNested(config, '${key}', this.value)">${opts.value || ''}</textarea>`;
     } else {
         inputHtml = `<input type="${type}" value="${opts.value || ''}" step="${opts.step || 'any'}"${opts.min !== undefined ? ` min="${opts.min}"` : ''}${opts.max !== undefined ? ` max="${opts.max}"` : ''} onchange="updateNested(config, '${key}', this.type === 'number' ? +this.value : this.value)" />`;
+    }
+    if (type === 'checkbox') {
+        return `<div class="form-group"><label style="flex-direction:row;align-items:center;gap:8px;text-transform:none;font-size:0.85rem;color:#f0f6fc;">${inputHtml}<span>${label}</span></label></div>`;
     }
     return `<div class="form-group"><label>${label}</label>${inputHtml}</div>`;
 }
@@ -504,6 +522,44 @@ function renderAll() {
     renderGeo();
     renderPlans();
     renderUsers();
+    renderFeatures();
+}
+
+// 功能模块定义：key → 中文名 + 可配置参数
+const FEATURE_DEFS = [
+    { key: 'indoor', label: '🏫 室内寻路', params: [
+        { key: 'layerHeight', label: '楼层高度(米)', type: 'number', opts: { min: 1, max: 20, step: 0.5 } },
+    ]},
+    { key: 'routeNav', label: '🧭 户外路径导航', params: [
+        { key: 'defaultTravelMode', label: '默认交通方式', type: 'select', opts: { options: { walking: '步行', driving: '驾车', riding: '骑行', transfer: '公交' } } },
+        { key: 'guideFollow', label: '漫游跟随', type: 'checkbox' },
+    ]},
+    { key: 'weather', label: '🌤️ 天气', params: [
+        { key: 'refreshMin', label: '刷新间隔(分钟)', type: 'number', opts: { min: 1, max: 1440 } },
+    ]},
+    { key: 'nearby', label: '📍 周边搜索', params: [
+        { key: 'radius', label: '搜索半径(米)', type: 'number', opts: { min: 100, max: 10000, step: 100 } },
+    ]},
+    { key: 'measure', label: '📏 测量工具', params: [] },
+    { key: 'loca', label: '✨ Loca 特效', params: [] },
+    { key: 'buildingSwitch', label: '🏢 楼栋切换', params: [] },
+    { key: 'autoRotate', label: '🔄 自动旋转', params: [] },
+];
+
+function renderFeatures() {
+    const box = document.getElementById('form-features');
+    if (!box) return;
+    const f = config.features || {};
+    box.innerHTML = FEATURE_DEFS.map(def => {
+        const cur = f[def.key] || {};
+        return `<div class="section">
+            <h3>${def.label}</h3>
+            <div class="form-grid">
+                ${fld('features.' + def.key + '.enabled', '启用', 'checkbox', { value: cur.enabled })}
+                ${def.params.map(p => fld('features.' + def.key + '.' + p.key, p.label, p.type, Object.assign({}, p.opts, { value: cur[p.key] }))).join('')}
+            </div>
+        </div>`;
+    }).join('');
 }
 
 

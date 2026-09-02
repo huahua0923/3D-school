@@ -114,6 +114,48 @@ function updateAtmosphere() {
     el.style.background = 'radial-gradient(ellipse at 50% 38%, rgba(0,0,0,0) 55%, rgba(0,0,0,' + p.vig + ') 100%), linear-gradient(180deg, ' + p.top + ', ' + p.bot + ')';
 }
 
+// 后台「功能模块」开关 + 参数：根据 state.CONFIG.features 控制显隐并注入参数
+// 在 loadConfig 之后、各子系统初始化之前调用，确保参数在绑定/初始化前就位
+function applyFeatureFlags() {
+    const f = (state.CONFIG && state.CONFIG.features) || {};
+    const hide = (sel) => { const el = document.querySelector(sel); if (el) el.style.display = 'none'; };
+    const hideClosest = (id, parentSel) => {
+        const el = document.getElementById(id);
+        const p = el && el.closest ? el.closest(parentSel) : null;
+        if (p) p.style.display = 'none';
+    };
+
+    // —— 显隐（display:none）——
+    if (f.indoor && f.indoor.enabled === false) hideClosest('btn-indoor-nav', '.bottom-card');      // 室内寻路卡
+    if (f.routeNav && f.routeNav.enabled === false) hideClosest('nav-start-line', '.bottom-card');  // 路径导航卡
+    if (f.weather && f.weather.enabled === false) hide('#weather-panel');                           // 天气面板
+    if (f.nearby && f.nearby.enabled === false) hideClosest('btn-nearby-toggle', '.map-tool-wrap'); // 周边搜索
+    if (f.measure && f.measure.enabled === false) {                                                // 测量工具（三个独立按钮）
+        hide('#btn-measure-distance'); hide('#btn-measure-area'); hide('#btn-measure-clear');
+    }
+    if (f.loca && f.loca.enabled === false) hideClosest('btn-effects-toggle', '.map-tool-wrap');   // Loca 特效
+    if (f.buildingSwitch && f.buildingSwitch.enabled === false) {                                  // 楼栋 + 楼层切换
+        hide('#building-section'); hide('#floor-section');
+    }
+    if (f.autoRotate && f.autoRotate.enabled === false) hide('#btn-auto-rotate');                  // 自动旋转
+
+    // —— 参数注入 ——
+    if (f.routeNav) {
+        if (f.routeNav.defaultTravelMode) {
+            state.navTravelMode = f.routeNav.defaultTravelMode;
+            const nm = document.getElementById('nav-mode-btns');
+            if (nm) nm.querySelectorAll('button[data-nav-mode]').forEach(x =>
+                x.classList.toggle('active', x.dataset.navMode === state.navTravelMode));
+        }
+        state.guideFollow = f.routeNav.guideFollow !== false;
+        const bgf = document.getElementById('btn-guide-follow');
+        if (bgf) {
+            bgf.classList.toggle('active', state.guideFollow);
+            bgf.title = '漫游跟随：' + (state.guideFollow ? '开' : '关');
+        }
+    }
+}
+
 export async function boot() {
     state.ui = new UIController();
     state.ui.setProgress('加载配置...', 5);
@@ -121,6 +163,9 @@ export async function boot() {
     // Load config —— 高德密钥与配置互不依赖，并行拉取
     const amapKeyPromise = fetchAmapKey();
     await loadConfig();
+
+    // 应用后台「功能模块」开关与参数（显隐 + 参数注入，须在地图/各子系统初始化前）
+    applyFeatureFlags();
 
     // Init Amap
     state.ui.setProgress('初始化地图...', 20);
