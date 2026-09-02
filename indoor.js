@@ -409,12 +409,21 @@ export function buildingOf(p) { return (p.building && String(p.building).trim())
 // 楼内沿走廊/楼梯走比高德步行更真实；与「路径导航」的户外路线互补
 // ========================================================
 
+// 校验 currentBuilding 记忆是否仍指向存在的建筑；指向已删除建筑时回退「全部」
+function sanitizeCurrentBuilding() {
+    const blds = new Set(state.planProjects.map(buildingOf).filter(Boolean));
+    if (state.currentBuilding && !blds.has(state.currentBuilding)) {
+        state.currentBuilding = '';
+        try { localStorage.setItem(BUILDING_MEMORY_KEY, ''); } catch (_) {}
+    }
+}
+
 // 解析室内寻路目标建筑：''=全部时若仅一栋则自动取之
 function resolveIndoorBuilding() {
     const blds = [...new Set(state.planProjects
         .filter(p => !(p.data && p.data.kind === 'map') && buildingOf(p))
         .map(buildingOf))].sort();
-    if (state.currentBuilding) return state.currentBuilding;
+    if (state.currentBuilding && blds.includes(state.currentBuilding)) return state.currentBuilding;
     if (blds.length === 1) return blds[0];
     return '';
 }
@@ -778,6 +787,7 @@ export async function refreshPlanList() {
         const res = await fetch('/api/editor/projects', { headers: authHeaders(), cache: 'no-store' });
         const json = await res.json();
         state.planProjects = json.data || [];
+        sanitizeCurrentBuilding();
     } catch (e) {}
     renderPlanList();
     refreshIndoorNavPois();
@@ -789,6 +799,7 @@ export async function initPlanSelector(map) {
         const res = await fetch('/api/editor/projects', { headers: authHeaders(), cache: 'no-store' });
         const json = await res.json();
         state.planProjects = json.data || [];
+        sanitizeCurrentBuilding();
     } catch (err) {
         console.warn('⚠️ 加载方案列表失败:', err.message);
     }
@@ -809,6 +820,7 @@ export async function initPlanSelector(map) {
     saveActivePlanIds(toActivate);
     renderPlanList();
     syncFloorVisibility();   // 统一按当前楼层对齐（含初始加载）
+    refreshIndoorNavPois();  // 方案列表就绪后再填充室内寻路下拉（否则下拉停在「暂无」）
 }
 
 // 活动方案自动刷新：后台删除/编辑路线、区域后，切回首页（focus/visibility）或定时轮询时立即同步，不保留旧数据
