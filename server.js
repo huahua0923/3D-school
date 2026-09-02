@@ -30,7 +30,9 @@ if (!ADMIN_PASSWORD) {
 
 // 中间件
 app.use(cors());
-app.use(express.json({ limit: '25mb' }));
+// 请求体上限：编辑器背景图已在前端压缩到 1600px（base64 约 2-3MB），
+// 其余配置/项目均为几十 KB 级，10MB 足够且把内存型 DoS 面收窄 60%
+app.use(express.json({ limit: '10mb' }));
 
 // 写接口（POST/PUT）请求体必须是 JSON 对象：拒绝 null / 数组 / 标量，防类型混淆
 // （空对象与缺失 body 放行，由各路由自行校验必填字段）
@@ -322,7 +324,26 @@ app.get('/api/amap', (_req, res) => {
 const WEATHER_TTL_MS = 10 * 60 * 1000;
 const weatherCache = new Map();   // `${type}:${loc}` -> { data, expireAt }
 
-app.get('/api/weather', async (req, res) => {
+// 天气接口按 IP 限流（内存固定窗口）：防单 IP 高频刷；配合上面 10 分钟缓存，正常刷新不会触顶
+const WEATHER_RATE_MAX = 30;                    // 每窗口最多请求数
+const WEATHER_RATE_WINDOW_MS = 60 * 1000;       // 窗口 60s
+const weatherHits = new Map();                  // ip -> { count, resetAt }
+function weatherLimiter(req, res, next) {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const rec = weatherHits.get(ip);
+    if (!rec || now > rec.resetAt) {
+        weatherHits.set(ip, { count: 1, resetAt: now + WEATHER_RATE_WINDOW_MS });
+    } else {
+        rec.count += 1;
+        if (rec.count > WEATHER_RATE_MAX) {
+            return res.status(429).json({ error: '请求过于频繁，请稍后再试' });
+        }
+    }
+    next();
+}
+
+app.get('/api/weather', weatherLimiter, async (req, res) => {
     const key = process.env.QWEATHER_KEY || '';
     if (!key) return res.status(500).json({ code: '500', error: 'QWEATHER_KEY 未配置' });
     const host = (process.env.QWEATHER_HOST || 'https://devapi.qweather.com').replace(/\/+$/, '');
