@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>室内导航 3D 模拟 · 教学楼</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: rgba(12, 18, 30, 0.9);
+    --border: rgba(255, 255, 255, 0.1);
+    --text: #e2e8f0;
+    --muted: rgba(226, 232, 240, 0.55);
+    --accent: #4da6ff;
+    --start: #22c55e;
+    --end: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    color: var(--text);
+  }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; }
+
+  /* —— 左上信息面板 —— */
+  #panel {
+    position: fixed; left: 16px; top: 16px; z-index: 10;
+    width: 264px; padding: 14px 16px;
+    background: var(--panel); backdrop-filter: blur(16px);
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  }
+  #panel h1 { margin: 0 0 2px; font-size: 1.05rem; font-weight: 700; }
+  #panel .sub { margin: 0 0 12px; font-size: 0.72rem; color: var(--muted); }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 0.8rem; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .dot.start { background: var(--start); box-shadow: 0 0 8px var(--start); }
+  .dot.end { background: var(--end); box-shadow: 0 0 8px var(--end); }
+  .row .val { color: var(--text); font-weight: 600; }
+  .row .val.empty { color: var(--muted); font-weight: 400; }
+
+  #result {
+    margin: 10px 0 0; padding: 10px; border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border);
+    font-size: 0.76rem; line-height: 1.6; display: none;
+  }
+  #result .route { color: var(--accent); }
+  #result .big { font-size: 1.1rem; font-weight: 700; }
+
+  #btn-clear {
+    margin-top: 10px; width: 100%; padding: 8px 0; border-radius: 9px;
+    border: 1px solid var(--border); background: rgba(255, 255, 255, 0.05);
+    color: var(--text); font-size: 0.78rem; cursor: pointer; transition: all 0.2s;
+  }
+  #btn-clear:hover { background: rgba(255, 255, 255, 0.1); }
+
+  .sel-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .sel-row label { width: 34px; font-size: 0.74rem; color: var(--muted); flex: none; }
+  .sel-row select {
+    flex: 1; padding: 6px 8px; border-radius: 8px; min-width: 0;
+    background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border);
+    color: var(--text); font-size: 0.74rem; font-family: inherit;
+    outline: none; cursor: pointer;
+  }
+  .sel-row select option, .sel-row select optgroup { background: #0d1526; color: var(--text); }
+
+  .legend { margin-top: 10px; font-size: 0.7rem; color: var(--muted); display: flex; gap: 14px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .legend .walk i { background: var(--accent); }
+  .legend .stair i { background: #fb923c; }
+
+  /* —— 底部提示 —— */
+  #hint {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    z-index: 10; padding: 8px 16px; border-radius: 999px;
+    background: var(--panel); backdrop-filter: blur(12px);
+    border: 1px solid var(--border); font-size: 0.76rem; color: var(--muted);
+    transition: opacity 0.3s;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="panel">
+  <h1>🏠 室内导航 3D 模拟</h1>
+  <p class="sub">三层教学楼 · 点击房间或下拉选择，自动规划路径</p>
+  <div class="row"><span class="dot start"></span>起点：<span class="val empty" id="p-start">未选择</span></div>
+  <div class="row"><span class="dot end"></span>终点：<span class="val empty" id="p-end">未选择</span></div>
+  <div class="sel-row"><label>起点</label><select id="sel-start"></select></div>
+  <div class="sel-row"><label>终点</label><select id="sel-end"></select></div>
+  <div id="result">
+    <div class="big" id="r-dist"></div>
+    <div id="r-cross"></div>
+    <div class="route" id="r-route"></div>
+  </div>
+  <button id="btn-clear">🗑 清除路线</button>
+  <div class="legend">
+    <span class="walk"><i></i>同层步行</span>
+    <span class="stair"><i></i>楼梯段</span>
+  </div>
+</div>
+
+<div id="hint">🖱 拖拽旋转 · 滚轮缩放 · 右键平移 · 点击房间选择起终点</div>
+
+<script src="./indoor-nav.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ==================== 常量 ====================
+const FLOOR_H = 3.5;          // 层高（米）
+const PATH_Y = 0.35;          // 路径离楼板高度（米）
+const BUILD_W = 60;           // 楼宽 x（米）
+const BUILD_D = 24;           // 楼深 z（米）
+const CATEGORY_COLOR = {
+  教室: 0x4da6ff, 办公室: 0x34d399, 卫生间: 0x94a3b8,
+  实验室: 0xa78bfa, 入口: 0xfbbf24,
+};
+
+// ==================== 造数据（3 层教学楼） ====================
+// 元素格式与 indoor-nav.js 约定一致：route 走廊 / area 房间 / stair 楼梯
+// 平面坐标用「x=东西, y=南北」，3D 世界 = (x, 层高, y)
+const route = (id, pts) => ({ id, type: 'route', name: id, points: pts });
+const area = (id, name, category, cx, cy) => ({
+  id, type: 'area', name, category,
+  points: [
+    { x: cx - 5, y: cy - 4 }, { x: cx + 5, y: cy - 4 },
+    { x: cx + 5, y: cy + 4 }, { x: cx - 5, y: cy + 4 },
+  ],
+});
+const stair = (id, name, x, y) => ({ id, type: 'stair', name, points: [{ x, y }] });
+
+// 每层：中央走廊 + 北侧 6 间 + 南侧 6 间 + 东西两个楼梯井
+// 北侧（y 正）房间名 N1..N6，南侧（y 负）S1..S6
+function buildFloor(f) {
+  const north = [
+    ['N1', '教室'], ['N2', '教室'], ['N3', '教室'],
+    ['N4', '实验室'], ['N5', '教室'], ['N6', '教室'],
+  ];
+  const south = [
+    ['S1', '卫生间'], ['S2', '教室'], ['S3', '教室'],
+    ['S4', '教室'], ['S5', '办公室'], ['S6', '教室'],
+  ];
+  const els = [route('r' + f, [{ x: -30, y: 0 }, { x: 0, y: 0 }, { x: 30, y: 0 }])];
+  const xs = [-25, -15, -5, 5, 15, 25];
+  north.forEach(([suffix, cat], i) =>
+    els.push(area(`a${f}-${suffix}`, `${f}F-${suffix}`, cat, xs[i], 6)));
+  south.forEach(([suffix, cat], i) =>
+    els.push(area(`a${f}-${suffix}`, `${f}F-${suffix}`, cat, xs[i], -6)));
+  els.push(stair(`s-east-${f}`, '东楼梯', 24, 0));
+  els.push(stair(`s-west-${f}`, '西楼梯', -24, 0));
+  return { floor: f, elements: els };
+}
+
+function buildBuilding() {
+  const plans = [buildFloor(1), buildFloor(2), buildFloor(3)];
+  // 一楼南侧外加一个「入口」门厅（楼外 y=-15）
+  plans[0].elements.push(area('a-ent', '1F-入口', '入口', 0, -15));
+  // 门厅到走廊铺一段引道，让入口可达
+  plans[0].elements.push(route('r0-ent', [{ x: 0, y: -15 }, { x: 0, y: 0 }]));
+  return plans;
+}
+
+// ==================== 寻路内核 ====================
+const graph = IndoorNav.buildGraph(buildBuilding());
+
+// 平面 (x, y, floor) → 3D 世界坐标
+function worldOf(x, y, floor) {
+  return new THREE.Vector3(x, (floor - 1) * FLOOR_H + PATH_Y, y);
+}
+
+// ==================== Three 场景 ====================
+const app = document.getElementById('app');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1220);
+scene.fog = new THREE.Fog(0x0b1220, 90, 220);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(62, 34, 62);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+app.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, FLOOR_H, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.85;
+controls.minDistance = 15;
+controls.maxDistance = 200;
+controls.update();
+
+// 光照
+scene.add(new THREE.AmbientLight(0x8899bb, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+sun.position.set(60, 100, 50);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x8899cc, 0.5);
+fill.position.set(-40, 60, -50);
+scene.add(fill);
+
+// 地面（楼外大平面，接收阴影/视觉参照）
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ color: 0x0d1526, roughness: 0.9, metalness: 0.1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.02;
+scene.add(ground);
+
+// ==================== 建 3D 楼 ====================
+const roomMeshes = [];   // 可点击房间 mesh，userData 存 nodeId/name/floor
+
+function addFloorPlate(f) {
+  const base = (f - 1) * FLOOR_H;
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(BUILD_W, 0.12, BUILD_D),
+    new THREE.MeshStandardMaterial({ color: 0x1a2436, roughness: 0.6, metalness: 0.3 }));
+  plate.position.set(0, base - 0.06, 0);
+  plate.receiveShadow = true;
+  scene.add(plate);
+
+  // 走廊地板（亮一点）
+  const corr = new THREE.Mesh(
+    new THREE.PlaneGeometry(BUILD_W, 4),
+    new THREE.MeshStandardMaterial({ color: 0x25324a, roughness: 0.5, metalness: 0.2 }));
+  corr.rotation.x = -Math.PI / 2;
+  corr.position.set(0, base + 0.01, 0);
+  scene.add(corr);
+}
+
+function addRoom(node) {
+  const base = (node.floor - 1) * FLOOR_H;
+  const color = CATEGORY_COLOR[node.category] || 0x4da6ff;
+  const h = FLOOR_H * 0.72;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(10, h, 8),
+    new THREE.MeshStandardMaterial({
+      color, roughness: 0.5, metalness: 0.15,
+      transparent: true, opacity: 0.42, emissive: color, emissiveIntensity: 0.18,
+    }));
+  mesh.position.set(node.x, base + 0.12 + h / 2, node.y);
+  mesh.castShadow = true;
+  mesh.userData = { nodeId: node.id, name: node.name, floor: node.floor, category: node.category, baseColor: color };
+  scene.add(mesh);
+
+  // 边框线，突出房间轮廓
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(mesh.geometry),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22 }));
+  mesh.add(edges);
+
+  roomMeshes.push(mesh);
+}
+
+function addStair(node) {
+  const base = (node.floor - 1) * FLOOR_H;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(4, FLOOR_H, 4),
+    new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.7, metalness: 0.2, transparent: true, opacity: 0.85 }));
+  mesh.position.set(node.x, base + FLOOR_H / 2, node.y);
+  scene.add(mesh);
+}
+
+// 遍历 graph 节点建 3D（房间 → 可点击盒子；楼梯 → 深色井）
+for (const node of graph.nodes) {
+  if (node.type === 'room') addRoom(node);
+  else if (node.type === 'stair') addStair(node);
+}
+for (let f = 1; f <= 3; f++) addFloorPlate(f);
+
+// ==================== 路径渲染 ====================
+const pathGroup = new THREE.Group();
+scene.add(pathGroup);
+const markers = new THREE.Group();
+scene.add(markers);
+
+// 两点间画一根发光圆柱管（路径段）
+function tubeBetween(p1, p2, radius, color) {
+  const dir = p2.clone().sub(p1);
+  const len = dir.length();
+  if (len < 1e-4) return null;
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, len, 10),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.55, roughness: 0.4 }));
+  mesh.position.copy(p1).add(p2).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  return mesh;
+}
+
+function addMarker(pos, color) {
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(0.45, 20, 20),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }));
+  m.position.copy(pos);
+  markers.add(m);
+}
+
+function clearPath() {
+  while (pathGroup.children.length) pathGroup.remove(pathGroup.children[0]);
+  while (markers.children.length) markers.remove(markers.children[0]);
+}
+
+function renderPath(path) {
+  clearPath();
+  if (!path) return;
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i], b = path[i + 1];
+    const isStair = a.floor !== b.floor;
+    const p1 = worldOf(a.x, a.y, a.floor);
+    const p2 = worldOf(b.x, b.y, b.floor);
+    const tube = tubeBetween(p1, p2, isStair ? 0.28 : 0.18, isStair ? 0xfb923c : 0x4da6ff);
+    if (tube) pathGroup.add(tube);
+  }
+  // 起终点小球
+  const s = path[0], e = path[path.length - 1];
+  addMarker(worldOf(s.x, s.y, s.floor), 0x22c55e);
+  addMarker(worldOf(e.x, e.y, e.floor), 0xef4444);
+}
+
+// ==================== 交互：设起终点（3D 点击 或 下拉选择） ====================
+let startId = null;
+let endId = null;
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+const elStart = document.getElementById('p-start');
+const elEnd = document.getElementById('p-end');
+const elResult = document.getElementById('result');
+const elDist = document.getElementById('r-dist');
+const elCross = document.getElementById('r-cross');
+const elRoute = document.getElementById('r-route');
+const selStart = document.getElementById('sel-start');
+const selEnd = document.getElementById('sel-end');
+
+function setVal(el, text, empty) {
+  el.textContent = text;
+  el.classList.toggle('empty', !!empty);
+}
+
+// 按楼层分组填充起终点下拉（精确选点，不受 3D 遮挡影响）
+function populateSelects() {
+  const byFloor = {};
+  for (const n of graph.nodes.filter(n => n.type === 'room')) (byFloor[n.floor] ||= []).push(n);
+  for (const f of Object.keys(byFloor).map(Number).sort((a, b) => a - b)) {
+    const list = byFloor[f].sort((a, b) => a.name.localeCompare(b.name));
+    for (const sel of [selStart, selEnd]) {
+      const og = document.createElement('optgroup');
+      og.label = f + 'F';
+      for (const n of list) og.appendChild(new Option(n.name, n.id));
+      sel.appendChild(og);
+    }
+  }
+}
+populateSelects();
+
+function summaryRoute(path) {
+  // 只列关键节点（房间/楼梯），跳过走廊节点；连续同名楼梯合并（跨层只显一次）
+  const out = [];
+  for (const n of path.filter(n => n.type !== 'corridor')) {
+    if (out.length && out[out.length - 1].name === n.name) continue;
+    out.push(n);
+  }
+  return out.map(n => n.name).join(' → ');
+}
+
+function planPath() {
+  if (!startId || !endId) return;
+  const r = IndoorNav.findPath(graph, startId, endId);
+  if (!r) {
+    elDist.textContent = '⚠️ 不可达';
+    elCross.textContent = '';
+    elRoute.textContent = '';
+    elResult.style.display = 'block';
+    renderPath(null);
+    return;
+  }
+  renderPath(r.path);
+  elDist.textContent = `📏 约 ${Math.round(r.distance)} 米`;
+  elCross.textContent = r.floorsCrossed > 0
+    ? `🪜 跨越 ${r.floorsCrossed} 层（走楼梯）`
+    : '🚶 同层直达';
+  elRoute.textContent = '🗺 ' + summaryRoute(r.path);
+  elResult.style.display = 'block';
+}
+
+function setStart(id) {
+  startId = id;
+  endId = null;
+  setVal(elStart, graph.nodeById.get(id).name, false);
+  setVal(elEnd, '未选择', true);
+  selStart.value = id;
+  selEnd.value = '';
+  renderPath(null);
+  elResult.style.display = 'none';
+}
+
+function setEnd(id) {
+  endId = id;
+  setVal(elEnd, graph.nodeById.get(id).name, false);
+  selEnd.value = id;
+  planPath();
+}
+
+function onRoomClick(mesh) {
+  const id = mesh.userData.nodeId;
+  if (!startId) setStart(id);
+  else if (!endId) setEnd(id);
+  else setStart(id);
+}
+
+function onPointerClick(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(roomMeshes, false);
+  if (hits.length) onRoomClick(hits[0].object);
+}
+
+renderer.domElement.addEventListener('click', onPointerClick);
+selStart.addEventListener('change', () => setStart(selStart.value));
+selEnd.addEventListener('change', () => setEnd(selEnd.value));
+
+// hover 高亮（提示可点击）
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(roomMeshes, false);
+  roomMeshes.forEach(m => { m.material.emissiveIntensity = 0.18; });
+  if (hits.length) hits[0].object.material.emissiveIntensity = 0.55;
+  renderer.domElement.style.cursor = hits.length ? 'pointer' : 'grab';
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  startId = null;
+  endId = null;
+  setVal(elStart, '未选择', true);
+  setVal(elEnd, '未选择', true);
+  selStart.value = '';
+  selEnd.value = '';
+  renderPath(null);
+  elResult.style.display = 'none';
+});
+
+// 调试钩子（供控制台 / 自动化验证内部状态）
+window.__INDOOR_DEMO__ = { graph, roomMeshes, renderer, scene, camera, pathGroup, THREE, findPath: (a, b) => IndoorNav.findPath(graph, a, b) };
+
+// ==================== 渲染循环 ====================
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
