@@ -158,6 +158,47 @@ export function drawNavRoute() {
     state.planMap.setZoomAndCenter(Math.max(state.planMap.getZoom(), 17), [state.navStart.lng, state.navStart.lat]);
 }
 
+// 加载后台保存的预设导航路线：直接画保存的路径点（含拖拽改线结果，不重新规划）
+export function loadPresetRoute(idx) {
+    const route = state.navRoutes[idx];
+    if (!route || !route.data || !state.planMap) return;
+    const d = route.data;
+    const mode = d.travelMode || 'walking';
+
+    state.navStart = { lng: d.start.lng, lat: d.start.lat, title: d.start.name || '起点' };
+    state.navEnd = { lng: d.end.lng, lat: d.end.lat, title: d.end.name || '终点' };
+    state.navTravelMode = mode;
+
+    // 同步出行方式按钮 active 态
+    const nm = document.getElementById('nav-mode-btns');
+    if (nm) nm.querySelectorAll('button[data-nav-mode]').forEach(x =>
+        x.classList.toggle('active', x.dataset.navMode === mode));
+
+    clearNavRoute();
+    const pts = (d.pts || []).map(p => new AMap.LngLat(p[0], p[1]));
+    if (pts.length >= 2) {
+        state.navOverlay = new AMap.Polyline({
+            path: pts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30,
+        });
+        state.navOverlay.setMap(state.planMap);
+    }
+    updateNavPointMarkers();
+
+    // 起终点文案（预设路线不展示楼层）
+    const sl = document.getElementById('nav-start-line');
+    const el = document.getElementById('nav-end-line');
+    if (sl) sl.textContent = '起点：' + (d.start.name || '起点');
+    if (el) el.textContent = '终点：' + (d.end.name || '终点');
+    const dl = document.getElementById('nav-dist-line');
+    if (dl) {
+        dl.textContent = NAV_MODE_LABEL[mode] + '：约 ' + formatNavDistance(d.distance || 0)
+            + (d.time ? ' · 约 ' + Math.ceil(d.time / 60) + ' 分钟' : '');
+    }
+    if (pts.length >= 2) {
+        state.planMap.setZoomAndCenter(Math.max(state.planMap.getZoom(), 17), [d.start.lng, d.start.lat]);
+    }
+}
+
 /** 覆盖物点击：阻止冒泡并短暂屏蔽 map click 的 hideInfo，再执行展示逻辑 */
 export function onFeatureClick(e, fn) {
     if (e && e.originalEvent && e.originalEvent.stopPropagation) e.originalEvent.stopPropagation();
@@ -265,6 +306,12 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft') lightboxStep(-1);
     else if (e.key === 'ArrowRight') lightboxStep(1);
     else if (e.key === 'Escape') document.getElementById('lightbox').classList.remove('show');
+});
+
+// 预设路线下拉：点选后台保存的路线 → 加载显示（不重新规划）
+const navPresetSel = document.getElementById('nav-preset');
+if (navPresetSel) navPresetSel.addEventListener('change', () => {
+    if (navPresetSel.value !== '') loadPresetRoute(parseInt(navPresetSel.value, 10));
 });
 
 // ========================================================

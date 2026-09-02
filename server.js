@@ -565,6 +565,45 @@ app.delete('/api/editor/projects/:id', adminOnly, (req, res) => {
     } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
+// ==================== 导航路线（后台路径导航保存的预设路线） ====================
+
+// 列出全部导航路线（公开，供前台访客点选预设路线）
+app.get('/api/nav-routes', (req, res) => {
+    try {
+        res.json({ data: db.getNavRoutes() });
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
+// 创建导航路线
+app.post('/api/nav-routes', adminOnly, (req, res) => {
+    try {
+        const { name, data } = req.body;
+        const id = db.saveNavRoute(null, name || '未命名路线', data || {});
+        res.status(201).json({ message: 'ok', id });
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
+// 更新导航路线（部分更新：只改名时保留原 data）
+app.put('/api/nav-routes/:id', adminOnly, (req, res) => {
+    try {
+        const { name, data } = req.body;
+        const existing = db.getNavRoute(Number(req.params.id));
+        if (!existing) return res.status(404).json({ error: '路线不存在' });
+        const nextName = name !== undefined ? name : existing.name;
+        const nextData = data !== undefined ? data : existing.data;
+        db.saveNavRoute(Number(req.params.id), nextName, nextData);
+        res.json({ message: 'ok' });
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
+// 删除导航路线
+app.delete('/api/nav-routes/:id', adminOnly, (req, res) => {
+    try {
+        db.deleteNavRoute(Number(req.params.id));
+        res.json({ message: 'ok' });
+    } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
 // 批量导入：按「建筑清单」一次性生成每栋 × 每层的方案骨架（无底图，位置+比例尺由实地宽高算）
 app.post('/api/editor/projects/batch', adminOnly, (req, res) => {
     try {

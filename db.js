@@ -235,6 +235,15 @@ function createTables() {
       updated_at TEXT NOT NULL DEFAULT ''
     )
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS nav_routes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL DEFAULT '未命名路线',
+      data TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT ''
+    )
+  `);
 }
 
 /** 迁移：为旧数据库补充新增列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列） */
@@ -747,6 +756,44 @@ function deleteEditorProject(id) {
   saveDbToDisk();
 }
 
+// ---------- 导航路线（后台路径导航保存的独立列表） ----------
+
+function getNavRoutes() {
+  const rows = db.exec('SELECT * FROM nav_routes ORDER BY id');
+  if (rows.length === 0) return [];
+  return rows[0].values.map(r => ({
+    id: r[0], name: r[1], data: JSON.parse(r[2] || '{}'), updated_at: r[3]
+  }));
+}
+
+function getNavRoute(id) {
+  const rows = db.exec('SELECT * FROM nav_routes WHERE id = ?', [id]);
+  if (rows.length === 0 || rows[0].values.length === 0) return null;
+  const r = rows[0].values[0];
+  return { id: r[0], name: r[1], data: JSON.parse(r[2] || '{}'), updated_at: r[3] };
+}
+
+function saveNavRoute(id, name, data) {
+  const now = new Date().toISOString();
+  if (id) {
+    db.run('UPDATE nav_routes SET name = ?, data = ?, updated_at = ? WHERE id = ?',
+      [name, JSON.stringify(data), now, id]);
+    saveDbToDisk();
+    return id;
+  } else {
+    db.run('INSERT INTO nav_routes (name, data, updated_at) VALUES (?, ?, ?)',
+      [name, JSON.stringify(data), now]);
+    saveDbToDisk();
+    const result = db.exec('SELECT MAX(id) as id FROM nav_routes');
+    return result[0].values[0][0];
+  }
+}
+
+function deleteNavRoute(id) {
+  db.run('DELETE FROM nav_routes WHERE id = ?', [id]);
+  saveDbToDisk();
+}
+
 // ---------- 用户管理 ----------
 
 // 账号角色仅两类：admin（全部功能）、super（看全部数据）。
@@ -835,6 +882,9 @@ module.exports = {
   // 编辑器项目
   getEditorProjects, getEditorProject, getEditorProjectsForRole, canViewProject,
   saveEditorProject, deleteEditorProject,
+
+  // 导航路线
+  getNavRoutes, getNavRoute, saveNavRoute, deleteNavRoute,
 
   // 用户管理
   getUsers, getUserByUsername, getUserById, createUser, updateUser, deleteUser, countAdmins,

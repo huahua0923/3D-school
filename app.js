@@ -156,6 +156,30 @@ function applyFeatureFlags() {
     }
 }
 
+// 加载后台保存的预设导航路线：填充首页「预设路线」下拉，供访客点选
+async function loadPresetNavRoutes() {
+    try {
+        const res = await fetch('/api/nav-routes', { cache: 'no-store' });
+        const json = await res.json();
+        state.navRoutes = (json && json.data) || [];
+    } catch (err) {
+        console.warn('⚠️ 预设路线加载失败', err && err.message);
+        state.navRoutes = [];
+    }
+    const sel = document.getElementById('nav-preset');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">📌 预设路线…</option>';
+    state.navRoutes.forEach((r, i) => {
+        const d = r.data || {};
+        const startName = (d.start && d.start.name) ? d.start.name : '起点';
+        const endName = (d.end && d.end.name) ? d.end.name : '终点';
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = (r.name || '未命名路线') + '（' + startName + ' → ' + endName + '）';
+        sel.appendChild(o);
+    });
+}
+
 export async function boot() {
     state.ui = new UIController();
     state.ui.setProgress('加载配置...', 5);
@@ -166,6 +190,9 @@ export async function boot() {
 
     // 应用后台「功能模块」开关与参数（显隐 + 参数注入，须在地图/各子系统初始化前）
     applyFeatureFlags();
+
+    // 加载后台保存的预设导航路线（不阻塞 boot，下拉填充完成后即可点选）
+    loadPresetNavRoutes();
 
     // Init Amap
     state.ui.setProgress('初始化地图...', 20);

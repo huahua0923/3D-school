@@ -73,6 +73,7 @@ export const state = {
     dragRoute: null,            // AMap.DragRoute
     navPointMarkers: [],        // 起点/终点弹性标记
     elasticAvailable: false,    // AMap.ElasticMarker 是否就绪
+    navRoutes: [],              // 后台保存的预设导航路线 [{id,name,data}]
     threeCtx: null,             // Three.js 上下文 {scene, customCoords, lpm, labelRenderer}
 
     // —— 室内寻路 ——

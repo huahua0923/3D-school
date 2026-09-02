@@ -218,6 +218,7 @@ a { color: #58a6ff; }
     <button data-panel="plans">📋 方案</button>
     <button data-panel="users">👥 用户管理</button>
     <button data-panel="features">🧩 功能模块</button>
+    <button data-panel="nav">🧭 导航路线</button>
     <a href="admin-map.html" class="nav-link">🗺️ 路线图编辑</a>
     <a href="editor.html" class="nav-link">✏️ 室内编辑</a>
 </nav>
@@ -304,6 +305,26 @@ a { color: #58a6ff; }
             <div id="form-features"></div>
         </div>
     </div>
+
+    <!-- ====== Nav Routes Panel ====== -->
+    <div class="panel" id="panel-nav">
+        <div class="section">
+            <h3>🧭 路径导航（保存为预设路线）</h3>
+            <p style="color:#8b949e;font-size:0.8rem;margin:0 0 12px;">地图上设起点/终点 → 规划 → 命名保存。保存后前台访客可在「预设路线」里点选。</p>
+            <div id="nav-map" style="width:100%;height:420px;border-radius:12px;overflow:hidden;background:#0d1117;"></div>
+            <div class="form-grid" style="margin-top:12px;">
+                <div class="form-group"><label>起点</label><div style="display:flex;gap:6px;"><input id="nav-start-name" readonly placeholder="点击地图设起点"><button class="btn-add-feat" style="white-space:nowrap;" onclick="pickNavPoint('start')">📍 取点</button></div></div>
+                <div class="form-group"><label>终点</label><div style="display:flex;gap:6px;"><input id="nav-end-name" readonly placeholder="点击地图设终点"><button class="btn-add-feat" style="white-space:nowrap;" onclick="pickNavPoint('end')">📍 取点</button></div></div>
+                <div class="form-group"><label>交通方式</label><select id="nav-travel-mode"><option value="walking">步行</option><option value="driving">驾车</option><option value="riding">骑行</option><option value="transfer">公交</option></select></div>
+                <div class="form-group"><label>路线名称</label><input id="nav-route-name" placeholder="如：校门 → 图书馆"></div>
+            </div>
+            <div style="margin-top:10px;display:flex;gap:8px;">
+                <button class="btn-add-feat" onclick="planNavRoute()">🛣️ 规划路线</button>
+                <button class="btn-save" onclick="saveNavRoute()">💾 保存路线</button>
+            </div>
+        </div>
+        <div class="section"><h3>📋 已保存导航路线</h3><div id="form-nav-routes"></div></div>
+    </div>
 </div>
 
 <!-- Status bar -->
@@ -377,6 +398,7 @@ document.getElementById('login-btn').addEventListener('click', login);
         document.getElementById('panel-' + btn.dataset.panel).classList.add('active');
         document.getElementById('panel-title').textContent = btn.textContent;
         renderAll(); // re-render
+        if (btn.dataset.panel === 'nav') { initNavMap(); renderNavRoutes(); }
     });
 });
 
@@ -1039,6 +1061,197 @@ function collectAll() {
     // Show login
     document.getElementById('login-overlay').classList.remove('hidden');
 })();
+
+// ============ 导航路线（后台路径导航 + 预设路线） ============
+let navMap = null;
+let navPoint = { start: null, end: null };
+let navPicking = null;
+let navPointMarkers = [];
+let navPlanners = { walking: null, driving: null, riding: null, transfer: null };
+let navOverlay = null;
+let navDragRoute = null;
+let navMapInited = false;
+let currentNavPts = null;
+let currentNavDist = 0;
+let currentNavTime = 0;
+
+const NAV_MODE_LABEL = { walking: '步行', driving: '驾车', riding: '骑行', transfer: '公交' };
+
+async function initNavMap() {
+    if (navMapInited) return;
+    navMapInited = true;
+    const geo = (config && config.geo) || {};
+    let amapKey = geo.amapKey || '';
+    let sec = geo.amapSecurityCode || '';
+    try { const r = await fetch('/api/amap'); const d = await r.json(); if (d && d.key) amapKey = d.key; if (d && d.securityJsCode) sec = d.securityJsCode; } catch (_) {}
+    if (sec) window._AMapSecurityConfig = { securityJsCode: sec };
+    await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + (amapKey || '');
+        s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+    if (!window.AMap) { showToast('地图加载失败', 'err'); return; }
+    navMap = new AMap.Map('nav-map', { viewMode: '2D', center: geo.center || [104.14141, 30.67133], zoom: geo.zoom || 16, mapStyle: geo.mapStyle || 'amap://styles/normal' });
+    AMap.plugin('AMap.Walking', () => { navPlanners.walking = new AMap.Walking(); });
+    AMap.plugin(['AMap.Driving', 'AMap.Riding', 'AMap.Transfer'], () => {
+        try { navPlanners.driving = new AMap.Driving({ policy: AMap.DrivingPolicy ? AMap.DrivingPolicy.LEAST_TIME : 0, hideMarkers: true }); } catch (_) {}
+        try { navPlanners.riding = new AMap.Riding({}); } catch (_) {}
+        try { navPlanners.transfer = new AMap.Transfer({ city: '成都', policy: AMap.TransferPolicy ? AMap.TransferPolicy.LEAST_TIME : 0 }); } catch (_) {}
+    });
+    navMap.on('click', e => {
+        if (!navPicking) return;
+        setNavPoint(navPicking, e.lnglat.getLng(), e.lnglat.getLat());
+    });
+}
+
+function pickNavPoint(which) {
+    if (!navMap) { showToast('地图尚未就绪', 'err'); return; }
+    navPicking = which;
+    showToast(which === 'start' ? '请在地图上点击起点' : '请在地图上点击终点', '');
+}
+
+function setNavPoint(which, lng, lat) {
+    navPoint[which] = { name: which === 'start' ? '起点' : '终点', lng, lat };
+    const input = document.getElementById(which === 'start' ? 'nav-start-name' : 'nav-end-name');
+    if (input) input.value = navPoint[which].name;
+    if (window.AMap && AMap.Geocoder) {
+        AMap.plugin('AMap.Geocoder', () => {
+            const geo = new AMap.Geocoder();
+            geo.getAddress([lng, lat], (status, result) => {
+                if (status === 'complete' && result.regeocode && result.regeocode.formattedAddress) {
+                    navPoint[which].name = result.regeocode.formattedAddress;
+                    if (input) input.value = navPoint[which].name;
+                }
+            });
+        });
+    }
+    navPicking = null;
+    updateNavPointMarkers();
+}
+
+function navDotHtml(color) {
+    return '<div style="width:12px;height:12px;border-radius:50%;background:' + color + ';border:2px solid #fff;box-shadow:0 0 6px ' + color + ';"></div>';
+}
+
+function updateNavPointMarkers() {
+    navPointMarkers.forEach(m => { try { m.setMap(null); } catch (_) {} });
+    navPointMarkers = [];
+    if (!navMap) return;
+    if (navPoint.start) navPointMarkers.push(new AMap.Marker({ position: [navPoint.start.lng, navPoint.start.lat], content: navDotHtml('#22c55e'), offset: new AMap.Pixel(-8, -8), zIndex: 120 }));
+    if (navPoint.end) navPointMarkers.push(new AMap.Marker({ position: [navPoint.end.lng, navPoint.end.lat], content: navDotHtml('#ef4444'), offset: new AMap.Pixel(-8, -8), zIndex: 120 }));
+    navPointMarkers.forEach(m => m.setMap(navMap));
+}
+
+function routePathOf(route) {
+    const path = [];
+    (route.steps || []).forEach(s => {
+        if (!s) return;
+        const p = s.path || (s.bus && s.bus.path) || [];
+        if (p && p.length) path.push(...p);
+    });
+    return path;
+}
+
+function clearNavPreview() {
+    if (navOverlay) { navOverlay.setMap(null); navOverlay = null; }
+    if (navDragRoute) { try { if (navDragRoute.clear) navDragRoute.clear(); } catch (_) {} navDragRoute = null; }
+}
+
+function formatNavDist(m) { return m >= 1000 ? (m / 1000).toFixed(1) + ' 公里' : Math.round(m) + ' 米'; }
+
+function planNavRoute() {
+    if (!navMap || !navPoint.start || !navPoint.end) { showToast('请先设起点和终点', 'err'); return; }
+    const mode = document.getElementById('nav-travel-mode').value;
+    const planner = navPlanners[mode];
+    const start = new AMap.LngLat(navPoint.start.lng, navPoint.start.lat);
+    const end = new AMap.LngLat(navPoint.end.lng, navPoint.end.lat);
+    clearNavPreview();
+    if (!planner) { showToast('规划插件加载中，请稍后重试', 'err'); return; }
+    navOverlay = new AMap.Polyline({ path: [start, end], strokeColor: '#22d3ee', strokeWeight: 4, strokeStyle: 'dashed', strokeOpacity: 0.45, zIndex: 30 });
+    navOverlay.setMap(navMap);
+    planner.search(start, end, (status, result) => {
+        if (status !== 'complete' || !result.routes || !result.routes[0]) { showToast('规划失败，请换交通方式或起终点', 'err'); return; }
+        renderNavPreview(result.routes[0], mode);
+    });
+}
+
+function renderNavPreview(route, mode) {
+    const pts = routePathOf(route);
+    currentNavPts = pts;
+    currentNavDist = route.distance || 0;
+    currentNavTime = route.time || 0;
+    if (mode === 'driving' && window.AMap && AMap.DragRoute) {
+        try {
+            if (navOverlay) { navOverlay.setMap(null); navOverlay = null; }
+            navDragRoute = new AMap.DragRoute(navMap, route, AMap.DrivingPolicy ? AMap.DrivingPolicy.LEAST_TIME : 0, { polyOptions: { strokeColor: '#22d3ee', strokeWeight: 5, strokeOpacity: 0.95 } });
+            navDragRoute.on('complete', (ev) => {
+                const nr = ev && ev.route;
+                if (nr) { currentNavPts = routePathOf(nr); currentNavDist = nr.distance || currentNavDist; currentNavTime = nr.time || currentNavTime; showToast('已拖拽调整，可直接保存', ''); }
+            });
+            navDragRoute.search();
+            showToast('规划成功：约 ' + formatNavDist(currentNavDist) + '（驾车可拖拽改线）', 'ok');
+            return;
+        } catch (_) {}
+    }
+    if (pts.length < 2) { showToast('未取到路径点', 'err'); return; }
+    if (navOverlay) navOverlay.setMap(null);
+    navOverlay = new AMap.Polyline({ path: pts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30 });
+    navOverlay.setMap(navMap);
+    navMap.setFitView([navOverlay]);
+    showToast('规划成功：约 ' + formatNavDist(currentNavDist), 'ok');
+}
+
+function saveNavRoute() {
+    if (!currentNavPts || currentNavPts.length < 2) { showToast('请先规划路线', 'err'); return; }
+    const name = document.getElementById('nav-route-name').value.trim();
+    if (!name) { showToast('请输入路线名称', 'err'); return; }
+    const mode = document.getElementById('nav-travel-mode').value;
+    const data = { travelMode: mode, start: navPoint.start, end: navPoint.end, pts: currentNavPts, distance: currentNavDist, time: currentNavTime };
+    fetch('/api/nav-routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ name, data }),
+    }).then(r => { if (r.status === 401) { logout(); return; } return r.json(); }).then(d => {
+        if (d && d.id) { showToast('✅ 路线已保存', 'ok'); renderNavRoutes(); }
+        else if (d) showToast('❌ ' + (d.error || '保存失败'), 'err');
+    }).catch(e => showToast('网络错误: ' + e.message, 'err'));
+}
+
+async function renderNavRoutes() {
+    const box = document.getElementById('form-nav-routes');
+    if (!box) return;
+    let rows = [];
+    try {
+        const resp = await fetch('/api/nav-routes', { headers: authHeaders() });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        rows = (await resp.json()).data || [];
+    } catch (e) {
+        box.innerHTML = `<div class="section"><p style="color:#f85149;">加载失败: ${escHtml(e.message)}</p></div>`;
+        return;
+    }
+    if (rows.length === 0) { box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无导航路线。上面规划一条并保存即可。</p></div>'; return; }
+    box.innerHTML = rows.map(r => {
+        const d = r.data || {};
+        const modeLabel = NAV_MODE_LABEL[d.travelMode] || d.travelMode || '—';
+        return `<div class="section">
+            <h3>🧭 ${escHtml(r.name || ('路线 ' + r.id))}</h3>
+            <div style="font-size:0.8rem;color:#8b949e;margin:4px 0 8px;">${modeLabel} · ${escHtml((d.start && d.start.name) || '起点')} → ${escHtml((d.end && d.end.name) || '终点')}${d.distance ? ' · 约 ' + Math.round(d.distance) + ' 米' : ''}</div>
+            <button class="btn-del" onclick="deleteNavRoute(${r.id})">✕ 删除</button>
+        </div>`;
+    }).join('');
+}
+
+async function deleteNavRoute(id) {
+    if (!confirm('删除这条导航路线？')) return;
+    try {
+        const resp = await fetch('/api/nav-routes/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+        if (resp.status === 401) { logout(); return; }
+        const d = await resp.json().catch(() => ({}));
+        if (resp.ok) { showToast('✅ 已删除', 'ok'); renderNavRoutes(); }
+        else showToast('❌ ' + (d.error || '删除失败'), 'err');
+    } catch (e) { showToast('网络错误: ' + e.message, 'err'); }
+}
+
 </script>
 </body>
 </html>
