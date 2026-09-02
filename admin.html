@@ -320,7 +320,8 @@ a { color: #58a6ff; }
             </div>
             <div style="margin-top:10px;display:flex;gap:8px;">
                 <button class="btn-add-feat" onclick="planNavRoute()">🛣️ 规划路线</button>
-                <button class="btn-save" onclick="saveNavRoute()">💾 保存路线</button>
+                <button class="btn-save" id="btn-save-nav-route" onclick="saveNavRoute()">💾 保存路线</button>
+                <button class="btn-add-feat" id="btn-nav-cancel" style="display:none;" onclick="resetNavForm()">↺ 取消编辑</button>
             </div>
         </div>
         <div class="section"><h3>📋 已保存导航路线</h3><div id="form-nav-routes"></div></div>
@@ -1074,6 +1075,8 @@ let navMapInited = false;
 let currentNavPts = null;
 let currentNavDist = 0;
 let currentNavTime = 0;
+let navEditingId = null;      // 正在编辑的路线 id，null = 新建
+let navRoutesCache = [];      // renderNavRoutes 缓存，编辑时回填用
 
 const NAV_MODE_LABEL = { walking: '步行', driving: '驾车', riding: '骑行', transfer: '公交' };
 
@@ -1201,20 +1204,85 @@ function renderNavPreview(route, mode) {
     showToast('规划成功：约 ' + formatNavDist(currentNavDist), 'ok');
 }
 
+// 规范化路径点为纯 [lng, lat] 数组：高德 step.path 可能是 LngLat 对象，直接 JSON 存会丢数据
+function normalizePts(pts) {
+    return (pts || []).map(p => {
+        const lng = Number(p && p.getLng ? p.getLng() : p[0]);
+        const lat = Number(p && p.getLat ? p.getLat() : p[1]);
+        return [lng, lat];
+    }).filter(p => isFinite(p[0]) && isFinite(p[1]));
+}
+
+function resetNavForm() {
+    navEditingId = null;
+    navPoint = { start: null, end: null };
+    currentNavPts = null; currentNavDist = 0; currentNavTime = 0;
+    const nameEl = document.getElementById('nav-route-name');
+    const startEl = document.getElementById('nav-start-name');
+    const endEl = document.getElementById('nav-end-name');
+    if (nameEl) nameEl.value = '';
+    if (startEl) startEl.value = '';
+    if (endEl) endEl.value = '';
+    const modeEl = document.getElementById('nav-travel-mode');
+    if (modeEl) modeEl.value = 'walking';
+    clearNavPreview();
+    updateNavPointMarkers();
+    const btn = document.getElementById('btn-save-nav-route');
+    const cancel = document.getElementById('btn-nav-cancel');
+    if (btn) btn.innerHTML = '💾 保存路线';
+    if (cancel) cancel.style.display = 'none';
+}
+
 function saveNavRoute() {
     if (!currentNavPts || currentNavPts.length < 2) { showToast('请先规划路线', 'err'); return; }
     const name = document.getElementById('nav-route-name').value.trim();
     if (!name) { showToast('请输入路线名称', 'err'); return; }
     const mode = document.getElementById('nav-travel-mode').value;
-    const data = { travelMode: mode, start: navPoint.start, end: navPoint.end, pts: currentNavPts, distance: currentNavDist, time: currentNavTime };
-    fetch('/api/nav-routes', {
-        method: 'POST',
+    const data = { travelMode: mode, start: navPoint.start, end: navPoint.end, pts: normalizePts(currentNavPts), distance: currentNavDist, time: currentNavTime };
+    const isEdit = navEditingId != null;
+    fetch(isEdit ? '/api/nav-routes/' + navEditingId : '/api/nav-routes', {
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({ name, data }),
     }).then(r => { if (r.status === 401) { logout(); return; } return r.json(); }).then(d => {
-        if (d && d.id) { showToast('✅ 路线已保存', 'ok'); renderNavRoutes(); }
+        if (d && (d.id || d.message)) { showToast(isEdit ? '✅ 路线已更新' : '✅ 路线已保存', 'ok'); resetNavForm(); renderNavRoutes(); }
         else if (d) showToast('❌ ' + (d.error || '保存失败'), 'err');
     }).catch(e => showToast('网络错误: ' + e.message, 'err'));
+}
+
+async function editNavRoute(id) {
+    const r = navRoutesCache.find(x => x.id === id);
+    if (!r) { showToast('路线不存在，请刷新列表', 'err'); return; }
+    const d = r.data || {};
+    navEditingId = id;
+    const nameEl = document.getElementById('nav-route-name');
+    const modeEl = document.getElementById('nav-travel-mode');
+    const startEl = document.getElementById('nav-start-name');
+    const endEl = document.getElementById('nav-end-name');
+    if (nameEl) nameEl.value = r.name || '';
+    if (modeEl) modeEl.value = d.travelMode || 'walking';
+    navPoint = {
+        start: d.start ? { name: d.start.name || '起点', lng: d.start.lng, lat: d.start.lat } : null,
+        end: d.end ? { name: d.end.name || '终点', lng: d.end.lng, lat: d.end.lat } : null,
+    };
+    if (startEl) startEl.value = navPoint.start ? navPoint.start.name : '';
+    if (endEl) endEl.value = navPoint.end ? navPoint.end.name : '';
+    // 回填已保存路径（含拖拽改线结果），不重新规划；要重算可再点「取点 + 规划」
+    currentNavPts = (d.pts || []).map(p => Array.isArray(p) ? [p[0], p[1]] : [p.lng, p.lat]);
+    currentNavDist = d.distance || 0;
+    currentNavTime = d.time || 0;
+    clearNavPreview();
+    if (currentNavPts.length >= 2 && navMap) {
+        navOverlay = new AMap.Polyline({ path: currentNavPts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30 });
+        navOverlay.setMap(navMap);
+        navMap.setFitView([navOverlay]);
+    }
+    updateNavPointMarkers();
+    const btn = document.getElementById('btn-save-nav-route');
+    const cancel = document.getElementById('btn-nav-cancel');
+    if (btn) btn.innerHTML = '💾 更新路线';
+    if (cancel) cancel.style.display = '';
+    showToast('已加载路线，改完点「更新路线」', '');
 }
 
 async function renderNavRoutes() {
@@ -1229,6 +1297,7 @@ async function renderNavRoutes() {
         box.innerHTML = `<div class="section"><p style="color:#f85149;">加载失败: ${escHtml(e.message)}</p></div>`;
         return;
     }
+    navRoutesCache = rows;
     if (rows.length === 0) { box.innerHTML = '<div class="section"><p style="color:#8b949e;">暂无导航路线。上面规划一条并保存即可。</p></div>'; return; }
     box.innerHTML = rows.map(r => {
         const d = r.data || {};
@@ -1236,7 +1305,10 @@ async function renderNavRoutes() {
         return `<div class="section">
             <h3>🧭 ${escHtml(r.name || ('路线 ' + r.id))}</h3>
             <div style="font-size:0.8rem;color:#8b949e;margin:4px 0 8px;">${modeLabel} · ${escHtml((d.start && d.start.name) || '起点')} → ${escHtml((d.end && d.end.name) || '终点')}${d.distance ? ' · 约 ' + Math.round(d.distance) + ' 米' : ''}</div>
-            <button class="btn-del" onclick="deleteNavRoute(${r.id})">✕ 删除</button>
+            <div style="display:flex;gap:8px;">
+                <button class="btn-del" style="background:#1f6feb;border-color:#1f6feb;" onclick="editNavRoute(${r.id})">✏️ 编辑</button>
+                <button class="btn-del" onclick="deleteNavRoute(${r.id})">✕ 删除</button>
+            </div>
         </div>`;
     }).join('');
 }

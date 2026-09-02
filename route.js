@@ -175,7 +175,7 @@ export function loadPresetRoute(idx) {
         x.classList.toggle('active', x.dataset.navMode === mode));
 
     clearNavRoute();
-    const pts = (d.pts || []).map(p => new AMap.LngLat(p[0], p[1]));
+    const pts = (d.pts || []).map(p => Array.isArray(p) ? new AMap.LngLat(p[0], p[1]) : new AMap.LngLat(p.lng, p.lat));
     if (pts.length >= 2) {
         state.navOverlay = new AMap.Polyline({
             path: pts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30,
