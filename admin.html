@@ -310,7 +310,7 @@ a { color: #58a6ff; }
     <div class="panel" id="panel-nav">
         <div class="section">
             <h3>🧭 路径导航（保存为预设路线）</h3>
-            <p style="color:#8b949e;font-size:0.8rem;margin:0 0 12px;">地图上设起点/终点 → 规划 → 命名保存。保存后前台访客可在「预设路线」里点选。</p>
+            <p style="color:#8b949e;font-size:0.8rem;margin:0 0 12px;">地图上设起点/终点 → 规划 → 命名保存。规划后（非驾车）可<strong style="color:#22d3ee;">拖拽青色顶点改线</strong>，驾车可拖拽路线。保存后前台访客可在「预设路线」里点选。</p>
             <div id="nav-map" style="width:100%;height:420px;border-radius:12px;overflow:hidden;background:#0d1117;"></div>
             <div class="form-grid" style="margin-top:12px;">
                 <div class="form-group"><label>起点</label><div style="display:flex;gap:6px;"><input id="nav-start-name" readonly placeholder="点击地图设起点"><button class="btn-add-feat" style="white-space:nowrap;" onclick="pickNavPoint('start')">📍 取点</button></div></div>
@@ -1077,6 +1077,7 @@ let currentNavDist = 0;
 let currentNavTime = 0;
 let navEditingId = null;      // 正在编辑的路线 id，null = 新建
 let navRoutesCache = [];      // renderNavRoutes 缓存，编辑时回填用
+let navEditMarkers = [];      // 可拖拽路径顶点（非驾车模式手动改线）
 
 const NAV_MODE_LABEL = { walking: '步行', driving: '驾车', riding: '骑行', transfer: '公交' };
 
@@ -1159,6 +1160,51 @@ function routePathOf(route) {
 function clearNavPreview() {
     if (navOverlay) { navOverlay.setMap(null); navOverlay = null; }
     if (navDragRoute) { try { if (navDragRoute.clear) navDragRoute.clear(); } catch (_) {} navDragRoute = null; }
+    clearPathDrag();
+}
+
+function clearPathDrag() {
+    navEditMarkers.forEach(m => { try { m.setMap(null); } catch (_) {} });
+    navEditMarkers = [];
+}
+
+// 从 pts（[lng,lat][]）重画预览折线并重算距离
+function redrawNavPreview(pts) {
+    if (navOverlay) { navOverlay.setMap(null); navOverlay = null; }
+    if (!navMap || !pts || pts.length < 2) return;
+    navOverlay = new AMap.Polyline({ path: pts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30 });
+    navOverlay.setMap(navMap);
+    let dist = 0;
+    for (let i = 1; i < pts.length; i++) {
+        dist += AMap.GeometryUtil.distance(new AMap.LngLat(pts[i - 1][0], pts[i - 1][1]), new AMap.LngLat(pts[i][0], pts[i][1]));
+    }
+    currentNavDist = Math.round(dist);
+}
+
+// 非驾车模式：在路径顶点上放可拖拽标记，拖拽即改线（和「路线」一样可手动调整）
+function enablePathDrag(pts) {
+    clearPathDrag();
+    if (!navMap || !pts || pts.length < 2) return;
+    const stride = Math.max(1, Math.ceil(pts.length / 30)); // 最多约 30 个顶点
+    const idxs = [];
+    for (let i = 0; i < pts.length; i += stride) idxs.push(i);
+    if (idxs[idxs.length - 1] !== pts.length - 1) idxs.push(pts.length - 1);
+    idxs.forEach(i => {
+        const m = new AMap.Marker({
+            position: pts[i],
+            draggable: true,
+            content: '<div style="width:11px;height:11px;border-radius:50%;background:#fff;border:2px solid #22d3ee;box-shadow:0 0 5px #22d3ee;cursor:grab;"></div>',
+            offset: new AMap.Pixel(-7, -7),
+            zIndex: 130,
+        });
+        m.on('dragging', () => {
+            const p = m.getPosition();
+            pts[i] = [p.getLng(), p.getLat()];
+            redrawNavPreview(pts);
+        });
+        m.setMap(navMap);
+        navEditMarkers.push(m);
+    });
 }
 
 function formatNavDist(m) { return m >= 1000 ? (m / 1000).toFixed(1) + ' 公里' : Math.round(m) + ' 米'; }
@@ -1180,7 +1226,7 @@ function planNavRoute() {
 }
 
 function renderNavPreview(route, mode) {
-    const pts = routePathOf(route);
+    const pts = normalizePts(routePathOf(route));
     currentNavPts = pts;
     currentNavDist = route.distance || 0;
     currentNavTime = route.time || 0;
@@ -1190,7 +1236,7 @@ function renderNavPreview(route, mode) {
             navDragRoute = new AMap.DragRoute(navMap, route, AMap.DrivingPolicy ? AMap.DrivingPolicy.LEAST_TIME : 0, { polyOptions: { strokeColor: '#22d3ee', strokeWeight: 5, strokeOpacity: 0.95 } });
             navDragRoute.on('complete', (ev) => {
                 const nr = ev && ev.route;
-                if (nr) { currentNavPts = routePathOf(nr); currentNavDist = nr.distance || currentNavDist; currentNavTime = nr.time || currentNavTime; showToast('已拖拽调整，可直接保存', ''); }
+                if (nr) { currentNavPts = normalizePts(routePathOf(nr)); currentNavDist = nr.distance || currentNavDist; currentNavTime = nr.time || currentNavTime; showToast('已拖拽调整，可直接保存', ''); }
             });
             navDragRoute.search();
             showToast('规划成功：约 ' + formatNavDist(currentNavDist) + '（驾车可拖拽改线）', 'ok');
@@ -1202,7 +1248,8 @@ function renderNavPreview(route, mode) {
     navOverlay = new AMap.Polyline({ path: pts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30 });
     navOverlay.setMap(navMap);
     navMap.setFitView([navOverlay]);
-    showToast('规划成功：约 ' + formatNavDist(currentNavDist), 'ok');
+    enablePathDrag(pts);
+    showToast('规划成功：约 ' + formatNavDist(currentNavDist) + '（可拖拽顶点改线）', 'ok');
 }
 
 // 规范化路径点为纯 [lng, lat] 数组：高德 step.path 可能是 LngLat 对象，直接 JSON 存会丢数据
@@ -1277,13 +1324,14 @@ async function editNavRoute(id) {
         navOverlay = new AMap.Polyline({ path: currentNavPts, strokeColor: '#22d3ee', strokeWeight: 5, strokeStyle: 'solid', strokeOpacity: 0.95, zIndex: 30 });
         navOverlay.setMap(navMap);
         navMap.setFitView([navOverlay]);
+        enablePathDrag(currentNavPts);
     }
     updateNavPointMarkers();
     const btn = document.getElementById('btn-save-nav-route');
     const cancel = document.getElementById('btn-nav-cancel');
     if (btn) btn.innerHTML = '💾 更新路线';
     if (cancel) cancel.style.display = '';
-    showToast('已加载路线，改完点「更新路线」', '');
+    showToast('已加载路线，可拖拽顶点改线，改完点「更新路线」', '');
 }
 
 async function renderNavRoutes() {
