@@ -94,12 +94,12 @@ function renderNavRoute(route, straight, seq, dl) {
 function navPointMarker(lng, lat, color, label) {
     if (state.elasticAvailable && window.AMap && AMap.ElasticMarker) {
         try {
-            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="42" viewBox="0 0 32 42">'
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="21" viewBox="0 0 32 42">'
                 + '<circle cx="16" cy="16" r="12" fill="' + color + '" stroke="#fff" stroke-width="2.5"/>'
                 + '<path d="M16 30 C16 30 8 22 8 16 A8 8 0 0 1 24 16 C24 22 16 30 16 30" fill="' + color + '"/></svg>';
             const m = new AMap.ElasticMarker({
                 position: [lng, lat],
-                styles: [{ icon: { img: 'data:image/svg+xml;utf8,' + encodeURIComponent(svg), size: [32, 42], anchor: 'bottom-center' } }],
+                styles: [{ icon: { img: 'data:image/svg+xml;utf8,' + encodeURIComponent(svg), size: [16, 21], anchor: 'bottom-center' } }],
                 zoomStyleMapping: { 14: 0, 15: 0, 16: 0, 17: 0, 18: 0, 19: 0, 20: 0 },
             });
             m.setMap(state.planMap);
@@ -107,8 +107,8 @@ function navPointMarker(lng, lat, color, label) {
             return m;
         } catch (_) {}
     }
-    const dot = '<div style="width:14px;height:14px;border-radius:50%;background:' + color
-        + ';border:2px solid #fff;box-shadow:0 0 10px ' + color + ';" title="' + label + '"></div>';
+    const dot = '<div style="width:7px;height:7px;border-radius:50%;background:' + color
+        + ';border:1px solid #fff;box-shadow:0 0 5px ' + color + ';" title="' + label + '"></div>';
     const m = new AMap.Marker({ position: [lng, lat], content: dot, anchor: 'bottom-center', zIndex: 120 });
     m.setMap(state.planMap);
     return m;
