@@ -41,10 +41,11 @@ export function clearNav() {
     clearNavRoute(); updateNavPointMarkers(); updateNavPanel();
 }
 
-// 从规划结果拼接完整路径：步行/驾车/骑行用 steps[].path；公交的站点段存于 step.bus.path
+// 从规划结果拼接完整路径：步行/驾车用 steps[].path；骑行用 rides[].path（高德骑行专属字段）；公交的站点段存于 step.bus.path
 function routePathOf(route) {
     const path = [];
-    (route.steps || []).forEach(s => {
+    const segs = (route.rides && route.rides.length) ? route.rides : (route.steps || []);
+    segs.forEach(s => {
         if (!s) return;
         const p = s.path || (s.bus && s.bus.path) || [];
         if (p && p.length) path.push(...p);

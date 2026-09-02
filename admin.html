@@ -1147,7 +1147,8 @@ function updateNavPointMarkers() {
 
 function routePathOf(route) {
     const path = [];
-    (route.steps || []).forEach(s => {
+    const segs = (route.rides && route.rides.length) ? route.rides : (route.steps || []);
+    segs.forEach(s => {
         if (!s) return;
         const p = s.path || (s.bus && s.bus.path) || [];
         if (p && p.length) path.push(...p);
