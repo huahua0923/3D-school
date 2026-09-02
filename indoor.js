@@ -508,6 +508,21 @@ function indoorPlanLocalTransform(plans) {
     return { pxToLocalM, anchorLng, anchorLat };
 }
 
+// 像素 → 米 换算系数（从 geoBounds 推出：画布 1px 对应多少米；路径距离用它换算成真实米数）
+function metersPerPixelOf(plans) {
+    const meta = plans.find(p => p.data && p.data.geoBounds) || null;
+    if (!meta || !meta.data || !meta.data.geoBounds) return 0.1;  // 兜底：1px=0.1m
+    const data = meta.data;
+    const areaW = data.imageWidth || PLAN_DEFAULT_W;
+    const areaH = data.imageHeight || PLAN_DEFAULT_H;
+    const bounds = data.geoBounds;
+    const midLat = (bounds.nw[1] + bounds.se[1]) / 2;
+    const mPerDegLng = METERS_PER_DEG_LAT * Math.cos(midLat * Math.PI / 180);
+    const wMeters = Math.abs(bounds.se[0] - bounds.nw[0]) * mPerDegLng;
+    const hMeters = Math.abs(bounds.nw[1] - bounds.se[1]) * METERS_PER_DEG_LAT;
+    return (wMeters / areaW + hMeters / areaH) / 2;
+}
+
 // 把室内路径画成 3D 折线（每层高度 (floor-1)*LAYER_HEIGHT，楼梯段呈斜线上升）
 function renderIndoorPath3D(path, plans) {
     if (!state.threeCtx || !path || path.length < 2) return;
@@ -577,7 +592,8 @@ async function computeIndoorRoute() {
     const stairCount = res.path.filter(n => n.type === 'stair').length;
     const steps = res.path.filter(n => n.type !== 'corridor')
         .map(n => `${n.floor}F ${n.type === 'stair' ? '🪜' + n.name : n.name}`).join(' → ');
-    if (resultEl) resultEl.textContent = `约 ${Math.round(res.distance)} 米 · 跨 ${res.floorsCrossed} 层 · 经 ${stairCount} 处楼梯\n${steps}`;
+    const meters = res.distance * metersPerPixelOf(plans);
+    if (resultEl) resultEl.textContent = `约 ${Math.round(meters)} 米 · 跨 ${res.floorsCrossed} 层 · 经 ${stairCount} 处楼梯\n${steps}`;
     renderIndoorPath3D(res.path, plans);
 }
 

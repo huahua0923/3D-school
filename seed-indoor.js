@@ -7,7 +7,7 @@
 // ============================================================
 
 const path = require('path');
-const { initDb, closeDb, saveEditorProject, getEditorProjects } = require('./db');
+const { initDb, closeDb, saveEditorProject, getEditorProjects, deleteEditorProject } = require('./db');
 
 const dbPath = path.join(__dirname, 'data', 'exhibition-nav.db');
 const configPath = path.join(__dirname, 'config.json');
@@ -22,7 +22,7 @@ const XS = [350, 450, 550, 650, 750, 850];   // 6 间房 x 中心
 const CAT_COLOR = { 教室: '#4da6ff', 办公室: '#34d399', 卫生间: '#94a3b8', 实验室: '#a78bfa', 入口: '#fbbf24' };
 
 // 地理范围：画布 1200×800px ≈ 120×80 米（1px=0.1 米），中心对齐学校
-const CENTER = [104.0636, 30.6725];
+const CENTER = [104.14141, 30.67133];  // 与 config.json geo.center 一致（学校地图中心）
 const DEG_LNG = 1 / (111320 * Math.cos((CENTER[1] * Math.PI) / 180));
 const DEG_LAT = 1 / 111320;
 const geoBounds = {
@@ -90,11 +90,11 @@ if (process.argv.includes('--dry-run')) {
 // —— 正式写入 ——
 (async () => {
   await initDb(dbPath, configPath);
+  // 删除旧「教学楼A」方案后重插（幂等，可安全重复运行；修正位置/结构变更）
   const existing = getEditorProjects().filter(p => (p.building || '') === BUILDING);
-  if (existing.length) {
-    console.log(`⚠️ 已存在 ${existing.length} 个「${BUILDING}」方案，跳过（避免重复插入）。`);
-    closeDb();
-    return;
+  for (const p of existing) {
+    deleteEditorProject(p.id);
+    console.log(`  🗑 删除旧方案 ${p.name} (id=${p.id})`);
   }
   const plans = buildBuilding();
   for (const p of plans) {
