@@ -67,7 +67,7 @@ export function render() {
   });
 
   // Elements
-  for (const el of state.elements) { if (el.visible) drawElement(el); }
+  for (const el of state.elements) { if (el.visible !== false) drawElement(el); }
 
   // Overlay plans (readonly, dimmed) — 勾选的其它方案叠加对比
   for (const pid in state.overlayPlanElements) {
@@ -375,6 +375,6 @@ let flowOffset = 0;
 export function animateFlow() {
   flowOffset += 0.5;
   if (flowOffset > 20) flowOffset = 0;
-  if (state.elements.some(e => e.type === 'route' && e.visible)) render();
+  if (state.elements.some(e => e.type === 'route' && e.visible !== false)) render();
   requestAnimationFrame(animateFlow);
 }
