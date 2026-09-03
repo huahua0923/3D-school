@@ -77,7 +77,7 @@ function writeConfigJson(config) {
 // ---------- 功能模块开关默认值（透传字段，存 config.json 不进 SQLite 表）----------
 const DEFAULT_FEATURES = {
   indoor:         { enabled: true, layerHeight: 4 },
-  routeNav:       { enabled: true, defaultTravelMode: 'walking', guideFollow: true },
+  routeNav:       { enabled: true, defaultTravelMode: 'walking', guideFollow: true, navMarkersOnly: true },
   weather:        { enabled: true, refreshMin: 30 },
   nearby:         { enabled: true, radius: 2000 },
   measure:        { enabled: true },

@@ -25,7 +25,7 @@ export const DEFAULT_CONFIG = {
     },
     features: {
         indoor:         { enabled: true, layerHeight: 4 },
-        routeNav:       { enabled: true, defaultTravelMode: 'walking', guideFollow: true },
+        routeNav:       { enabled: true, defaultTravelMode: 'walking', guideFollow: true, navMarkersOnly: true },
         weather:        { enabled: true, refreshMin: 30 },
         nearby:         { enabled: true, radius: 2000 },
         measure:        { enabled: true },

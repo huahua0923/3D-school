@@ -272,8 +272,9 @@ export function showFeaturePopup(map, f) {
         box.appendChild(imgs);
     }
 
-    // 设为起点 / 终点
-    if (f.lng != null && f.lat != null) {
+    // 设为起点 / 终点（navMarkersOnly 开启时仅「标记点」可设）
+    const canNav = f.lng != null && f.lat != null && (!state.navMarkersOnly || f.badge === '标记点');
+    if (canNav) {
         state.currentFeature = { lng: f.lng, lat: f.lat, title: f.title || '该位置', floor: state.currentFloor };
         const nav = document.createElement('div');
         nav.style.cssText = 'display:flex;gap:10px;';

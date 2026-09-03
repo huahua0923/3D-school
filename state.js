@@ -67,6 +67,7 @@ export const state = {
     placeSearch: null,          // AMap.PlaceSearch
     nearbyMarkers: [],          // 周边搜索结果临时标记
     navTravelMode: 'walking',   // walking/driving/riding/transfer
+    navMarkersOnly: true,       // 仅标记点可设为起/终点（后台可配置）
     navDriving: null,
     navRiding: null,
     navTransfer: null,

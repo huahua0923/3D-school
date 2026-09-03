@@ -556,6 +556,7 @@ const FEATURE_DEFS = [
     { key: 'routeNav', label: '🧭 户外路径导航', params: [
         { key: 'defaultTravelMode', label: '默认交通方式', type: 'select', opts: { options: { walking: '步行', driving: '驾车', riding: '骑行', transfer: '公交' } } },
         { key: 'guideFollow', label: '漫游跟随', type: 'checkbox' },
+        { key: 'navMarkersOnly', label: '仅标记点可设起/终点', type: 'checkbox' },
     ]},
     { key: 'weather', label: '🌤️ 天气', params: [
         { key: 'refreshMin', label: '刷新间隔(分钟)', type: 'number', opts: { min: 1, max: 1440 } },

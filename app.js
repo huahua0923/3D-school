@@ -148,6 +148,7 @@ function applyFeatureFlags() {
                 x.classList.toggle('active', x.dataset.navMode === state.navTravelMode));
         }
         state.guideFollow = f.routeNav.guideFollow !== false;
+        state.navMarkersOnly = f.routeNav.navMarkersOnly !== false;
         const bgf = document.getElementById('btn-guide-follow');
         if (bgf) {
             bgf.classList.toggle('active', state.guideFollow);
