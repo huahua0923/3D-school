@@ -713,6 +713,17 @@ function setBuilding(b) {
     refreshIndoorNavPois();
 }
 
+// 点击建筑进入室内：按名称匹配室内方案，切楼栋并返回飞入目标（室内楼层 geoBounds 中心）
+export async function enterIndoorBuilding(name) {
+    const n = String(name || '').trim();
+    if (!n) return null;
+    const { plans } = await loadIndoorBuilding(n);
+    if (!plans.length) return null;
+    setBuilding(n);
+    const t = indoorPlanLocalTransform(plans);
+    return t ? { lng: t.anchorLng, lat: t.anchorLat } : null;
+}
+
 function setFloor(f) {
     if (state.currentFloor === f) return;
     state.currentFloor = f;

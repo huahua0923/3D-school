@@ -8,6 +8,8 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { state } from './state.js';
 import { localToLngLat, METERS_PER_DEG_LAT } from './coords.js';
 
+const raycaster = new THREE.Raycaster();
+
 export function setupThreeScene(map) {
     const scene = new THREE.Scene();
 
@@ -141,6 +143,10 @@ export function buildVenue(scene, localToAmap) {
         mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
         mainMesh.castShadow = true; mainMesh.receiveShadow = true;
         scene.add(mainMesh);
+        // 点击进入室内：打标签（name 匹配室内方案 building 字段）+ 加入拾取数组
+        const [bLng, bLat] = localToLngLat(main.pos[0], main.pos[2], state.CONFIG.geo.center);
+        mainMesh.userData.building = { name: main.name || '', lng: bLng, lat: bLat };
+        state.buildingMeshes.push(mainMesh);
     }
 
     // Sub buildings
@@ -170,4 +176,16 @@ export function buildVenue(scene, localToAmap) {
     }
 
     return { clickables };
+}
+
+/** 拾取主建筑：ndcX/ndcY ∈ [-1,1]，命中返回 {name,lng,lat}，否则 null */
+export function pickBuilding(ndcX, ndcY) {
+    if (!state.threeCtx || !state.threeCtx.camera || !state.buildingMeshes.length) return null;
+    const camera = state.threeCtx.camera;
+    camera.updateMatrixWorld();
+    raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+    const hits = raycaster.intersectObjects(state.buildingMeshes, false);
+    if (!hits.length) return null;
+    const b = hits[0].object.userData.building;
+    return (b && b.name) ? b : null;
 }

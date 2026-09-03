@@ -5,14 +5,14 @@
 import * as THREE from 'three';
 import { state } from './state.js';
 import { localToLngLat } from './coords.js';
-import { setupThreeScene, buildVenue } from './three-scene.js';
+import { setupThreeScene, buildVenue, pickBuilding } from './three-scene.js';
 import { initFlowLayer, resizeFlowLayer, resizeRippleLayer, startGuide } from './flow.js';
 import { toggleLoca, toggleLocaEffect, updateLocaEffectButtons } from './loca.js';
 import { initWeather } from './weather.js';
 import { buildSearchIndex, searchNearby } from './poi.js';
 import { initMeasureTools } from './measure.js';
 import { UIController, showFeaturePopup, drawNavRoute } from './route.js';
-import { initPlanSelector, initIndoorNav } from './indoor.js';
+import { initPlanSelector, initIndoorNav, enterIndoorBuilding } from './indoor.js';
 import { initAuth } from './auth.js';
 import { loadConfig } from './config.js';
 
@@ -207,7 +207,7 @@ export async function boot() {
     // waitForInit returns a promise that resolves after GLCustomLayer.init runs
     state.ui.setProgress('等待图层就绪...', 50);
     const { localToAmap, localPerMeter } = await waitForInit();
-    state.threeCtx = { scene, customCoords, lpm: localPerMeter, labelRenderer };
+    state.threeCtx = { scene, camera, renderer, customCoords, lpm: localPerMeter, labelRenderer };
 
     state.ui.setProgress('构建场馆模型...', 60);
     buildVenue(scene, localToAmap);
@@ -410,6 +410,27 @@ export async function boot() {
     map.on('click', (e) => {
         // 刚点击了路线/区域覆盖物时，不触发这里的 hideInfo（避免信息卡闪退）
         if (performance.now() < state.suppressMapClickUntil) return;
+
+        // 点击主建筑 → 进入室内 3D 视图（按名称匹配室内方案；手机端 tap 同样触发）
+        if (e.pixel && state.buildingMeshes.length) {
+            const px = e.pixel;
+            const pxX = (px.x != null) ? px.x : (px.getX ? px.getX() : 0);
+            const pxY = (px.y != null) ? px.y : (px.getY ? px.getY() : 0);
+            const ndcX = (pxX / window.innerWidth) * 2 - 1;
+            const ndcY = -(pxY / window.innerHeight) * 2 + 1;
+            const b = pickBuilding(ndcX, ndcY);
+            if (b && b.name) {
+                enterIndoorBuilding(b.name).then((t) => {
+                    if (t) {
+                        flyTo([t.lng, t.lat], 19, map.getPitch(), map.getRotation());
+                    } else {
+                        toast('该建筑暂无室内方案');
+                    }
+                });
+                return;
+            }
+        }
+
         const clicked = e.lnglat;
         state.ui.hideInfo();
         // 逆地理编码：点击空白处显示地址（官方 AMap.Geocoder）

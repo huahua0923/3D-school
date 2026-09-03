@@ -9,7 +9,7 @@ export const DEFAULT_CONFIG = {
     areas: [],
     groundSize: 200, fogColor: '#0a0e17', fogNear: 60, fogFar: 220,
     building: {
-        main: { w: 10, d: 10, h: 10, color: '#1e2d5a', pos: [0, 0, 0] },
+        main: { w: 10, d: 10, h: 10, color: '#1e2d5a', pos: [0, 0, 0], name: '' },
         subs: [],
         roadWidth: 8,
     },

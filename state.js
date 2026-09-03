@@ -75,7 +75,8 @@ export const state = {
     navPointMarkers: [],        // 起点/终点弹性标记
     elasticAvailable: false,    // AMap.ElasticMarker 是否就绪
     navRoutes: [],              // 后台保存的预设导航路线 [{id,name,data}]
-    threeCtx: null,             // Three.js 上下文 {scene, customCoords, lpm, labelRenderer}
+    threeCtx: null,             // Three.js 上下文 {scene, camera, renderer, customCoords, lpm, labelRenderer}
+    buildingMeshes: [],         // 可拾取的主建筑 mesh（点击进入室内视图）
 
     // —— 室内寻路 ——
     indoorPathGroup: null,      // 室内路径 3D 折线组
