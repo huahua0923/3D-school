@@ -661,6 +661,8 @@ function renderBuilding() {
     if (m) {
         document.getElementById('form-main-building').innerHTML =
             fld('building.main.name', '名称', 'text', { value: m.name || '' }) +
+            fld('building.main.pos[0]', '位置X（米，东+西-）', 'number', { value: (m.pos || [0,0,0])[0], step: 1 }) +
+            fld('building.main.pos[2]', '位置Z（米，北+南-）', 'number', { value: (m.pos || [0,0,0])[2], step: 1 }) +
             fld('building.main.w', '宽度', 'number', { value: m.w, step: 1 }) +
             fld('building.main.d', '深度', 'number', { value: m.d, step: 1 }) +
             fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
