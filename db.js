@@ -173,7 +173,9 @@ function createTables() {
       visible INTEGER NOT NULL DEFAULT 1,
       road_visible INTEGER NOT NULL DEFAULT 1,
       name TEXT NOT NULL DEFAULT '',
-      rotation REAL NOT NULL DEFAULT 0
+      rotation REAL NOT NULL DEFAULT 0,
+      model_url TEXT NOT NULL DEFAULT '',
+      model_scale REAL NOT NULL DEFAULT 1
     )
   `);
 
@@ -302,6 +304,9 @@ function migrateSchema() {
   addColumn('buildings_main', 'road_visible', 'INTEGER NOT NULL DEFAULT 1');
   addColumn('buildings_main', 'name', "TEXT NOT NULL DEFAULT ''");
   addColumn('buildings_main', 'rotation', 'REAL NOT NULL DEFAULT 0');
+  // 模型导入：model_url 指向 /models/*.glb，填了就用 GLB 替换方块；model_scale 缩放补偿 SketchUp 单位差异
+  addColumn('buildings_main', 'model_url', "TEXT NOT NULL DEFAULT ''");
+  addColumn('buildings_main', 'model_scale', 'REAL NOT NULL DEFAULT 1');
   // 方案可见性：public（普通用户可见）/ restricted（仅超级用户与管理员）
   addColumn('editor_projects', 'visibility', "TEXT NOT NULL DEFAULT 'public'");
   // 楼层：方案归属楼层（0=默认/未配置，1=1F, 2=2F…），默认 0F
@@ -357,13 +362,14 @@ function seedFromConfig(config) {
   const bmVisible = bm ? 1 : 0;
   const roadVisible = (config.building && config.building.roadVisible === false) ? 0 : 1;
   db.run(
-    `INSERT INTO buildings_main (id, w, d, h, color, pos_x, pos_y, pos_z, road_width, visible, road_visible, name, rotation)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO buildings_main (id, w, d, h, color, pos_x, pos_y, pos_z, road_width, visible, road_visible, name, rotation, model_url, model_scale)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [bm ? (bm.w || 40) : 40, bm ? (bm.d || 60) : 60, bm ? (bm.h || 18) : 18,
      bm ? (bm.color || '#1e2d5a') : '#1e2d5a',
      bm ? (bm.pos || [0, 0, 0])[0] : 0, bm ? (bm.pos || [0, 0, 0])[1] : 0, bm ? (bm.pos || [0, 0, 0])[2] : 0,
      (config.building && config.building.roadWidth) || 8,
-     bmVisible, roadVisible, bm ? (bm.name || '') : '', bm ? (bm.rotation || 0) : 0]
+     bmVisible, roadVisible, bm ? (bm.name || '') : '', bm ? (bm.rotation || 0) : 0,
+     bm ? (bm.modelUrl || '') : '', bm ? (bm.modelScale || 1) : 1]
   );
 
   // --- Buildings Subs ---
@@ -488,14 +494,16 @@ function getFullConfig() {
         color: bmRow.color,
         pos: [bmRow.pos_x, bmRow.pos_y, bmRow.pos_z],
         name: bmRow.name || '',
-        rotation: bmRow.rotation || 0
+        rotation: bmRow.rotation || 0,
+        modelUrl: bmRow.model_url || '',
+        modelScale: bmRow.model_scale || 1
       } : null,
       subs: subRows.map(s => ({
         w: s.w, d: s.d, h: s.h, x: s.x, z: s.z, color: s.color
       })),
       roadWidth: bmRow.road_width,
       roadVisible: bmRow.road_visible !== 0
-    } : { main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0 }, subs: [], roadWidth: 8, roadVisible: true },
+    } : { main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0, modelUrl: '', modelScale: 1 }, subs: [], roadWidth: 8, roadVisible: true },
 
     markers: {},
     routes: {},
@@ -609,15 +617,15 @@ function getBuildingMain() {
   const row = db.exec('SELECT * FROM buildings_main WHERE id = 1');
   if (row.length === 0 || row[0].values.length === 0) return null;
   const b = row[0].values[0];
-  return { w: b[1], d: b[2], h: b[3], color: b[4], pos: [b[5], b[6], b[7]], roadWidth: b[8], name: b[11] || '', rotation: b[12] || 0 };
+  return { w: b[1], d: b[2], h: b[3], color: b[4], pos: [b[5], b[6], b[7]], roadWidth: b[8], name: b[11] || '', rotation: b[12] || 0, modelUrl: b[13] || '', modelScale: b[14] || 1 };
 }
 
 function updateBuildingMain(data) {
   // 更新主建筑时顺带重置 visible/road_visible=1，避免「恢复主建筑」后仍因 visible=0 不渲染
-  db.run(`UPDATE buildings_main SET w=?, d=?, h=?, color=?, pos_x=?, pos_y=?, pos_z=?, road_width=?, name=?, rotation=?, visible=1, road_visible=1 WHERE id=1`,
+  db.run(`UPDATE buildings_main SET w=?, d=?, h=?, color=?, pos_x=?, pos_y=?, pos_z=?, road_width=?, name=?, rotation=?, model_url=?, model_scale=?, visible=1, road_visible=1 WHERE id=1`,
     [data.w ?? 40, data.d ?? 60, data.h ?? 18, data.color || '#1e2d5a',
      (data.pos || [0, 0, 0])[0], (data.pos || [0, 0, 0])[1], (data.pos || [0, 0, 0])[2],
-     data.roadWidth ?? 8, data.name || '', data.rotation ?? 0]);
+     data.roadWidth ?? 8, data.name || '', data.rotation ?? 0, data.modelUrl || '', data.modelScale ?? 1]);
   syncToDisk();
 }
 

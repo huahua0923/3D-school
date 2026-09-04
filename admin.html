@@ -531,11 +531,39 @@ function addSub() {
 }
 function delSub(i) { config.building.subs.splice(i, 1); renderBuilding(); }
 
-const DEFAULT_MAIN = { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0 };
+const DEFAULT_MAIN = { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0, modelUrl: '', modelScale: 1 };
 function delMain() { if (confirm('删除主建筑？首页将不再显示。')) { config.building.main = null; renderBuilding(); saveConfig(); } }
 function restoreMain() { config.building.main = Object.assign({}, DEFAULT_MAIN); renderBuilding(); saveConfig(); }
 function delRoad() { if (confirm('删除道路？首页将不再显示道路/场地高亮。')) { config.building.roadVisible = false; renderBuilding(); saveConfig(); } }
 function restoreRoad() { config.building.roadVisible = true; renderBuilding(); saveConfig(); }
+
+// 上传主建筑 .glb 模型：raw 二进制直接 POST 到 /api/upload-model，成功后写回 modelUrl 并保存
+async function uploadMainModel(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    if (!/\.(glb|gltf)$/i.test(file.name)) { showToast('仅支持 .glb / .gltf 文件', 'err'); input.value = ''; return; }
+    try {
+        const buf = await file.arrayBuffer();
+        const resp = await fetch('/api/upload-model?name=' + encodeURIComponent(file.name), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream', 'Authorization': 'Bearer ' + token },
+            body: buf,
+        });
+        if (resp.status === 401) { logout(); return; }
+        const data = await resp.json();
+        if (resp.ok) {
+            config.building.main.modelUrl = data.url;
+            renderBuilding();
+            await saveConfig();
+            showToast('✅ 模型已上传', 'ok');
+        } else {
+            showToast('❌ ' + (data.error || '上传失败'), 'err');
+        }
+    } catch (e) {
+        showToast('上传失败: ' + e.message, 'err');
+    }
+    input.value = '';
+}
 
 // ---------- Render functions ----------
 function renderAll() {
@@ -672,6 +700,12 @@ function renderBuilding() {
             fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
             fld('building.main.color', '颜色', 'color', { value: m.color }) +
             fld('building.main.rotation', '旋转（度，绕竖直轴）', 'number', { value: m.rotation || 0, step: 1 }) +
+            fld('building.main.modelUrl', '模型地址(.glb)', 'text', { value: m.modelUrl || '' }) +
+            fld('building.main.modelScale', '模型缩放', 'number', { value: m.modelScale || 1, step: 0.01, min: 0.001 }) +
+            `<div class="form-group"><label>导入模型</label>
+                <input type="file" accept=".glb,.gltf" style="color:#f0f6fc" onchange="uploadMainModel(this)">
+                <span style="font-size:0.75rem;color:#8b949e;">SketchUp 导出 .glb 后上传，留空则用方块</span>
+            </div>` +
             `<button class="btn-del" style="margin-top:8px" onclick="delMain()">✕ 删除主建筑</button>`;
     } else {
         document.getElementById('form-main-building').innerHTML =

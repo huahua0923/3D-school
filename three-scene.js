@@ -5,6 +5,7 @@
 // ========================================================
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { state } from './state.js';
 import { localToLngLat, METERS_PER_DEG_LAT } from './coords.js';
 
@@ -133,21 +134,15 @@ export function buildVenue(scene, localToAmap) {
         w = main.w; d = main.d; h = main.h;
         amap = localToAmap(main.pos[0], main.pos[2], 0);
         col = new THREE.Color(main.color);
-
-        // 主建筑（实心）：紫色体块 + 轻微自发光，对齐 Loca cadmall 深色商场风格
-        const mainMat = new THREE.MeshStandardMaterial({
-            color: col, roughness: 0.5, metalness: 0.15,
-            emissive: col, emissiveIntensity: 0.35,
-        });
-        const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
-        mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
-        if (main.rotation) mainMesh.rotation.z = THREE.MathUtils.degToRad(main.rotation);
-        mainMesh.castShadow = true; mainMesh.receiveShadow = true;
-        scene.add(mainMesh);
-        // 点击进入室内：打标签（name 匹配室内方案 building 字段）+ 加入拾取数组
+        // 点击进入室内：打标签（name 匹配室内方案 building 字段）
         const [bLng, bLat] = localToLngLat(main.pos[0], main.pos[2], state.CONFIG.geo.center);
-        mainMesh.userData.building = { name: main.name || '', lng: bLng, lat: bLat };
-        state.buildingMeshes.push(mainMesh);
+
+        if (main.modelUrl) {
+            // 外部 GLB 模型（SketchUp 导出）替换程序化方块
+            loadBuildingModel(scene, main, amap, col, bLng, bLat, w, d, h, S);
+        } else {
+            addBoxMain(scene, main, amap, col, bLng, bLat, w, d, h, S);
+        }
     }
 
     // Sub buildings
@@ -177,6 +172,62 @@ export function buildVenue(scene, localToAmap) {
     }
 
     return { clickables };
+}
+
+/** 主建筑方块（无模型时的兜底）：紫色体块 + 轻微自发光，对齐 Loca cadmall 深色商场风格 */
+function addBoxMain(scene, main, amap, col, bLng, bLat, w, d, h, S) {
+    const mainMat = new THREE.MeshStandardMaterial({
+        color: col, roughness: 0.5, metalness: 0.15,
+        emissive: col, emissiveIntensity: 0.35,
+    });
+    const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
+    mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
+    if (main.rotation) mainMesh.rotation.z = THREE.MathUtils.degToRad(main.rotation);
+    mainMesh.castShadow = true; mainMesh.receiveShadow = true;
+    mainMesh.userData.building = { name: main.name || '', lng: bLng, lat: bLat };
+    scene.add(mainMesh);
+    state.buildingMeshes.push(mainMesh);
+}
+
+/** 加载外部 GLB 模型替换主建筑方块；失败自动回退方块 */
+async function loadBuildingModel(scene, main, amap, col, bLng, bLat, w, d, h, S) {
+    try {
+        const loader = new GLTFLoader();
+        const gltf = await loader.loadAsync(main.modelUrl);
+        const model = gltf.scene;
+
+        // 贴地 + 水平居中：模型本地 Y-up 空间里 Y 是上，X/Z 是水平
+        const box = new THREE.Box3().setFromObject(model);
+        const c = box.getCenter(new THREE.Vector3());
+        model.position.x -= c.x;
+        model.position.y -= box.min.y;   // 底部贴地（Y=0）
+        model.position.z -= c.z;
+
+        // 轴修正：glTF 是 Y-up，场景是 Z-up → 绕 X 转 +90° 让「上」对齐
+        const axisFix = new THREE.Group();
+        axisFix.rotation.x = Math.PI / 2;
+        axisFix.add(model);
+
+        // 锚点：米制坐标定位 + 绕竖直轴旋转 + 缩放（补偿 SketchUp 单位差异）
+        const anchor = new THREE.Group();
+        anchor.position.set(amap.x, amap.y, amap.z);
+        anchor.rotation.z = THREE.MathUtils.degToRad(main.rotation || 0);
+        anchor.scale.setScalar(main.modelScale || 1);
+        anchor.add(axisFix);
+
+        model.traverse(node => {
+            if (node.isMesh) {
+                node.castShadow = true; node.receiveShadow = true;
+                node.userData.building = { name: main.name || '', lng: bLng, lat: bLat };
+                state.buildingMeshes.push(node);
+            }
+        });
+
+        scene.add(anchor);
+    } catch (err) {
+        console.error('⚠️ GLB 模型加载失败，回退方块:', err);
+        addBoxMain(scene, main, amap, col, bLng, bLat, w, d, h, S);
+    }
 }
 
 /** 拾取主建筑：ndcX/ndcY ∈ [-1,1]，命中返回 {name,lng,lat}，否则 null */

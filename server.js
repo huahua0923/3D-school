@@ -65,12 +65,16 @@ const PUBLIC_PATHS = new Set([
     // three.js 本地自托管（2026-09-02：脱离 unpkg CDN，避免校园网/DNS 污染致首屏 3D 加载失败）
     '/vendor/three/three.module.js',
     '/vendor/three/addons/controls/OrbitControls.js',
-    '/vendor/three/addons/renderers/CSS2DRenderer.js'
+    '/vendor/three/addons/renderers/CSS2DRenderer.js',
+    // GLB 模型加载器（2026-09-04：模型导入）
+    '/vendor/three/addons/loaders/GLTFLoader.js',
+    '/vendor/three/addons/utils/BufferGeometryUtils.js'
 ]);
 app.use((req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
     const p = req.path === '/' ? '/index.html' : req.path;
-    if (!PUBLIC_PATHS.has(p)) {
+    // 上传的 GLB 模型存 /models/ 目录，文件名动态生成无法精确列举，按前缀放行
+    if (!PUBLIC_PATHS.has(p) && !p.startsWith('/models/')) {
         return res.status(404).type('text/plain').send('Not Found');
     }
     next();
@@ -78,7 +82,8 @@ app.use((req, res, next) => {
 // 前端静态文件用 ETag 校验（no-cache）：内容未变返回 304 省流量，编辑后 mtime 变化即重新下载，
 // 避免每次访问都全量重下所有 JS/CSS（原先 no-store 会强制全量重下，40+ 模块首屏负担大）
 app.use((req, res, next) => {
-    if (req.path.endsWith('.html') || req.path.endsWith('.js') || req.path.endsWith('.css') || req.path === '/') {
+    if (req.path.endsWith('.html') || req.path.endsWith('.js') || req.path.endsWith('.css') ||
+        req.path.endsWith('.glb') || req.path.endsWith('.gltf') || req.path === '/') {
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Pragma', 'no-cache');
     }
@@ -481,6 +486,33 @@ app.delete('/api/buildings/subs/:id', adminOnly, (req, res) => {
         db.deleteBuildingSub(Number(req.params.id));
         res.json({ message: 'ok' });
     } catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
+// ==================== 模型上传（GLB/GLTF） ====================
+
+// 上传 3D 模型：raw 二进制体 + ?name=文件名，存到 models/ 目录，返回可公开访问的 URL。
+// 前端直接 POST 原始字节（非 base64，避免 33% 膨胀）；文件名经 sanitize 防路径穿越。
+app.post('/api/upload-model', adminOnly, express.raw({ type: () => true, limit: '50mb' }), (req, res) => {
+    try {
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+            return res.status(400).json({ error: '请求体为空' });
+        }
+        const rawName = (req.query.name || '').toString();
+        const ext = (path.extname(rawName) || '').toLowerCase();
+        if (ext !== '.glb' && ext !== '.gltf') {
+            return res.status(400).json({ error: '仅支持 .glb / .gltf 文件' });
+        }
+        // 文件名消毒：只保留字母数字 . _ -，剥离路径分隔符，防 ../ 穿越
+        const base = (path.basename(rawName, ext).replace(/[^a-zA-Z0-9._-]/g, '_') || 'model').slice(0, 80);
+        const filename = base + ext;
+        const modelsDir = path.join(__dirname, 'models');
+        if (!fs.existsSync(modelsDir)) fs.mkdirSync(modelsDir, { recursive: true });
+        fs.writeFileSync(path.join(modelsDir, filename), req.body);
+        res.json({ url: '/models/' + encodeURIComponent(filename), size: req.body.length });
+    } catch (err) {
+        console.error('模型上传失败:', err);
+        res.status(500).json({ error: '模型上传失败' });
+    }
 });
 
 // ==================== 细粒度 CRUD — Parking ====================
