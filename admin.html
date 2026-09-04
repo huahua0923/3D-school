@@ -247,6 +247,10 @@ a { color: #58a6ff; }
     <div class="panel" id="panel-building">
         <div class="section"><h3>🏢 主建筑</h3>
             <div class="form-grid" id="form-main-building"></div>
+            <div style="margin:10px 0 0">
+                <button class="btn-add-feat" onclick="toggleBuildingMap()">📍 在地图上点选位置</button>
+            </div>
+            <div id="building-map" style="height:320px;border-radius:8px;overflow:hidden;display:none;margin-top:10px"></div>
         </div>
         <div class="section"><h3>🏗️ 配楼</h3>
             <div class="sub-list" id="form-subs"></div>
@@ -527,7 +531,7 @@ function addSub() {
 }
 function delSub(i) { config.building.subs.splice(i, 1); renderBuilding(); }
 
-const DEFAULT_MAIN = { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '' };
+const DEFAULT_MAIN = { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0 };
 function delMain() { if (confirm('删除主建筑？首页将不再显示。')) { config.building.main = null; renderBuilding(); saveConfig(); } }
 function restoreMain() { config.building.main = Object.assign({}, DEFAULT_MAIN); renderBuilding(); saveConfig(); }
 function delRoad() { if (confirm('删除道路？首页将不再显示道路/场地高亮。')) { config.building.roadVisible = false; renderBuilding(); saveConfig(); } }
@@ -667,6 +671,7 @@ function renderBuilding() {
             fld('building.main.d', '深度', 'number', { value: m.d, step: 1 }) +
             fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
             fld('building.main.color', '颜色', 'color', { value: m.color }) +
+            fld('building.main.rotation', '旋转（度，绕竖直轴）', 'number', { value: m.rotation || 0, step: 1 }) +
             `<button class="btn-del" style="margin-top:8px" onclick="delMain()">✕ 删除主建筑</button>`;
     } else {
         document.getElementById('form-main-building').innerHTML =
@@ -1066,6 +1071,65 @@ function collectAll() {
     // Show login
     document.getElementById('login-overlay').classList.remove('hidden');
 })();
+
+// ============ 主建筑位置：地图点选 ============
+let buildingMap = null;
+let buildingPosMarker = null;
+
+async function ensureAmapSdk() {
+    if (window.AMap) return true;
+    const geo = (config && config.geo) || {};
+    let amapKey = geo.amapKey || '';
+    let sec = geo.amapSecurityCode || '';
+    try { const r = await fetch('/api/amap'); const d = await r.json(); if (d && d.key) amapKey = d.key; if (d && d.securityJsCode) sec = d.securityJsCode; } catch (_) {}
+    if (sec) window._AMapSecurityConfig = { securityJsCode: sec };
+    await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + (amapKey || '');
+        s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+    return !!window.AMap;
+}
+
+function toggleBuildingMap() {
+    const el = document.getElementById('building-map');
+    if (!el) return;
+    const show = el.style.display === 'none';
+    el.style.display = show ? 'block' : 'none';
+    if (show && !buildingMap) initBuildingMap();
+}
+
+async function initBuildingMap() {
+    const geo = (config && config.geo) || { center: [104.14141, 30.67133], zoom: 17 };
+    const ok = await ensureAmapSdk();
+    if (!ok) { showToast('地图加载失败', 'err'); return; }
+    buildingMap = new AMap.Map('building-map', { viewMode: '2D', center: geo.center, zoom: geo.zoom || 17, mapStyle: 'amap://styles/normal' });
+    const m = config.building && config.building.main;
+    if (m) {
+        const [lng, lat] = localToLngLatAdmin(m.pos[0], m.pos[2], geo.center);
+        buildingPosMarker = new AMap.Marker({ position: [lng, lat], zIndex: 200 });
+        buildingMap.add(buildingPosMarker);
+    }
+    buildingMap.on('click', e => {
+        if (!config.building || !config.building.main) return;
+        const [x, z] = lngLatToLocalAdmin(e.lnglat.getLng(), e.lnglat.getLat(), geo.center);
+        config.building.main.pos[0] = Math.round(x * 10) / 10;
+        config.building.main.pos[2] = Math.round(z * 10) / 10;
+        if (buildingPosMarker) buildingPosMarker.setPosition(e.lnglat);
+        else { buildingPosMarker = new AMap.Marker({ position: e.lnglat, zIndex: 200 }); buildingMap.add(buildingPosMarker); }
+        renderBuilding();
+        showToast('位置已更新（记得保存）', 'ok');
+    });
+}
+
+function lngLatToLocalAdmin(lng, lat, center) {
+    const mPerDegLng = 111320 * Math.cos(center[1] * Math.PI / 180);
+    return [(lng - center[0]) * mPerDegLng, (lat - center[1]) * 111320];
+}
+function localToLngLatAdmin(localX, localZ, center) {
+    const mPerDegLng = 111320 * Math.cos(center[1] * Math.PI / 180);
+    return [center[0] + localX / mPerDegLng, center[1] + localZ / 111320];
+}
 
 // ============ 导航路线（后台路径导航 + 预设路线） ============
 let navMap = null;

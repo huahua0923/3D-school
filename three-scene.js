@@ -141,6 +141,7 @@ export function buildVenue(scene, localToAmap) {
         });
         const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(w * S, d * S, (h || 10) * S), mainMat);
         mainMesh.position.set(amap.x, amap.y, amap.z + (h || 10) * S / 2);
+        if (main.rotation) mainMesh.rotation.z = THREE.MathUtils.degToRad(main.rotation);
         mainMesh.castShadow = true; mainMesh.receiveShadow = true;
         scene.add(mainMesh);
         // 点击进入室内：打标签（name 匹配室内方案 building 字段）+ 加入拾取数组
