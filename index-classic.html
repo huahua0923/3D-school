@@ -503,31 +503,26 @@
         function buildCity(scene) {
             const clickables = []; // meshes for raycaster
 
-            // Main building
-            const { w, d, h, color, pos } = CONFIG.building.main;
-            const bMat = new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.25 });
-            const mainBld = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bMat);
-            mainBld.position.set(pos[0], h / 2, pos[2]);
-            mainBld.castShadow = true; mainBld.receiveShadow = true;
-            scene.add(mainBld);
+            // Main buildings（多栋）
+            const rawMain = CONFIG.building.main;
+            const mains = Array.isArray(rawMain) ? rawMain : (rawMain ? [rawMain] : []);
+            let first = null;
+            for (const m of mains) {
+                const { w, d, h, color, pos } = m;
+                const bMat = new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.25 });
+                const mainBld = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bMat);
+                mainBld.position.set(pos[0], h / 2, pos[2]);
+                mainBld.castShadow = true; mainBld.receiveShadow = true;
+                scene.add(mainBld);
 
-            // Glass curtain wall grid
-            const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
-            const edgeLine = new THREE.LineSegments(edgeGeo,
-                new THREE.LineBasicMaterial({ color: 0x5588cc, transparent: true, opacity: 0.2 }));
-            edgeLine.position.copy(mainBld.position);
-            scene.add(edgeLine);
+                // Glass curtain wall grid
+                const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
+                const edgeLine = new THREE.LineSegments(edgeGeo,
+                    new THREE.LineBasicMaterial({ color: 0x5588cc, transparent: true, opacity: 0.2 }));
+                edgeLine.position.copy(mainBld.position);
+                scene.add(edgeLine);
 
-            // Windows on front face
-            const winMat = new THREE.MeshStandardMaterial({
-                color: 0x88ccff, emissive: 0x112244, emissiveIntensity: 0.3, transparent: true, opacity: 0.5 });
-            for (let row = -2; row <= 2; row += 1.6) {
-                for (let col = -5; col <= 5; col += 2.5) {
-                    if (Math.abs(row) < 0.05 && Math.abs(col) < 0.05) continue;
-                    const win = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2), winMat);
-                    win.position.set(row * 3.2, 3 + col * 1.9, d / 2 + 0.15);
-                    scene.add(win);
-                }
+                if (!first) first = { w, d, h, color, pos };
             }
 
             // Sub buildings
@@ -539,22 +534,25 @@
                 scene.add(mesh);
             }
 
-            // Roads
-            const roadMat = new THREE.MeshStandardMaterial({ color: 0x151d2e, roughness: 0.9, transparent: true, opacity: 0.65 });
-            const rw = CONFIG.building.roadWidth;
-            const hw = w / 2 + rw / 2, hd = d / 2 + rw / 2;
-            [
-                { w: w + rw * 2, d: rw, x: 0, z: hd + rw / 2 },
-                { w: w + rw * 2, d: rw, x: 0, z: -hd - rw / 2 },
-                { w: rw, d: d + rw * 2, x: hw + rw / 2, z: 0 },
-                { w: rw, d: d + rw * 2, x: -hw - rw / 2, z: 0 },
-            ].forEach(r => {
-                const road = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.d), roadMat);
-                road.rotation.x = -Math.PI / 2;
-                road.position.set(r.x, 0.03, r.z);
-                road.receiveShadow = true;
-                scene.add(road);
-            });
+            // Roads（绕第一栋主建筑）
+            if (first) {
+                const roadMat = new THREE.MeshStandardMaterial({ color: 0x151d2e, roughness: 0.9, transparent: true, opacity: 0.65 });
+                const rw = CONFIG.building.roadWidth;
+                const w = first.w, d = first.d;
+                const hw = w / 2 + rw / 2, hd = d / 2 + rw / 2;
+                [
+                    { w: w + rw * 2, d: rw, x: 0, z: hd + rw / 2 },
+                    { w: w + rw * 2, d: rw, x: 0, z: -hd - rw / 2 },
+                    { w: rw, d: d + rw * 2, x: hw + rw / 2, z: 0 },
+                    { w: rw, d: d + rw * 2, x: -hw - rw / 2, z: 0 },
+                ].forEach(r => {
+                    const road = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.d), roadMat);
+                    road.rotation.x = -Math.PI / 2;
+                    road.position.set(r.x, 0.03, r.z);
+                    road.receiveShadow = true;
+                    scene.add(road);
+                });
+            }
 
             // Trees
             const treeSpots = [[-32, -32], [32, -32], [-32, 32], [32, 32], [-58, 0], [58, 0], [0, -58], [0, 58]];

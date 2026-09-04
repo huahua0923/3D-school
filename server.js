@@ -453,12 +453,25 @@ app.put('/api/scene', adminOnly, (req, res) => {
 // ==================== 细粒度 CRUD — Buildings ====================
 
 app.get('/api/buildings/main', (req, res) => {
-    try { res.json({ data: db.getBuildingMain() }); }
+    try { res.json({ data: db.getBuildingMains() }); }
     catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 
-app.put('/api/buildings/main', adminOnly, (req, res) => {
-    try { db.updateBuildingMain(req.body); res.json({ message: 'ok' }); }
+app.post('/api/buildings/main', adminOnly, (req, res) => {
+    try {
+        const id = db.addBuildingMain(req.body);
+        res.json({ message: 'ok', id });
+    }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
+app.put('/api/buildings/main/:id', adminOnly, (req, res) => {
+    try { db.updateBuildingMain(Number(req.params.id), req.body); res.json({ message: 'ok' }); }
+    catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
+});
+
+app.delete('/api/buildings/main/:id', adminOnly, (req, res) => {
+    try { db.deleteBuildingMain(Number(req.params.id)); res.json({ message: 'ok' }); }
     catch (err) { console.error('API 500:', err); res.status(500).json({ error: '服务器内部错误' }); }
 });
 

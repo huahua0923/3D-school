@@ -9,7 +9,7 @@ export const DEFAULT_CONFIG = {
     areas: [],
     groundSize: 200, fogColor: '#0a0e17', fogNear: 60, fogFar: 220,
     building: {
-        main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0, modelUrl: '', modelScale: 1 },
+        main: [{ w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0, modelUrl: '', modelScale: 1 }],
         subs: [],
         roadWidth: 8,
     },
@@ -40,6 +40,10 @@ export async function loadConfig() {
         const resp = await fetch('/config.json');
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         state.CONFIG = await resp.json();
+        // 归一化：主建筑支持多栋（老 config.json 是单对象/null → 数组）
+        if (state.CONFIG.building && !Array.isArray(state.CONFIG.building.main)) {
+            state.CONFIG.building.main = state.CONFIG.building.main ? [state.CONFIG.building.main] : [];
+        }
         if (state.CONFIG.camera.maxPolarFactor) {
             state.CONFIG.camera.maxPolar = Math.PI * state.CONFIG.camera.maxPolarFactor;
         }

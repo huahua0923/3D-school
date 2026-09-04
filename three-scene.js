@@ -128,12 +128,13 @@ export function buildVenue(scene, localToAmap) {
     const S = localToAmap(0, 1, 0).y - localToAmap(0, 0, 0).y; // scale: 1 meter in Amap units
     const clickables = [];
 
-    const main = state.CONFIG.building.main;
-    let amap = null, col = null, w = 0, d = 0, h = 0;
-    if (main) {
-        w = main.w; d = main.d; h = main.h;
-        amap = localToAmap(main.pos[0], main.pos[2], 0);
-        col = new THREE.Color(main.color);
+    // 多栋主建筑（兼容旧单对象/null：归一化成数组）
+    const rawMain = state.CONFIG.building.main;
+    const mains = Array.isArray(rawMain) ? rawMain : (rawMain ? [rawMain] : []);
+    for (const main of mains) {
+        const w = main.w, d = main.d, h = main.h;
+        const amap = localToAmap(main.pos[0], main.pos[2], 0);
+        const col = new THREE.Color(main.color);
         // 点击进入室内：打标签（name 匹配室内方案 building 字段）
         const [bLng, bLat] = localToLngLat(main.pos[0], main.pos[2], state.CONFIG.geo.center);
 
@@ -142,6 +143,18 @@ export function buildVenue(scene, localToAmap) {
             loadBuildingModel(scene, main, amap, col, bLng, bLat, w, d, h, S);
         } else {
             addBoxMain(scene, main, amap, col, bLng, bLat, w, d, h, S);
+        }
+
+        // 每栋场地高亮（未删除道路时才渲染）
+        if (state.CONFIG.building.roadVisible !== false) {
+            const rw = state.CONFIG.building.roadWidth || 8;
+            const glowGeo = new THREE.PlaneGeometry((w + rw * 2 + 10) * S, (d + rw * 2 + 10) * S);
+            const glowMat = new THREE.MeshBasicMaterial({
+                color: col, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
+            });
+            const glowPlane = new THREE.Mesh(glowGeo, glowMat);
+            glowPlane.position.set(amap.x, amap.y, 0.02);
+            scene.add(glowPlane);
         }
     }
 
@@ -157,18 +170,6 @@ export function buildVenue(scene, localToAmap) {
         mesh.position.set(sa.x, sa.y, sa.z + sb.h * S / 2);
         mesh.castShadow = true; mesh.receiveShadow = true;
         scene.add(mesh);
-    }
-
-    // Venue ground highlight（主建筑存在且未删除道路时才渲染）
-    if (main && state.CONFIG.building.roadVisible !== false) {
-        const rw = state.CONFIG.building.roadWidth || 8;
-        const glowGeo = new THREE.PlaneGeometry((w + rw * 2 + 10) * S, (d + rw * 2 + 10) * S);
-        const glowMat = new THREE.MeshBasicMaterial({
-            color: col, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
-        });
-        const glowPlane = new THREE.Mesh(glowGeo, glowMat);
-        glowPlane.position.set(amap.x, amap.y, 0.02);
-        scene.add(glowPlane);
     }
 
     return { clickables };

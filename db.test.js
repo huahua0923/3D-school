@@ -67,7 +67,7 @@ function deepEqual(a, b, tolerance = 0.001) {
   const sections = [
     { name: 'geo', a: original.geo, b: rebuilt.geo },
     { name: 'scene (groundSize/fog)', a: { groundSize: original.groundSize, fogColor: original.fogColor, fogNear: original.fogNear, fogFar: original.fogFar }, b: { groundSize: rebuilt.groundSize, fogColor: rebuilt.fogColor, fogNear: rebuilt.fogNear, fogFar: rebuilt.fogFar } },
-    { name: 'building.main', a: original.building.main, b: rebuilt.building.main },
+    { name: 'building.main', a: (Array.isArray(original.building.main) ? original.building.main : (original.building.main ? [original.building.main] : [])), b: rebuilt.building.main },
     { name: 'building.subs', a: original.building.subs, b: rebuilt.building.subs },
     { name: 'building.roadWidth', a: { rw: original.building.roadWidth }, b: { rw: rebuilt.building.roadWidth } },
     { name: 'markers', a: original.markers, b: rebuilt.markers },

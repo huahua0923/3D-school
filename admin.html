@@ -414,6 +414,11 @@ async function loadConfig() {
         const resp = await fetch('/api/config', { headers });
         if (resp.status === 401) { logout(); return; }
         config = await resp.json();
+        // 归一化：主建筑支持多栋（老 config 是单对象/null → 数组）
+        if (config.building) {
+            if (!Array.isArray(config.building.main)) config.building.main = config.building.main ? [config.building.main] : [];
+            config.building.subs = config.building.subs || [];
+        }
         renderAll();
         loadMapPlans();   // 异步拉取地图方案，刷新「标记点/路线/区域」面板
     } catch (e) {
@@ -532,13 +537,26 @@ function addSub() {
 function delSub(i) { config.building.subs.splice(i, 1); renderBuilding(); }
 
 const DEFAULT_MAIN = { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0, modelUrl: '', modelScale: 1 };
-function delMain() { if (confirm('删除主建筑？首页将不再显示。')) { config.building.main = null; renderBuilding(); saveConfig(); } }
-function restoreMain() { config.building.main = Object.assign({}, DEFAULT_MAIN); renderBuilding(); saveConfig(); }
+let editMainIdx = 0;
+function addMain() {
+    config.building.main = config.building.main || [];
+    config.building.main.push(Object.assign({}, DEFAULT_MAIN));
+    editMainIdx = config.building.main.length - 1;
+    renderBuilding();
+}
+function delMain(i) {
+    if (config.building.main.length <= 1) { showToast('至少保留一栋主建筑', 'err'); return; }
+    if (confirm('删除第 ' + (i + 1) + ' 栋主建筑？')) {
+        config.building.main.splice(i, 1);
+        if (editMainIdx >= config.building.main.length) editMainIdx = config.building.main.length - 1;
+        renderBuilding(); saveConfig();
+    }
+}
 function delRoad() { if (confirm('删除道路？首页将不再显示道路/场地高亮。')) { config.building.roadVisible = false; renderBuilding(); saveConfig(); } }
 function restoreRoad() { config.building.roadVisible = true; renderBuilding(); saveConfig(); }
 
 // 上传主建筑 .glb 模型：raw 二进制直接 POST 到 /api/upload-model，成功后写回 modelUrl 并保存
-async function uploadMainModel(input) {
+async function uploadMainModel(input, i) {
     const file = input.files && input.files[0];
     if (!file) return;
     if (!/\.(glb|gltf)$/i.test(file.name)) { showToast('仅支持 .glb / .gltf 文件', 'err'); input.value = ''; return; }
@@ -552,7 +570,7 @@ async function uploadMainModel(input) {
         if (resp.status === 401) { logout(); return; }
         const data = await resp.json();
         if (resp.ok) {
-            config.building.main.modelUrl = data.url;
+            config.building.main[i].modelUrl = data.url;
             renderBuilding();
             await saveConfig();
             showToast('✅ 模型已上传', 'ok');
@@ -689,29 +707,31 @@ function resizeLogo(dataUrl, maxSize, cb) {
     img.src = dataUrl;
 }
 function renderBuilding() {
-    const m = config.building.main;
-    if (m) {
-        document.getElementById('form-main-building').innerHTML =
-            fld('building.main.name', '名称', 'text', { value: m.name || '' }) +
-            fld('building.main.pos[0]', '位置X（米，东+西-）', 'number', { value: (m.pos || [0,0,0])[0], step: 1 }) +
-            fld('building.main.pos[2]', '位置Z（米，北+南-）', 'number', { value: (m.pos || [0,0,0])[2], step: 1 }) +
-            fld('building.main.w', '宽度', 'number', { value: m.w, step: 1 }) +
-            fld('building.main.d', '深度', 'number', { value: m.d, step: 1 }) +
-            fld('building.main.h', '高度', 'number', { value: m.h, step: 1 }) +
-            fld('building.main.color', '颜色', 'color', { value: m.color }) +
-            fld('building.main.rotation', '旋转（度，绕竖直轴）', 'number', { value: m.rotation || 0, step: 1 }) +
-            fld('building.main.modelUrl', '模型地址(.glb)', 'text', { value: m.modelUrl || '' }) +
-            fld('building.main.modelScale', '模型缩放', 'number', { value: m.modelScale || 1, step: 0.01, min: 0.001 }) +
-            `<div class="form-group"><label>导入模型</label>
-                <input type="file" accept=".glb,.gltf" style="color:#f0f6fc" onchange="uploadMainModel(this)">
-                <span style="font-size:0.75rem;color:#8b949e;">SketchUp 导出 .glb 后上传，留空则用方块</span>
-            </div>` +
-            `<button class="btn-del" style="margin-top:8px" onclick="delMain()">✕ 删除主建筑</button>`;
-    } else {
-        document.getElementById('form-main-building').innerHTML =
-            `<div style="color:#8b949e;font-size:0.85rem;margin-bottom:8px">主建筑已删除（首页不显示）</div>` +
-            `<button class="btn-add-feat" onclick="restoreMain()">➕ 恢复主建筑</button>`;
-    }
+    const mains = config.building.main || [];
+    document.getElementById('form-main-building').innerHTML =
+        mains.map((m, i) => {
+            const base = `building.main[${i}]`;
+            return `<div class="section"><h4>主建筑 #${i + 1}</h4><div class="form-grid">` +
+                fld(`${base}.name`, '名称', 'text', { value: m.name || '' }) +
+                fld(`${base}.pos[0]`, '位置X（米，东+西-）', 'number', { value: (m.pos || [0,0,0])[0], step: 1 }) +
+                fld(`${base}.pos[2]`, '位置Z（米，北+南-）', 'number', { value: (m.pos || [0,0,0])[2], step: 1 }) +
+                fld(`${base}.w`, '宽度', 'number', { value: m.w, step: 1 }) +
+                fld(`${base}.d`, '深度', 'number', { value: m.d, step: 1 }) +
+                fld(`${base}.h`, '高度', 'number', { value: m.h, step: 1 }) +
+                fld(`${base}.color`, '颜色', 'color', { value: m.color }) +
+                fld(`${base}.rotation`, '旋转（度，绕竖直轴）', 'number', { value: m.rotation || 0, step: 1 }) +
+                fld(`${base}.modelUrl`, '模型地址(.glb)', 'text', { value: m.modelUrl || '' }) +
+                fld(`${base}.modelScale`, '模型缩放', 'number', { value: m.modelScale || 1, step: 0.01, min: 0.001 }) +
+                `<div class="form-group"><label>导入模型</label>
+                    <input type="file" accept=".glb,.gltf" style="color:#f0f6fc" onchange="uploadMainModel(this, ${i})">
+                    <span style="font-size:0.75rem;color:#8b949e;">SketchUp 导出 .glb 后上传，留空则用方块</span>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px">
+                    <button class="btn-add" style="flex:1" onclick="locateMain(${i})">📍 定位到地图</button>
+                    <button class="btn-del" style="flex:1" onclick="delMain(${i})">✕ 删除</button>
+                </div></div></div>`;
+        }).join('') +
+        `<button class="btn-add-feat" style="margin-top:8px" onclick="addMain()">➕ 添加主建筑</button>`;
 
     document.getElementById('form-subs').innerHTML = config.building.subs.map((s, i) => {
         const base = `building.subs[${i}]`;
@@ -1108,7 +1128,7 @@ function collectAll() {
 
 // ============ 主建筑位置：地图点选 ============
 let buildingMap = null;
-let buildingPosMarker = null;
+let buildingPosMarkers = [];
 
 async function ensureAmapSdk() {
     if (window.AMap) return true;
@@ -1138,22 +1158,45 @@ async function initBuildingMap() {
     const ok = await ensureAmapSdk();
     if (!ok) { showToast('地图加载失败', 'err'); return; }
     buildingMap = new AMap.Map('building-map', { viewMode: '2D', center: geo.center, zoom: geo.zoom || 17, mapStyle: 'amap://styles/normal' });
-    const m = config.building && config.building.main;
-    if (m) {
-        const [lng, lat] = localToLngLatAdmin(m.pos[0], m.pos[2], geo.center);
-        buildingPosMarker = new AMap.Marker({ position: [lng, lat], zIndex: 200 });
-        buildingMap.add(buildingPosMarker);
-    }
+    refreshBuildingMarkers(geo);
     buildingMap.on('click', e => {
-        if (!config.building || !config.building.main) return;
+        const mains = (config.building && config.building.main) || [];
+        if (!mains.length) return;
         const [x, z] = lngLatToLocalAdmin(e.lnglat.getLng(), e.lnglat.getLat(), geo.center);
-        config.building.main.pos[0] = Math.round(x * 10) / 10;
-        config.building.main.pos[2] = Math.round(z * 10) / 10;
-        if (buildingPosMarker) buildingPosMarker.setPosition(e.lnglat);
-        else { buildingPosMarker = new AMap.Marker({ position: e.lnglat, zIndex: 200 }); buildingMap.add(buildingPosMarker); }
+        mains[editMainIdx].pos[0] = Math.round(x * 10) / 10;
+        mains[editMainIdx].pos[2] = Math.round(z * 10) / 10;
+        refreshBuildingMarkers(geo);
         renderBuilding();
         showToast('位置已更新（记得保存）', 'ok');
     });
+}
+
+function refreshBuildingMarkers(geo) {
+    if (!buildingMap) return;
+    buildingPosMarkers.forEach(mk => buildingMap.remove(mk));
+    buildingPosMarkers = [];
+    const mains = (config.building && config.building.main) || [];
+    mains.forEach((m, i) => {
+        const [lng, lat] = localToLngLatAdmin(m.pos[0], m.pos[2], geo.center);
+        const mk = new AMap.Marker({ position: [lng, lat], zIndex: 200, title: (m.name || '主建筑') + ' #' + (i + 1) });
+        buildingMap.add(mk);
+        buildingPosMarkers.push(mk);
+    });
+}
+
+function locateMain(i) {
+    editMainIdx = i;
+    renderBuilding();
+    const el = document.getElementById('building-map');
+    if (el) el.style.display = 'block';
+    if (!buildingMap) { initBuildingMap(); return; }
+    const geo = (config && config.geo) || { center: [104.14141, 30.67133], zoom: 17 };
+    const m = (config.building.main || [])[i];
+    if (m) {
+        const [lng, lat] = localToLngLatAdmin(m.pos[0], m.pos[2], geo.center);
+        buildingMap.setCenter([lng, lat]);
+    }
+    refreshBuildingMarkers(geo);
 }
 
 function lngLatToLocalAdmin(lng, lat, center) {

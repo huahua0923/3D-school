@@ -155,13 +155,15 @@ function createTables() {
       ground_size REAL NOT NULL DEFAULT 200,
       fog_color TEXT NOT NULL DEFAULT '#0a0e17',
       fog_near REAL NOT NULL DEFAULT 60,
-      fog_far REAL NOT NULL DEFAULT 220
+      fog_far REAL NOT NULL DEFAULT 220,
+      road_width REAL NOT NULL DEFAULT 8,
+      road_visible INTEGER NOT NULL DEFAULT 1
     )
   `);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS buildings_main (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       w REAL NOT NULL DEFAULT 40,
       d REAL NOT NULL DEFAULT 60,
       h REAL NOT NULL DEFAULT 18,
@@ -169,9 +171,6 @@ function createTables() {
       pos_x REAL NOT NULL DEFAULT 0,
       pos_y REAL NOT NULL DEFAULT 0,
       pos_z REAL NOT NULL DEFAULT 0,
-      road_width REAL NOT NULL DEFAULT 8,
-      visible INTEGER NOT NULL DEFAULT 1,
-      road_visible INTEGER NOT NULL DEFAULT 1,
       name TEXT NOT NULL DEFAULT '',
       rotation REAL NOT NULL DEFAULT 0,
       model_url TEXT NOT NULL DEFAULT '',
@@ -326,6 +325,48 @@ function migrateSchema() {
   } catch (err) {
     console.error('⚠️ 迁移 floor 归零失败:', err.message);
   }
+
+  // 多栋迁移：buildings_main 由单行(CHECK id=1 + road_width/visible/road_visible) 改为多行(AUTOINCREMENT，道路字段移到 scene_settings)
+  try {
+    const bmInfo = db.exec('PRAGMA table_info(buildings_main)');
+    const bmCols = bmInfo.length ? bmInfo[0].values.map(v => v[1]) : [];
+    if (bmCols.includes('road_width')) {
+      // 1) scene_settings 补 road 两列（幂等）
+      addColumn('scene_settings', 'road_width', 'REAL NOT NULL DEFAULT 8');
+      addColumn('scene_settings', 'road_visible', 'INTEGER NOT NULL DEFAULT 1');
+      // 2) 回填道路字段到 scene_settings
+      db.run(`UPDATE scene_settings SET
+        road_width = COALESCE((SELECT road_width FROM buildings_main WHERE id = 1), 8),
+        road_visible = COALESCE((SELECT road_visible FROM buildings_main WHERE id = 1), 1)
+        WHERE id = 1`);
+      // 3) 重建 buildings_main：旧表改名 → 建新表 → 只拷 visible=1 的行 → 删旧表
+      db.run('DROP TABLE IF EXISTS buildings_main_old');
+      db.run('ALTER TABLE buildings_main RENAME TO buildings_main_old');
+      db.run(`
+        CREATE TABLE IF NOT EXISTS buildings_main (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          w REAL NOT NULL DEFAULT 40,
+          d REAL NOT NULL DEFAULT 60,
+          h REAL NOT NULL DEFAULT 18,
+          color TEXT NOT NULL DEFAULT '#1e2d5a',
+          pos_x REAL NOT NULL DEFAULT 0,
+          pos_y REAL NOT NULL DEFAULT 0,
+          pos_z REAL NOT NULL DEFAULT 0,
+          name TEXT NOT NULL DEFAULT '',
+          rotation REAL NOT NULL DEFAULT 0,
+          model_url TEXT NOT NULL DEFAULT '',
+          model_scale REAL NOT NULL DEFAULT 1
+        )
+      `);
+      db.run(`INSERT INTO buildings_main (id, w, d, h, color, pos_x, pos_y, pos_z, name, rotation, model_url, model_scale)
+              SELECT id, w, d, h, color, pos_x, pos_y, pos_z, name, rotation, model_url, model_scale
+              FROM buildings_main_old WHERE visible = 1`);
+      db.run('DROP TABLE buildings_main_old');
+      console.log('✅ 迁移：buildings_main 单行 → 多行（道路字段已移到 scene_settings）');
+    }
+  } catch (err) {
+    console.error('⚠️ 迁移 buildings_main 多行化失败:', err.message);
+  }
 }
 
 // ---------- 数据填充 ----------
@@ -352,25 +393,27 @@ function seedFromConfig(config) {
 
   // --- Scene Settings ---
   db.run(
-    `INSERT INTO scene_settings (id, ground_size, fog_color, fog_near, fog_far)
-     VALUES (1, ?, ?, ?, ?)`,
-    [config.groundSize || 200, config.fogColor || '#0a0e17', config.fogNear || 60, config.fogFar || 220]
+    `INSERT INTO scene_settings (id, ground_size, fog_color, fog_near, fog_far, road_width, road_visible)
+     VALUES (1, ?, ?, ?, ?, ?, ?)`,
+    [config.groundSize || 200, config.fogColor || '#0a0e17', config.fogNear || 60, config.fogFar || 220,
+     (config.building && config.building.roadWidth) || 8,
+     (config.building && config.building.roadVisible === false) ? 0 : 1]
   );
 
-  // --- Buildings Main ---
-  const bm = (config.building && config.building.main) || null;
-  const bmVisible = bm ? 1 : 0;
-  const roadVisible = (config.building && config.building.roadVisible === false) ? 0 : 1;
-  db.run(
-    `INSERT INTO buildings_main (id, w, d, h, color, pos_x, pos_y, pos_z, road_width, visible, road_visible, name, rotation, model_url, model_scale)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [bm ? (bm.w || 40) : 40, bm ? (bm.d || 60) : 60, bm ? (bm.h || 18) : 18,
-     bm ? (bm.color || '#1e2d5a') : '#1e2d5a',
-     bm ? (bm.pos || [0, 0, 0])[0] : 0, bm ? (bm.pos || [0, 0, 0])[1] : 0, bm ? (bm.pos || [0, 0, 0])[2] : 0,
-     (config.building && config.building.roadWidth) || 8,
-     bmVisible, roadVisible, bm ? (bm.name || '') : '', bm ? (bm.rotation || 0) : 0,
-     bm ? (bm.modelUrl || '') : '', bm ? (bm.modelScale || 1) : 1]
+  // --- Buildings Main（多栋：数组逐条插入，AUTOINCREMENT） ---
+  const rawMain = (config.building && config.building.main) || [];
+  const mains = Array.isArray(rawMain) ? rawMain : [rawMain];
+  const insertMain = db.prepare(
+    `INSERT INTO buildings_main (w, d, h, color, pos_x, pos_y, pos_z, name, rotation, model_url, model_scale)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
+  mains.forEach(m => {
+    insertMain.run([
+      m.w || 40, m.d || 60, m.h || 18, m.color || '#1e2d5a',
+      (m.pos || [0, 0, 0])[0], (m.pos || [0, 0, 0])[1], (m.pos || [0, 0, 0])[2],
+      m.name || '', m.rotation || 0, m.modelUrl || '', m.modelScale || 1
+    ]);
+  });
 
   // --- Buildings Subs ---
   const subs = (config.building && config.building.subs) || [];
@@ -465,7 +508,7 @@ function getFullConfig() {
 
   const geoRow = one('SELECT * FROM geo WHERE id = 1');
   const sceneRow = one('SELECT * FROM scene_settings WHERE id = 1');
-  const bmRow = one('SELECT * FROM buildings_main WHERE id = 1');
+  const bmRows = all('SELECT * FROM buildings_main ORDER BY id');
   const subRows = all('SELECT * FROM buildings_subs ORDER BY sort_order');
   const parkingRows = all('SELECT * FROM parking ORDER BY id');
   const particlesRow = one('SELECT * FROM particles WHERE id = 1');
@@ -488,22 +531,22 @@ function getFullConfig() {
     fogNear: sceneRow ? sceneRow.fog_near : 60,
     fogFar: sceneRow ? sceneRow.fog_far : 220,
 
-    building: bmRow ? {
-      main: bmRow.visible === 1 ? {
-        w: bmRow.w, d: bmRow.d, h: bmRow.h,
-        color: bmRow.color,
-        pos: [bmRow.pos_x, bmRow.pos_y, bmRow.pos_z],
-        name: bmRow.name || '',
-        rotation: bmRow.rotation || 0,
-        modelUrl: bmRow.model_url || '',
-        modelScale: bmRow.model_scale || 1
-      } : null,
+    building: {
+      main: bmRows.map(r => ({
+        w: r.w, d: r.d, h: r.h,
+        color: r.color,
+        pos: [r.pos_x, r.pos_y, r.pos_z],
+        name: r.name || '',
+        rotation: r.rotation || 0,
+        modelUrl: r.model_url || '',
+        modelScale: r.model_scale || 1
+      })),
       subs: subRows.map(s => ({
         w: s.w, d: s.d, h: s.h, x: s.x, z: s.z, color: s.color
       })),
-      roadWidth: bmRow.road_width,
-      roadVisible: bmRow.road_visible !== 0
-    } : { main: { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '', rotation: 0, modelUrl: '', modelScale: 1 }, subs: [], roadWidth: 8, roadVisible: true },
+      roadWidth: sceneRow ? sceneRow.road_width : 8,
+      roadVisible: sceneRow ? sceneRow.road_visible !== 0 : true
+    },
 
     markers: {},
     routes: {},
@@ -612,20 +655,35 @@ function updateScene(data) {
   syncToDisk();
 }
 
-// --- Buildings Main ---
-function getBuildingMain() {
-  const row = db.exec('SELECT * FROM buildings_main WHERE id = 1');
-  if (row.length === 0 || row[0].values.length === 0) return null;
-  const b = row[0].values[0];
-  return { w: b[1], d: b[2], h: b[3], color: b[4], pos: [b[5], b[6], b[7]], roadWidth: b[8], name: b[11] || '', rotation: b[12] || 0, modelUrl: b[13] || '', modelScale: b[14] || 1 };
+// --- Buildings Main（多栋） ---
+function getBuildingMains() {
+  const rows = db.exec('SELECT * FROM buildings_main ORDER BY id');
+  if (rows.length === 0) return [];
+  return rows[0].values.map(r => ({
+    id: r[0], w: r[1], d: r[2], h: r[3], color: r[4],
+    pos: [r[5], r[6], r[7]], name: r[8] || '', rotation: r[9] || 0, modelUrl: r[10] || '', modelScale: r[11] || 1
+  }));
 }
 
-function updateBuildingMain(data) {
-  // 更新主建筑时顺带重置 visible/road_visible=1，避免「恢复主建筑」后仍因 visible=0 不渲染
-  db.run(`UPDATE buildings_main SET w=?, d=?, h=?, color=?, pos_x=?, pos_y=?, pos_z=?, road_width=?, name=?, rotation=?, model_url=?, model_scale=?, visible=1, road_visible=1 WHERE id=1`,
+function addBuildingMain(data) {
+  db.run(`INSERT INTO buildings_main (w, d, h, color, pos_x, pos_y, pos_z, name, rotation, model_url, model_scale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [data.w ?? 40, data.d ?? 60, data.h ?? 18, data.color || '#1e2d5a',
      (data.pos || [0, 0, 0])[0], (data.pos || [0, 0, 0])[1], (data.pos || [0, 0, 0])[2],
-     data.roadWidth ?? 8, data.name || '', data.rotation ?? 0, data.modelUrl || '', data.modelScale ?? 1]);
+     data.name || '', data.rotation ?? 0, data.modelUrl || '', data.modelScale ?? 1]);
+  syncToDisk();
+  return Number(db.exec('SELECT last_insert_rowid()')[0].values[0][0]);
+}
+
+function updateBuildingMain(id, data) {
+  db.run(`UPDATE buildings_main SET w=?, d=?, h=?, color=?, pos_x=?, pos_y=?, pos_z=?, name=?, rotation=?, model_url=?, model_scale=? WHERE id=?`,
+    [data.w ?? 40, data.d ?? 60, data.h ?? 18, data.color || '#1e2d5a',
+     (data.pos || [0, 0, 0])[0], (data.pos || [0, 0, 0])[1], (data.pos || [0, 0, 0])[2],
+     data.name || '', data.rotation ?? 0, data.modelUrl || '', data.modelScale ?? 1, id]);
+  syncToDisk();
+}
+
+function deleteBuildingMain(id) {
+  db.run('DELETE FROM buildings_main WHERE id = ?', [id]);
   syncToDisk();
 }
 
@@ -923,7 +981,7 @@ module.exports = {
   // 实体级 CRUD
   getGeo, updateGeo,
   getScene, updateScene,
-  getBuildingMain, updateBuildingMain,
+  getBuildingMains, addBuildingMain, updateBuildingMain, deleteBuildingMain,
   getBuildingSubs, addBuildingSub, updateBuildingSub, deleteBuildingSub,
   getParking, addParking, updateParking, deleteParking,
   getParticles, updateParticles,
