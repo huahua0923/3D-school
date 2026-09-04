@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { state } from './state.js';
 import { localToLngLat, METERS_PER_DEG_LAT } from './coords.js';
 
@@ -194,6 +195,8 @@ function addBoxMain(scene, main, amap, col, bLng, bLat, w, d, h, S) {
 async function loadBuildingModel(scene, main, amap, col, bLng, bLat, w, d, h, S) {
     try {
         const loader = new GLTFLoader();
+        // meshopt 解码器：支持 gltfpack 压缩的模型（EXT_meshopt_compression + KHR_mesh_quantization）
+        loader.setMeshoptDecoder(MeshoptDecoder);
         const gltf = await loader.loadAsync(main.modelUrl);
         const model = gltf.scene;
 

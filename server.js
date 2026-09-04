@@ -68,6 +68,8 @@ const PUBLIC_PATHS = new Set([
     '/vendor/three/addons/renderers/CSS2DRenderer.js',
     // GLB 模型加载器（2026-09-04：模型导入）
     '/vendor/three/addons/loaders/GLTFLoader.js',
+    // meshopt 解码器（2026-09-04：gltfpack 压缩模型用 EXT_meshopt_compression）
+    '/vendor/three/addons/libs/meshopt_decoder.module.js',
     '/vendor/three/addons/utils/BufferGeometryUtils.js'
 ]);
 app.use((req, res, next) => {
