@@ -610,7 +610,8 @@ function getBuildingMain() {
 }
 
 function updateBuildingMain(data) {
-  db.run(`UPDATE buildings_main SET w=?, d=?, h=?, color=?, pos_x=?, pos_y=?, pos_z=?, road_width=?, name=? WHERE id=1`,
+  // 更新主建筑时顺带重置 visible/road_visible=1，避免「恢复主建筑」后仍因 visible=0 不渲染
+  db.run(`UPDATE buildings_main SET w=?, d=?, h=?, color=?, pos_x=?, pos_y=?, pos_z=?, road_width=?, name=?, visible=1, road_visible=1 WHERE id=1`,
     [data.w ?? 40, data.d ?? 60, data.h ?? 18, data.color || '#1e2d5a',
      (data.pos || [0, 0, 0])[0], (data.pos || [0, 0, 0])[1], (data.pos || [0, 0, 0])[2],
      data.roadWidth ?? 8, data.name || '']);

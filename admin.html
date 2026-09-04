@@ -527,7 +527,7 @@ function addSub() {
 }
 function delSub(i) { config.building.subs.splice(i, 1); renderBuilding(); }
 
-const DEFAULT_MAIN = { w: 10, d: 10, h: 10, color: '#1e2d5a', pos: [0, 0, 0], name: '' };
+const DEFAULT_MAIN = { w: 40, d: 60, h: 18, color: '#1e2d5a', pos: [0, 0, 0], name: '' };
 function delMain() { if (confirm('删除主建筑？首页将不再显示。')) { config.building.main = null; renderBuilding(); saveConfig(); } }
 function restoreMain() { config.building.main = Object.assign({}, DEFAULT_MAIN); renderBuilding(); saveConfig(); }
 function delRoad() { if (confirm('删除道路？首页将不再显示道路/场地高亮。')) { config.building.roadVisible = false; renderBuilding(); saveConfig(); } }
